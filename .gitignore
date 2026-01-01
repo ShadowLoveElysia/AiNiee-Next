@@ -1,2 +1,4 @@
 AiNieeGUI原版/
 uv.lock
+__pycache__/
+*.pyc
