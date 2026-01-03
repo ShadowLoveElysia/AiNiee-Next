@@ -13,6 +13,7 @@ class UpdateManager(Base):
     UPDATE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     DOWNLOAD_URL = f"https://github.com/ShadowLoveElysia/AiNiee-CLI/archive/refs/heads/main.zip"
     RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/Resource/Version/version.json"
+    COMMITS_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits"
     
     # GitHub 代理列表，首位为空表示直接连接
     GITHUB_PROXIES = [
@@ -80,66 +81,130 @@ class UpdateManager(Base):
         lang_data = self._msgs.get(lang, self._msgs["en"])
         return lang_data.get(key, self._msgs["en"][key])
 
-    def get_local_version(self):
-        """从 version.json 读取本地版本号"""
+    def get_local_version_full(self):
+        """从 version.json 读取本地完整的版本字符串"""
         try:
             v_path = os.path.join(self.project_root, "Resource", "Version", "version.json")
             if os.path.exists(v_path):
                 with open(v_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    v_str = data.get("version", "0.0.0")
-                    if 'V' in v_str:
-                        return v_str.split('V')[-1].strip()
-                    return v_str
+                    return data.get("version", "AiNiee-Cli V0.0.0")
         except: pass
-        return "0.0.0"
+        return "AiNiee-Cli V0.0.0"
 
     def check_update(self, silent=False):
-        """检查更新，返回 (是否有更新, 最新版本号)"""
+        """检查更新，优先通过远程 version.json 进行比对"""
         if not silent:
             self.print(f"[cyan]{self.get_msg('checking')}[/cyan]")
             
         headers = {"User-Agent": "AiNiee-CLI-Updater"}
-        local_v = self.get_local_version()
+        local_v_full = self.get_local_version_full()
         
-        # 1. 尝试直接通过 GitHub API 获取
-        try:
-            response = requests.get(self.UPDATE_URL, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                latest_v = data.get("tag_name", "0.0.0").replace('v', '').replace('V', '').strip()
-                if latest_v != local_v:
-                    return True, latest_v
-                return False, local_v
-        except:
-            pass
-
-        # 2. 如果 API 失败，尝试通过代理读取远程 version.json
+        # 尝试通过多个代理和直接连接读取远程 version.json
+        # 我们优先通过文件内容比对，而不是依赖 GitHub Release Tag
+        
+        check_urls = []
+        # 直接连接
+        check_urls.append(self.RAW_VERSION_URL)
+        # 代理连接
         for proxy in self.GITHUB_PROXIES:
             if not proxy: continue
+            if 'ghproxy' in proxy:
+                v_url = f"{proxy.replace('github.com', 'raw.githubusercontent.com')}{self.GITHUB_REPO}/main/Resource/Version/version.json"
+            else:
+                v_url = f"{proxy}{self.RAW_VERSION_URL}"
+            check_urls.append(v_url)
+
+        for url in check_urls:
             try:
-                v_url = f"{proxy.replace('github.com', 'raw.githubusercontent.com')}{self.GITHUB_REPO}/main/Resource/Version/version.json" if 'ghproxy' in proxy else f"{proxy}{self.RAW_VERSION_URL}"
-                response = requests.get(v_url, headers=headers, timeout=10)
+                response = requests.get(url, headers=headers, timeout=8)
                 if response.status_code == 200:
                     data = response.json()
-                    v_str = data.get("version", "0.0.0")
-                    latest_v = v_str.split('V')[-1].strip() if 'V' in v_str else v_str
-                    if latest_v != local_v:
-                        return True, latest_v
-                    return False, local_v
+                    remote_v_full = data.get("version", "")
+                    if remote_v_full and remote_v_full != local_v_full:
+                        self.info(f"检测到新版本: [bold green]{remote_v_full}[/bold green] (当前: {local_v_full})")
+                        return True, remote_v_full
+                    elif remote_v_full == local_v_full:
+                        return False, local_v_full
             except:
                 continue
+
+        # 兜底：尝试 GitHub API
+        try:
+            response = requests.get(self.UPDATE_URL, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                latest_tag = data.get("tag_name", "")
+                # 如果 tag 包含版本号且与本地不符
+                if latest_tag:
+                    local_v = local_v_full.split('V')[-1].strip() if 'V' in local_v_full else local_v_full
+                    latest_v = latest_tag.replace('v', '').replace('V', '').strip()
+                    if latest_v != local_v:
+                        return True, latest_tag
+        except:
+            pass
         
-        return False, local_v
+        return False, local_v_full
+
+    def get_latest_changelog(self, remote_v_full):
+        """获取最新的变更记录 (根据版本比较决定显示 Release 还是 Commit)"""
+        headers = {"User-Agent": "AiNiee-CLI-Updater"}
+        
+        # 提取纯版本号进行比较 (例如 "AiNiee-Cli V2.0.1" -> "2.0.1")
+        def clean_v(v_str):
+            return v_str.split('V')[-1].strip() if 'V' in v_str else v_str.replace('v', '').strip()
+
+        remote_v_clean = clean_v(remote_v_full)
+        
+        try:
+            # 1. 获取最新 Release 信息
+            release_data = {}
+            response = requests.get(self.UPDATE_URL, headers=headers, timeout=5)
+            if response.status_code == 200:
+                release_data = response.json()
+            
+            release_tag = release_data.get("tag_name", "0.0.0")
+            release_v_clean = clean_v(release_tag)
+
+            # 2. 核心逻辑比对：
+            # 如果 远程版本号(代码库) > Release版本号，说明 Release 已过时，显示 Commit
+            # 或者根本没有 Release 数据时，也显示 Commit
+            if not release_data or remote_v_clean != release_v_clean:
+                response = requests.get(self.COMMITS_URL, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    commits = response.json()
+                    if commits:
+                        latest = commits[0]
+                        message = latest.get("commit", {}).get("message", "")
+                        author = latest.get("commit", {}).get("author", {}).get("name", "Unknown")
+                        return f"[bold yellow]New Commits (Ahead of Release)[/bold yellow]\n[bold cyan]Latest by {author}:[/bold cyan]\n{message}"
+            
+            # 3. 如果 Release 版本号跟代码库一致，则显示 Release 说明
+            body = release_data.get("body", "")
+            name = release_data.get("name", release_tag)
+            if body:
+                return f"[bold green]Release: {name}[/bold green]\n{body}"
+                
+        except:
+            pass
+        return ""
 
     def start_update(self, force=False):
         """开始下载并更新"""
-        has_update, latest_v = self.check_update(silent=False)
+        has_update, latest_v_full = self.check_update(silent=False)
         
         if not has_update and not force:
             self.print(f"[green]{self.get_msg('no_update')}[/green]")
             time.sleep(1.5)
             return
+
+        # 获取并展示变更日志，传入最新的远程版本字符串
+        changelog = self.get_latest_changelog(latest_v_full)
+        if changelog:
+            from rich.panel import Panel
+            self.print("\n")
+            self.print(Panel(changelog, title=f"[bold magenta]Update: {latest_v_full}[/bold magenta]", border_style="cyan"))
+            self.print("\n")
 
         temp_zip = os.path.join(self.project_root, "update_temp.zip")
         

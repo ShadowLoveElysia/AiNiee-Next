@@ -82,6 +82,11 @@ class TaskConfig(Base):
         self.translated_output_path = ""
         self.polishing_output_path = ""
         self.translation_project = "AutoType" # NEW: 项目类型设置
+        self.target_platform = ""
+        self.base_url = ""
+        self.model = ""
+        self.rpm_limit = 4096
+        self.tpm_limit = 10000000
         
         # 任务执行相关设置
         self.enable_retry = True
@@ -97,6 +102,22 @@ class TaskConfig(Base):
         self.tokens_limit_switch = False # NEW: 切换 Token 模式还是 Line 模式
         self.lines_limit = 20 # NEW: 每次翻译的行数限制，在 Token 模式下无效
         self.pre_line_counts = 3 # NEW: 每次翻译获取上文的行数
+        self.actual_thread_counts = 3 # NEW: 实际线程数
+        self.output_filename_suffix = "" # NEW: 输出文件名后缀
+        self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
+        self.polishing_mode_selection = "translated_text_polish" # NEW: 润色模式选择
+        self.polishing_pre_line_counts = 2 # NEW: 润色时获取上文的行数
+        self.cache_backup_limit = 10
+        self.enable_cache_backup = True
+        self.enable_auto_restore_ebook = True
+        self.enable_dry_run = False
+        self.enable_retry_backoff = True
+        self.enable_session_logging = True
+        self.enable_task_notification = True
+        self.exclude_rule_str = ""
+        self.think_switch = False
+        self.think_depth = 0
+        self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
 
     def __repr__(self) -> str:
         return (
@@ -214,9 +235,9 @@ class TaskConfig(Base):
         # 获取目标平台
 
         if mode == TaskType.TRANSLATION:
-            self.target_platform = self.api_settings["translate"]
+            self.target_platform = self.api_settings.get("translate")
         elif mode == TaskType.POLISH:
-            self.target_platform = self.api_settings["polish"]
+            self.target_platform = self.api_settings.get("polish")
 
         # 增加获取不到内容时的异常处理
         if self.target_platform is None:
