@@ -14,6 +14,7 @@ dependencies = [
     "tiktoken>=0.9.0",
     "numpy>=2.0.2",
     "openpyxl",
+    "mediapipe",
     "opencc",
     "beautifulsoup4",
     "lxml",
@@ -81,3 +82,4 @@ packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18
 
 [tool.hatch.build.targets.sdist]
 include = ["AiNiee-CLI.py", "pyproject.toml", "README.md", "LICENSE"]
+
