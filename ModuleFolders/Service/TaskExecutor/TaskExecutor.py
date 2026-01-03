@@ -501,6 +501,7 @@ class TaskExecutor(Base):
                 self.session_output_path,
                 self.session_input_path,
                 output_config,
+                self.config
             )
             self.print("")
             self.info(f"翻译结果已保存至 {self.session_output_path} 目录 ...")

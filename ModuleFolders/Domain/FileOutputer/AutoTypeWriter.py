@@ -74,20 +74,12 @@ class AutoTypeWriter(BaseBilingualWriter, BaseTranslatedWriter):
             translation_file_path, cache_file, source_file_path, BaseTranslationWriter.TranslationMode.TRANSLATED
         )
 
-    def _write_translation_file(
-        self, translation_file_path: Path, cache_file: CacheFile,
-        source_file_path: Path,
-        translation_mode: BaseTranslationWriter.TranslationMode
-    ):
-        file_project_type = cache_file.file_project_type
-        if file_project_type not in self._writers:
-            return
-        writer = self._writers[file_project_type]
-        if writer.can_write(translation_mode):
-            write_translation_file = getattr(writer, translation_mode.write_method)
-            if file_project_type not in self._active_writers:
-                writer.__enter__()
-                self._active_writers.add(file_project_type)
+    def _write_translation_file(self, translation_file_path: str, cache_file: CacheFile, source_file_path:str, pre_write_metadata:dict):
+
+        if self.specific_writer:
+            self.specific_writer._write_translation_file(translation_file_path, cache_file, source_file_path, pre_write_metadata)
+        else:
+            # 如果没有找到特定的写入器，则调用一个通用或默认的方法
             write_translation_file(translation_file_path, cache_file, source_file_path)
 
     def on_write_bilingual(

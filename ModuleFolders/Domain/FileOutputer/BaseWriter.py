@@ -7,7 +7,8 @@ from typing import TypedDict
 import rich
 
 from ModuleFolders.Infrastructure.Cache.CacheFile import CacheFile
-from ModuleFolders.Domain.FileOutputer import WriterUtil
+from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+from ModuleFolders.Domain.FileOutputer.WriterUtil import get_ainiee_config
 
 
 def can_encode_text(text: str, encoding: str) -> bool:
@@ -100,48 +101,39 @@ class BaseTranslationWriter(ABC):
 class BaseTranslatedWriter(BaseTranslationWriter):
     """译文输出基类"""
 
-    def write_translated_file(
-        self, translation_file_path: Path, cache_file: CacheFile,
-        source_file_path: Path = None,
-    ):
-        """输出译文文件"""
-        pre_write_metadata = self.pre_write_translated(translation_file_path, cache_file)
-        self.on_write_translated(translation_file_path, cache_file, pre_write_metadata, source_file_path)
-        self.post_write_translated(translation_file_path)
+    def write_translated_file(self, translation_file_path: str, cache_file: CacheFile, source_file_path:str = None, task_config: TaskConfig = None):
+        """
+        写入翻译文件
+        :param translation_file_path: 翻译文件路径
+        :param cache_file: 缓存文件
+        """
 
-    def pre_write_translated(self, translation_file_path: Path, cache_file: CacheFile) -> PreWriteMetadata:
-        """根据文件内容做输出前操作，如输出编码检测"""
-        # 原始文件编码（默认为utf-8）
-        original_encoding = cache_file.encoding or "utf-8"
-        # 是否使用原始编码
-        use_original_encoding = True
+        pre_write_metadata = self.pre_write_translated(translation_file_path, cache_file, task_config)
+        self._write_translation_file(translation_file_path, cache_file, source_file_path, pre_write_metadata)
+        self.post_write_translated(translation_file_path, cache_file, pre_write_metadata)
 
-        if original_encoding.lower() == 'utf-8' or original_encoding.startswith("non_text"):
-            pass  # UTF-8可以表示所有字符，无需检查 / 非纯文本不需要检查
+    def pre_write_translated(self, translation_file_path: str, cache_file: CacheFile, task_config: TaskConfig = None):
+        """
+        在写入翻译文件之前执行的操作,可以被子类重写
+        :param translation_file_path: 翻译文件路径
+        :param cache_file: 缓存文件
+        :return: 返回一个包含预处理信息的元数据字典
+        """
+
+        # 如果没有传入 task_config，则尝试获取一个（为了兼容旧代码）
+        if task_config is None:
+            # This path should ideally not be taken in the new flow
+            from ModuleFolders.Service.TaskExecutor.TaskExecutor import TaskExecutor
+            task_config = TaskExecutor.config
+        
+        keep_original_encoding_config = task_config.keep_original_encoding if task_config else True
+
+        if keep_original_encoding_config:
+            encoding = cache_file.encoding
         else:
-            # 检查所有文本是否可以用原始编码表示
-            for item in cache_file.items:
-                if item.translated_text and not can_encode_text(item.translated_text, original_encoding):
-                    use_original_encoding = False
-                    break
+            encoding = "utf-8"
 
-        # 决定使用的编码
-        # 获取配置文件是否保持原有编码
-        keep_original_encoding_config = WriterUtil.get_ainiee_config().keep_original_encoding
-        if keep_original_encoding_config in (None, False):
-            actual_encoding = 'utf-8'
-        else:
-            actual_encoding = original_encoding if use_original_encoding else 'utf-8'
-
-        # 除了直接输出的译文之外的文件统一使用utf-8
-        if "_translated" not in translation_file_path.name:
-            actual_encoding = "utf-8"
-        else:
-            rich.print(
-                f"[[green]INFO[/]] 正在写入文件 {translation_file_path}, 使用编码: {original_encoding} -> {actual_encoding}"
-            )
-
-        return PreWriteMetadata(encoding=actual_encoding)
+        return {"encoding": encoding}
 
     @abstractmethod
     def on_write_translated(

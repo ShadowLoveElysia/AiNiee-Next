@@ -18,6 +18,7 @@ import shutil
 import winsound
 import subprocess
 import argparse
+import threading
 
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -108,6 +109,7 @@ def open_in_editor(file_path):
 
 class TaskUI:
     def __init__(self):
+        self._lock = threading.RLock()
         self.logs = collections.deque(maxlen=100) # Increase maxlen for better filtering
         self.log_filter = "ALL" # Can be "ALL" or "ERROR"
         self.progress = Progress(
@@ -134,21 +136,22 @@ class TaskUI:
         self.refresh_logs() # Initial log panel rendering
 
     def update_status(self, event, data):
-        status = data.get("status", "normal")
-        color_map = {"normal": "green", "fixing": "yellow", "warning": "yellow", "error": "red", "paused": "yellow", "critical_error": "red"}
-        status_key_map = {
-            "normal": "label_status_normal",
-            "fixing": "label_status_fixing",
-            "warning": "label_status_warning",
-            "error": "label_status_error",
-            "paused": "label_status_paused",
-            "critical_error": "label_status_critical_error"
-        }
-        
-        self.current_status_key = status_key_map.get(status, "label_status_normal")
-        self.current_status_color = color_map.get(status, "green")
-        self.current_border_color = self.current_status_color
-        self.update_progress(None, {})
+        with self._lock:
+            status = data.get("status", "normal")
+            color_map = {"normal": "green", "fixing": "yellow", "warning": "yellow", "error": "red", "paused": "yellow", "critical_error": "red"}
+            status_key_map = {
+                "normal": "label_status_normal",
+                "fixing": "label_status_fixing",
+                "warning": "label_status_warning",
+                "error": "label_status_error",
+                "paused": "label_status_paused",
+                "critical_error": "label_status_critical_error"
+            }
+            
+            self.current_status_key = status_key_map.get(status, "label_status_normal")
+            self.current_status_color = color_map.get(status, "green")
+            self.current_border_color = self.current_status_color
+            self.update_progress(None, {})
 
     def _is_error_log(self, log_item: Text):
         """Heuristically determines if a log entry is an error."""
@@ -159,13 +162,14 @@ class TaskUI:
 
     def refresh_logs(self):
         """Renders the log panel according to the current filter."""
-        if self.log_filter == "ALL":
-            display_logs = self.logs
-        else: # ERROR
-            display_logs = [log for log in self.logs if self._is_error_log(log)]
-        
-        log_group = Group(*display_logs)
-        self.layout["upper"].update(Panel(log_group, title=f"Logs ({self.log_filter})", border_style="blue", padding=(0, 1)))
+        with self._lock:
+            if self.log_filter == "ALL":
+                display_logs = self.logs
+            else: # ERROR
+                display_logs = [log for log in self.logs if self._is_error_log(log)]
+            
+            log_group = Group(*display_logs)
+            self.layout["upper"].update(Panel(log_group, title=f"Logs ({self.log_filter})", border_style="blue", padding=(0, 1)))
 
     def toggle_log_filter(self):
         self.log_filter = "ERROR" if self.log_filter == "ALL" else "ALL"
@@ -195,58 +199,59 @@ class TaskUI:
                 temp_console = Console(file=buf, force_terminal=True, width=120)
                 temp_console.print(msg)
                 new_log = Text.from_ansi(timestamp + buf.getvalue().strip())
-
-        self.logs.append(new_log)
+        
+        with self._lock:
+            self.logs.append(new_log)
         self.refresh_logs() # Refresh view with new log
 
     def update_progress(self, event, data):
-        # 如果是空数据更新（由 update_status 触发），我们需要保留之前的数值
-        if not hasattr(self, "_last_progress_data"):
-            self._last_progress_data = {"line": 0, "total_line": 1, "token": 0, "time": 0, "file_name": "...", "total_requests": 0, "file_path_full": None}
-        
-        if data:
-            self._last_progress_data.update(data)
-        
-        d = self._last_progress_data
-        completed, total = d["line"], d["total_line"]
-        tokens, elapsed = d["token"], d["time"]
+        with self._lock:
+            # 如果是空数据更新（由 update_status 触发），我们需要保留之前的数值
+            if not hasattr(self, "_last_progress_data"):
+                self._last_progress_data = {"line": 0, "total_line": 1, "token": 0, "time": 0, "file_name": "...", "total_requests": 0, "file_path_full": None}
+            
+            if data:
+                self._last_progress_data.update(data)
+            
+            d = self._last_progress_data
+            completed, total = d["line"], d["total_line"]
+            tokens, elapsed = d["token"], d["time"]
 
-        target_platform = str(config.get("target_platform", "")).lower()
-        is_local = any(k in target_platform for k in ["local", "sakura"])
+            target_platform = str(config.get("target_platform", "")).lower()
+            is_local = any(k in target_platform for k in ["local", "sakura"])
 
-        if elapsed > 0:
-            rpm = (d.get("total_requests", 0) / (elapsed / 60))
-            tpm_k = (tokens / (elapsed / 60) / 1000)
-        else:
-            rpm, tpm_k = 0, 0
+            if elapsed > 0:
+                rpm = (d.get("total_requests", 0) / (elapsed / 60))
+                tpm_k = (tokens / (elapsed / 60) / 1000)
+            else:
+                rpm, tpm_k = 0, 0
 
-        current_file = d.get("file_name", "...")
-        rpm_str = f"{rpm:.1f}" if is_local else f"{rpm:.2f}"
-        tpm_str = f"{(tpm_k * 1000):.0f}" if is_local else f"{tpm_k:.2f}k"
-        token_display = f"{tokens}"
+            current_file = d.get("file_name", "...")
+            rpm_str = f"{rpm:.1f}" if is_local else f"{rpm:.2f}"
+            tpm_str = f"{(tpm_k * 1000):.0f}" if is_local else f"{tpm_k:.2f}k"
+            token_display = f"{tokens}"
 
-        # Status and Hotkeys
-        status_text = i18n.get(self.current_status_key)
-        log_level_key = 'label_log_level_all' if self.log_filter == 'ALL' else 'label_log_level_error'
-        log_level_text = i18n.get(log_level_key)
-        
-        # V for View (logs), K for Key switch, N for Next file
-        hotkeys = "[dim]Shortcuts: [P] Pause | [R] Resume | [Q] Stop | [V] View Logs | [N] Skip File | [-/+] Threads | [[]/[]] Split | [K] Next Key[/dim]"
-        if self.parent_cli and self.parent_cli.input_listener.disabled:
-             hotkeys = "[dim]Hotkeys disabled (No TTY detected)[/dim]"
-        
-        stats_markup = (
-            f"File: [bold]{current_file}[/]\n"
-            f"RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{token_display}[/] | Lines: [bold]{completed}/{total}[/]\n"
-            f"{hotkeys}\n"
-            f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {log_level_text}"
-        )
-        self.stats_text = Text.from_markup(stats_markup, style="cyan")
-        
-        self.panel_group = Group(self.progress, self.stats_text)
-        
-        self.layout["lower"].update(Panel(self.panel_group, title="Progress & Stats", border_style=self.current_border_color))
-        self.progress.update(self.task_id, total=total, completed=completed, action=i18n.get('label_processing'))
+            # Status and Hotkeys
+            status_text = i18n.get(self.current_status_key)
+            log_level_key = 'label_log_level_all' if self.log_filter == 'ALL' else 'label_log_level_error'
+            log_level_text = i18n.get(log_level_key)
+            
+            hotkeys = i18n.get("label_shortcuts")
+            if self.parent_cli and self.parent_cli.input_listener.disabled:
+                 hotkeys = "[dim]Hotkeys disabled (No TTY detected)[/dim]"
+            
+            stats_markup = (
+                f"File: [bold]{current_file}[/]\n"
+                f"RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{token_display}[/] | Lines: [bold]{completed}/{total}[/]\n"
+                f"{hotkeys}\n"
+                f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {log_level_text}"
+            )
+            self.stats_text = Text.from_markup(stats_markup, style="cyan")
+            
+            self.panel_group = Group(self.progress, self.stats_text)
+            
+            self.layout["lower"].update(Panel(self.panel_group, title="Progress & Stats", border_style=self.current_border_color))
+            self.progress.update(self.task_id, total=total, completed=completed, action=i18n.get('label_processing'))
 
 class WebLogger:
     def __init__(self, stream=None):
@@ -1829,7 +1834,8 @@ class CLIMenu:
                     self.cache_manager.project if hasattr(self.cache_manager, 'project') and self.cache_manager.project else project,
                     opath, 
                     target_path, 
-                    output_config
+                    output_config,
+                    cfg
                 )
             console.print(f"\n[green]✓ {i18n.get('msg_export_completed')}[/green]")
             console.print(f"[dim]Output: {opath}[/dim]")

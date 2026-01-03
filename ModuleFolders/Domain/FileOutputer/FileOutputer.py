@@ -80,28 +80,31 @@ class FileOutputer:
         # 由于values是引用，最先注册和最后注册都一样
         self.register_writer(AutoTypeWriter, writer_factories=self.writer_factory_dict.values())
 
-    # 输出已经翻译文件
-    def output_translated_content(self, cache_data: CacheProject, output_path, input_path, config: dict) -> None:
-        # cache_data_iter = iter(cache_data)
-        # base_info = next(cache_data_iter)
-        project_type = cache_data.project_type
-        if project_type in self.writer_factory_dict:
-            writer_iinit_params = self._get_writer_init_params(
-                project_type, Path(output_path), Path(input_path), config
-            )
-            # 绑定配置，使工厂变成无参
-            writer_factory = partial(self.writer_factory_dict[project_type], **writer_iinit_params)
-
-            # 正确处理输入路径是文件的情况
-            input_path_obj = Path(input_path)
-            if input_path_obj.is_file():
-                source_directory = input_path_obj.parent  # 获取文件所在目录
-            else:
-                source_directory = input_path_obj
-
-            writer = DirectoryWriter(writer_factory)
-            # 为防止双语输出路径被覆盖，这里不传translation_directory
-            writer.write_translation_directory(cache_data, source_directory)
+    def output_translated_content(self, cache_data: CacheProject, output_path: str, input_path:str, output_config: dict, task_config: TaskConfig = None):
+        """
+        输出翻译后的内容
+        :param cache_data: 缓存数据
+        :param output_path: 输出路径
+        :param input_path: 输入路径
+        :param output_config: 输出配置
+        """
+        
+        # 根据输入路径的类型（文件或目录）选择不同的写入策略
+        if os.path.isdir(input_path):
+            writer = DirectoryWriter(output_path, output_config, self.plugin_manager)
+            writer.write_translation_directory(cache_data, input_path, task_config)
+        elif os.path.isfile(input_path):
+            # For single file, we also use a writer, but call it directly
+            # The AutoTypeWriter is suitable here as it can handle any file type.
+            writer = AutoTypeWriter(writer_factories=self.writer_factory_dict.values())
+            
+            # Ensure the output directory exists
+            output_file_path = os.path.join(output_path, os.path.basename(input_path))
+            os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+            
+            writer.write_translated_file(output_file_path, cache_data.get_first_file(), input_path, task_config)
+        else:
+            raise ValueError("输入路径既不是文件也不是目录")
 
     def _get_writer_init_params(self, project_type, output_path: Path, input_path: Path, config: dict):
         output_config = self._get_writer_default_config(project_type, output_path, input_path, config)
