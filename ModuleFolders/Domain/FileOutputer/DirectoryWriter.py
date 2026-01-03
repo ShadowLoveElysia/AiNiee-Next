@@ -4,7 +4,7 @@ from typing import Callable
 import rich
 
 from ModuleFolders.Infrastructure.Cache.CacheProject import CacheProject
-from ModuleFolders.Domain.FileOutputer import WriterUtil
+from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Domain.FileOutputer.BaseWriter import (
     BaseBilingualWriter,
     BaseTranslatedWriter,
@@ -24,7 +24,7 @@ class DirectoryWriter:
 
     def write_translation_directory(
         self, project: CacheProject, source_directory: Path,
-        translation_directory: Path = None,
+        translation_directory: Path = None, task_config: TaskConfig = None,
     ):
         """translation_directory 用于覆盖配置"""
         with self.create_writer() as writer:
@@ -54,9 +54,8 @@ class DirectoryWriter:
                         write_translation_file = getattr(writer, translation_mode.write_method)
 
                         # 执行写入
-                        write_translation_file(translation_file_path, file_items, source_file_path)
+                        write_translation_file(translation_file_path, file_items, source_file_path, task_config)
         # 释放Ainiee配置实例
-        WriterUtil.release_ainiee_config()
 
     @classmethod
     def with_file_suffix(self, file_path: str, name_suffix: str) -> Path:

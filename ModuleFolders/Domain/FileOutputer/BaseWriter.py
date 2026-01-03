@@ -8,7 +8,6 @@ import rich
 
 from ModuleFolders.Infrastructure.Cache.CacheFile import CacheFile
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-from ModuleFolders.Domain.FileOutputer.WriterUtil import get_ainiee_config
 
 
 def can_encode_text(text: str, encoding: str) -> bool:

@@ -157,8 +157,16 @@ class TaskUI:
         """Heuristically determines if a log entry is an error."""
         text = log_item.plain.lower()
         err_words = ['error', 'fail', 'failed', 'exception', 'traceback', 'critical', 'panic', '✗']
-        # Check for red style or error keywords
-        return any(style.color == "red" for style in log_item.spans) or any(word in text for word in err_words)
+        
+        has_red_style = False
+        for span in log_item.spans:
+            s = span.style
+            if isinstance(s, str):
+                if "red" in s: has_red_style = True; break
+            elif hasattr(s, "color") and s.color and (s.color.name == "red" or s.color.number == 1):
+                has_red_style = True; break
+        
+        return has_red_style or any(word in text for word in err_words)
 
     def refresh_logs(self):
         """Renders the log panel according to the current filter."""
@@ -243,8 +251,7 @@ class TaskUI:
             stats_markup = (
                 f"File: [bold]{current_file}[/]\n"
                 f"RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{token_display}[/] | Lines: [bold]{completed}/{total}[/]\n"
-                f"{hotkeys}\n"
-                f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {log_level_text}"
+                f"{hotkeys} | Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {log_level_text}"
             )
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
             

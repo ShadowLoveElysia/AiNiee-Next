@@ -1,7 +1,9 @@
+import os
 from functools import partial
 from pathlib import Path
 from typing import Type
 
+from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Infrastructure.Cache.CacheProject import CacheProject
 from ModuleFolders.Domain.FileOutputer.AutoTypeWriter import AutoTypeWriter
 from ModuleFolders.Domain.FileOutputer.BaseWriter import BaseTranslationWriter, OutputConfig, TranslationOutputConfig, WriterInitParams, BilingualOrder
