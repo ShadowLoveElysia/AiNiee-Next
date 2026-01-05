@@ -133,6 +133,7 @@
     "menu_api_think_depth": "Think Depth",
     "prompt_json_path": "Enter path to JSON file",
     "prompt_think_depth": "Think Depth (0-10000)",
+    "tip_exclusion_regex": " [dim](Advanced setting, suitable for high-level users)[/dim]",
     "menu_sub_type_select": "Select Specific Type",
     "menu_profile_select": "Select profile to activate",
     "menu_profile_create": "Create New Profile",
