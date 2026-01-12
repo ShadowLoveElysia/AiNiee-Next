@@ -916,8 +916,8 @@ def createArgumentParser():
     validFormatInputs = ALL_FORMAT_VALUES + list(FORMAT_CHOICE_MAP.keys())
 
     requiredGroup.add_argument('-p', '--path', type=str, required=True, nargs='+', help="一个或多个包含源文件(PDF, CBZ, EPUB等)的输入文件夹路径。")
-    requiredGroup.add_argument('-f', '--format', type=str, required=True, choices=validFormatInputs, help="目标输出格式。可以是格式名(如 epub)或菜单数字(如 1)。")
-    requiredGroup.add_argument('-m', '--mode', type=str, required=True, choices=['comic', 'novel'], help="处理模式: 'comic' (图片优先) 或 'novel' (文本优先)。")
+    requiredGroup.add_argument('-f', '--format', type=str.lower, required=True, choices=validFormatInputs, help="目标输出格式。可以是格式名(如 epub)或菜单数字(如 1)。")
+    requiredGroup.add_argument('-m', '--mode', type=str.lower, required=True, choices=['comic', 'novel'], help="处理模式: 'comic' (图片优先) 或 'novel' (文本优先)。")
     
     optionalGroup.add_argument('-o', '--output', type=str, nargs='+', help="输出文件的基础名称。可以是单个名称或与输入路径对应的名称列表。")
     optionalGroup.add_argument('-op', '--outputpath', type=str, help="所有输出文件的统一存放目录。如果未指定，则输出到每个源文件夹的父目录中。")
@@ -1570,6 +1570,12 @@ def runTask(villV_Args):
                 try:
                     if os.path.exists(filePath): os.remove(filePath)
                 except Exception: pass
+            for filePath in edenTempFiles:
+                try:
+                    if os.path.exists(filePath):
+                        os.remove(filePath)
+                        print(STRINGS['deleted_temp_file'][villV_Args.lang].format(filePath))
+                except Exception: pass
             for dirPath in edenTempDirectories:
                 if os.path.exists(dirPath):
                     shutil.rmtree(dirPath)
@@ -1795,7 +1801,9 @@ if __name__ == '__main__':
             kosmaArgs = suParser.parse_args()
             kosmaArgs.interactive = False
             runTask(kosmaArgs)
-        except argparse.ArgumentError as error: 
-            print(STRINGS['error_arg_parse'][kosmaArgs.lang].format(error))
-        except SystemExit as error: 
-             if error.code != 0: print(STRINGS['error_parsing_arguments'][kosmaArgs.lang])
+        except (argparse.ArgumentError, SystemExit):
+            # argparse already prints error messages.
+            # We catch this to prevent NameError when kosmaArgs is not defined.
+            pass
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
