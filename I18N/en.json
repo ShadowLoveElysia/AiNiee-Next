@@ -31,6 +31,7 @@
     "msg_task_stopped": "Task stopped.",
     "error__config_load": "Failed to load configuration.",
     "setting_project_type": "Project Type",
+    "setting_auto_set_output_path": "Output directory automatically follows input (ignore fixed setting)",
     "setting_input_path": "Default Input Path",
     "setting_output_path": "Fixed Output Path (blank for auto)",
     "setting_src_lang": "Source Language",

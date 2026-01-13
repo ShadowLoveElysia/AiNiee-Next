@@ -371,8 +371,11 @@ class TaskExecutor(Base):
 
                 # 第二轮开始对半切分
                 if current_round > 0:
-                    self.config.lines_limit = max(1, int(self.config.lines_limit / 2))
-                    self.config.tokens_limit = max(1, int(self.config.tokens_limit / 2))
+                    if self.config.tokens_limit_switch:
+                        if hasattr(self.config, 'tokens_limit'):
+                            self.config.tokens_limit = max(100, int(self.config.tokens_limit / 2))
+                    else:
+                        self.config.lines_limit = max(1, int(self.config.lines_limit / 2))
 
                 # 生成缓存数据条目片段的合集列表，原文列表与上文列表一一对应
                 chunks, previous_chunks, file_paths = self.cache_manager.generate_item_chunks(
@@ -620,8 +623,11 @@ class TaskExecutor(Base):
 
                 # 第二轮开始对半切分
                 if current_round > 0:
-                    self.config.lines_limit = max(1, int(self.config.lines_limit / 2))
-                    self.config.tokens_limit = max(1, int(self.config.tokens_limit / 2))
+                    if self.config.tokens_limit_switch:
+                        if hasattr(self.config, 'tokens_limit'):
+                            self.config.tokens_limit = max(100, int(self.config.tokens_limit / 2))
+                    else:
+                        self.config.lines_limit = max(1, int(self.config.lines_limit / 2))
 
                 # 生成缓存数据条目片段的合集列表
                 if self.config.polishing_mode_selection == "source_text_polish":

@@ -121,6 +121,7 @@ class TaskUI:
         self.log_filter = "ALL" # Can be "ALL" or "ERROR"
         self.taken_over = False
         self.web_task_manager = None
+        self.last_error = ""
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.fields[action]}", justify="left"),
@@ -198,19 +199,22 @@ class TaskUI:
             return
 
         clean_msg_for_dedup = str(msg).strip()
-        current_time = time.time()
-        if hasattr(self, "_last_msg") and self._last_msg == clean_msg_for_dedup and (current_time - getattr(self, "_last_msg_time", 0)) < 0.5:
+        if not clean_msg_for_dedup:
             return
-        self._last_msg = clean_msg_for_dedup
-        self._last_msg_time = current_time
 
-        # Push to WebServer if available
+        # --- CRITICAL: Push to WebServer BEFORE local dedup ---
         if self.web_task_manager:
-            # We need a plain text version for the web
             plain_msg = clean_msg_for_dedup
+            # Strip rich markup for web display
             if '[' in plain_msg and ']' in plain_msg:
                  plain_msg = re.sub(r'\[/?[a-zA-Z\s]+\]', '', plain_msg)
             self.web_task_manager.push_log(plain_msg)
+
+        current_time = time.time()
+        if hasattr(self, "_last_msg") and self._last_msg == clean_msg_for_dedup and (current_time - getattr(self, "_last_msg_time", 0)) < 0.3:
+            return
+        self._last_msg = clean_msg_for_dedup
+        self._last_msg_time = current_time
 
         if self.taken_over:
             return
@@ -281,10 +285,24 @@ class TaskUI:
                 
                 takeover_content.append(Text("\n"))
 
+                # Add Progress & Error Summary for Line Mode detection visibility
+                d = getattr(self, "_last_progress_data", {})
+                completed = d.get("line", 0)
+                total = d.get("total_line", 1)
+                
+                summary_group = [
+                    Text(f"Progress: {completed}/{total} ({(completed/total*100):.1f}%)", style="bold white"),
+                ]
+                if self.last_error:
+                    # Clean up the error message for display
+                    err_text = re.sub(r'\[/?[a-zA-Z\s]+\]', '', self.last_error)
+                    summary_group.append(Text(f"Last Alert: {err_text}", style="bold red"))
+
                 notice = Panel(
                     Align.center(Group(*takeover_content)),
                     title=f"[bold red]{i18n.get('msg_tui_takeover_title')}[/bold red]",
-                    border_style="bold red"
+                    border_style="bold red",
+                    subtitle=Group(*summary_group) if self.last_error else Text(f"Progress: {completed}/{total}", style="bold white")
                 )
                 self.layout["upper"].update(notice)
                 self.layout["lower"].update(Panel(Align.center(Text(i18n.get("msg_tui_takeover_status"), style="blink yellow")), title="Status", border_style="yellow"))
@@ -430,7 +448,10 @@ class CLIMenu:
                     # Push existing logs to web task manager
                     with self.ui._lock:
                         for log_item in self.ui.logs:
-                            ws_module.task_manager.push_log(log_item.plain)
+                            # Strip existing local timestamp from historical logs
+                            # Usually starts with "[HH:MM:SS] "
+                            clean_hist = re.sub(r'^\[\d{2}:\d{2}:\d{2}\]\s+', '', log_item.plain)
+                            ws_module.task_manager.push_log(clean_hist)
 
                     self.ui.taken_over = True
                     self.ui.update_progress(None, {}) # Force UI refresh
@@ -1070,30 +1091,31 @@ class CLIMenu:
             table.add_row("9", i18n.get("setting_round_limit"), str(self.config.get("round_limit", 3)))
             table.add_row("10", i18n.get("setting_cache_backup_limit"), str(self.config.get("cache_backup_limit", 10)))
             table.add_row("11", i18n.get("setting_failover_threshold"), str(self.config.get("critical_error_threshold", 5)))
+            table.add_row("12", i18n.get("setting_auto_set_output_path"), "[green]ON[/]" if self.config.get("auto_set_output_path", True) else "[red]OFF[/]")
 
             table.add_section()
             # --- Section 2: Feature Toggles ---
-            table.add_row("12", i18n.get("setting_detailed_logs"), "[green]ON[/]" if self.config.get("show_detailed_logs", False) else "[red]OFF[/]")
-            table.add_row("13", i18n.get("setting_cache_backup"), "[green]ON[/]" if self.config.get("enable_cache_backup", True) else "[red]OFF[/]")
-            table.add_row("14", i18n.get("setting_auto_restore_ebook"), "[green]ON[/]" if self.config.get("enable_auto_restore_ebook", True) else "[red]OFF[/]")
-            table.add_row("15", i18n.get("setting_dry_run"), "[green]ON[/]" if self.config.get("enable_dry_run", True) else "[red]OFF[/]")
-            table.add_row("16", i18n.get("setting_retry_backoff"), "[green]ON[/]" if self.config.get("enable_retry_backoff", True) else "[red]OFF[/]")
-            table.add_row("17", i18n.get("setting_session_logging"), "[green]ON[/]" if self.config.get("enable_session_logging", True) else "[red]OFF[/]")
-            table.add_row("18", i18n.get("setting_enable_retry"), "[green]ON[/]" if self.config.get("enable_retry", True) else "[red]OFF[/]")
-            table.add_row("19", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
-            table.add_row("20", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
-            table.add_row("21", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
+            table.add_row("13", i18n.get("setting_detailed_logs"), "[green]ON[/]" if self.config.get("show_detailed_logs", False) else "[red]OFF[/]")
+            table.add_row("14", i18n.get("setting_cache_backup"), "[green]ON[/]" if self.config.get("enable_cache_backup", True) else "[red]OFF[/]")
+            table.add_row("15", i18n.get("setting_auto_restore_ebook"), "[green]ON[/]" if self.config.get("enable_auto_restore_ebook", True) else "[red]OFF[/]")
+            table.add_row("16", i18n.get("setting_dry_run"), "[green]ON[/]" if self.config.get("enable_dry_run", True) else "[red]OFF[/]")
+            table.add_row("17", i18n.get("setting_retry_backoff"), "[green]ON[/]" if self.config.get("enable_retry_backoff", True) else "[red]OFF[/]")
+            table.add_row("18", i18n.get("setting_session_logging"), "[green]ON[/]" if self.config.get("enable_session_logging", True) else "[red]OFF[/]")
+            table.add_row("19", i18n.get("setting_enable_retry"), "[green]ON[/]" if self.config.get("enable_retry", True) else "[red]OFF[/]")
+            table.add_row("20", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
+            table.add_row("21", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
+            table.add_row("22", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
 
             table.add_section()
             # --- Section 3: Sub-menus & Advanced ---
-            table.add_row("22", i18n.get("setting_project_type"), self.config.get("translation_project", "AutoType"))
-            table.add_row("23", i18n.get("setting_trans_mode"), f"{limit_mode_str} ({self.config.get(limit_val_key, 20)})")
-            table.add_row("24", i18n.get("menu_api_pool_settings"), f"[cyan]{len(self.config.get('backup_apis', []))} APIs[/]")
-            table.add_row("25", i18n.get("menu_prompt_features"), "...")
-            table.add_row("26", i18n.get("menu_response_checks"), "...")
+            table.add_row("23", i18n.get("setting_project_type"), self.config.get("translation_project", "AutoType"))
+            table.add_row("24", i18n.get("setting_trans_mode"), f"{limit_mode_str} ({self.config.get(limit_val_key, 20)})")
+            table.add_row("25", i18n.get("menu_api_pool_settings"), f"[cyan]{len(self.config.get('backup_apis', []))} APIs[/]")
+            table.add_row("26", i18n.get("menu_prompt_features"), "...")
+            table.add_row("27", i18n.get("menu_response_checks"), "...")
 
             console.print(table); console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(27)], show_choices=False)
+            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(28)], show_choices=False)
             console.print("\n")
 
             if choice == 0: break
@@ -1112,23 +1134,24 @@ class CLIMenu:
             elif choice == 9: self.config["round_limit"] = IntPrompt.ask(i18n.get('setting_round_limit'), default=self.config.get("round_limit", 3))
             elif choice == 10: self.config["cache_backup_limit"] = IntPrompt.ask(i18n.get('setting_cache_backup_limit'), default=self.config.get("cache_backup_limit", 10))
             elif choice == 11: self.config["critical_error_threshold"] = IntPrompt.ask(i18n.get('setting_failover_threshold'), default=self.config.get("critical_error_threshold", 5))
-            elif choice == 12: self.config["show_detailed_logs"] = not self.config.get("show_detailed_logs", False)
-            elif choice == 13: self.config["enable_cache_backup"] = not self.config.get("enable_cache_backup", True)
-            elif choice == 14: self.config["enable_auto_restore_ebook"] = not self.config.get("enable_auto_restore_ebook", True)
-            elif choice == 15: self.config["enable_dry_run"] = not self.config.get("enable_dry_run", True)
-            elif choice == 16: self.config["enable_retry_backoff"] = not self.config.get("enable_retry_backoff", True)
-            elif choice == 17: self.config["enable_session_logging"] = not self.config.get("enable_session_logging", True)
-            elif choice == 18: self.config["enable_retry"] = not self.config.get("enable_retry", True)
-            elif choice == 19: self.config["enable_smart_round_limit"] = not self.config.get("enable_smart_round_limit", False)
-            elif choice == 20: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
-            elif choice == 21: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
+            elif choice == 12: self.config["auto_set_output_path"] = not self.config.get("auto_set_output_path", True)
+            elif choice == 13: self.config["show_detailed_logs"] = not self.config.get("show_detailed_logs", False)
+            elif choice == 14: self.config["enable_cache_backup"] = not self.config.get("enable_cache_backup", True)
+            elif choice == 15: self.config["enable_auto_restore_ebook"] = not self.config.get("enable_auto_restore_ebook", True)
+            elif choice == 16: self.config["enable_dry_run"] = not self.config.get("enable_dry_run", True)
+            elif choice == 17: self.config["enable_retry_backoff"] = not self.config.get("enable_retry_backoff", True)
+            elif choice == 18: self.config["enable_session_logging"] = not self.config.get("enable_session_logging", True)
+            elif choice == 19: self.config["enable_retry"] = not self.config.get("enable_retry", True)
+            elif choice == 20: self.config["enable_smart_round_limit"] = not self.config.get("enable_smart_round_limit", False)
+            elif choice == 21: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
+            elif choice == 22: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
 
             # Section 3
-            elif choice == 22: self.project_type_menu()
-            elif choice == 23: self.trans_mode_menu()
-            elif choice == 24: self.api_pool_menu()
-            elif choice == 25: self.prompt_features_menu()
-            elif choice == 26: self.response_checks_menu()
+            elif choice == 23: self.project_type_menu()
+            elif choice == 24: self.trans_mode_menu()
+            elif choice == 25: self.api_pool_menu()
+            elif choice == 26: self.prompt_features_menu()
+            elif choice == 27: self.response_checks_menu()
 
             self.save_config()
 
@@ -1994,11 +2017,9 @@ class CLIMenu:
 
             def write(self, msg): 
                 if hasattr(self._local, 'is_writing') and self._local.is_writing:
-                    original_stdout.write(f"\n[LogStream Recursion] {msg}\n")
-                    original_stdout.flush()
                     return
 
-                if not msg: return
+                if not msg or msg == '\n': return
                 msg_str = str(msg)
                 
                 if self.f:
@@ -2012,14 +2033,12 @@ class CLIMenu:
                 
                 self._local.is_writing = True
                 try:
-                    if self.parent and self.parent.live_state[0]:
-                        if msg_str.strip(): self.ui.log(msg_str)
-                    else:
-                        original_stdout.write(msg_str + "\n")
-                        original_stdout.flush()
-                except Exception as e:
-                    original_stdout.write(f"\n[LogStream UI Error] {e}\n")
-                    original_stdout.flush()
+                    # Always try to log to UI, which handles takeover logic internally
+                    clean_msg = msg_str.strip()
+                    if clean_msg:
+                        self.ui.log(clean_msg)
+                except:
+                    pass
                 finally:
                     self._local.is_writing = False
 
@@ -2215,11 +2234,26 @@ class CLIMenu:
                     is_middleware_converted = run_task_logic()
 
         except KeyboardInterrupt: self.signal_handler(None, None)
-        except Exception: pass 
+        except Exception as e:
+            # Capture and log the error before TUI disappears
+            err_msg = f"[bold red]Critical Task Error: {str(e)}[/bold red]"
+            if hasattr(self, "ui") and self.ui:
+                self.ui.log(err_msg)
+            else:
+                console.print(err_msg)
+            time.sleep(1) # Give a moment for the log to register
         finally:
             if not web_mode:
                 self.input_listener.stop()
             if log_file: log_file.close()
+            
+            # --- Ensure Takeover Mode is disabled before UI cleanup ---
+            if hasattr(self, "ui") and isinstance(self.ui, TaskUI):
+                with self.ui._lock:
+                    self.ui.taken_over = False
+                # The Live context manager is about to exit, let it do one last clean frame
+                time.sleep(0.2)
+
             sys.stdout, sys.stderr = original_stdout, original_stderr
             self.task_running = False; Base.print = self.original_print
             EventManager.get_singleton().unsubscribe(Base.EVENT.TASK_COMPLETED, on_complete)

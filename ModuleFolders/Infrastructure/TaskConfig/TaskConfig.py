@@ -101,6 +101,7 @@ class TaskConfig(Base):
         self.opencc_preset = "s2twp.json" # NEW: 简繁转换配置
         self.tokens_limit_switch = False # NEW: 切换 Token 模式还是 Line 模式
         self.lines_limit = 20 # NEW: 每次翻译的行数限制，在 Token 模式下无效
+        self.tokens_limit = 1500 # NEW: 每次翻译的 Token 限制，在 Line 模式下无效
         self.pre_line_counts = 3 # NEW: 每次翻译获取上文的行数
         self.actual_thread_counts = 3 # NEW: 实际线程数
         self.output_filename_suffix = "" # NEW: 输出文件名后缀
