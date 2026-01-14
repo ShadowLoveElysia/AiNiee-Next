@@ -22,7 +22,9 @@ class Event():
     TASK_CONTINUE_CHECK_DONE = 241           # 继续翻译状态检查完成
     TASK_MANUAL_EXPORT = 250                 # 翻译结果手动导出
     TASK_MANUAL_SAVE_CACHE = 251             # 手动保存缓存文件
-    TASK_API_STATUS_REPORT = 260             # API 状态报告 (成功/失败)
+    TASK_API_STATUS_REPORT = 260             # API 状态报告
+    TUI_SOURCE_DATA = 261                    # TUI 数据传输: 原文
+    TUI_RESULT_DATA = 262                    # TUI 数据传输: 译文
     CACHE_FILE_AUTO_SAVE = 300                      # 缓存文件自动保存
     SYSTEM_STATUS_UPDATE = 310               # 系统状态更新 (用于 TUI)
 

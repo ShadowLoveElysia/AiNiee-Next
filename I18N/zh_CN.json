@@ -54,7 +54,7 @@
     "msg_prompt_updated": "提示词模板已更新。",
     "prompt_template_select": "选择提示词模板: ",
     "setting_limit_mode": "翻译模式 (行数/Token)",
-    "setting_detailed_logs": "显示详细翻译日志",
+    "setting_detailed_logs": "显示详细翻译日志（启用翻译对照模式）",
     "setting_cache_backup": "开启缓存自动备份 (每8s)",
     "setting_auto_restore_ebook": "自动还原电子书原格式 (仅针对电子书)",
     "setting_dry_run": "开启首条任务预览 (防止Token浪费)",
@@ -265,5 +265,6 @@
         "banner_model": "模型",
         "banner_threads": "线程",
         "banner_context": "上下文",
-        "banner_think": "思考"
+        "banner_think": "思考",
+        "warn_conv_direction": "⚠️ 转换方向可能相反"
     }

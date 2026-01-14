@@ -49,6 +49,9 @@ class TaskManager:
             self.chart_data = collections.deque(maxlen=60) # 1 min history at 1s intervals
             self.stats: Dict[str, Any] = self._get_initial_stats()
             self.initialized = True
+            self.current_source = ""      # 当前批次原文
+            self.current_translation = "" # 当前批次译文
+            self.api_url = "http://127.0.0.1:8000" # 默认地址
             
             # Use a separate thread to monitor the process output
             self.monitor_thread: Optional[threading.Thread] = None
@@ -63,6 +66,11 @@ class TaskManager:
     def push_log(self, message: str, type: str = "info"):
         """Directly push a log message from the host process."""
         self.logs.append({"timestamp": time.time(), "message": message, "type": type})
+
+    def push_comparison(self, source: str, translation: str):
+        """Update the side-by-side comparison data from the host process."""
+        self.current_source = source
+        self.current_translation = translation
 
     def push_stats(self, stats: Dict[str, Any]):
         """Directly push stats from the host process."""
@@ -103,9 +111,8 @@ class TaskManager:
                     # Log parsing error if the format is unexpected, but don't crash
                     self.logs.append({"timestamp": time.time(), "message": f"[PARSER_ERROR] Could not parse stats line: {line}. Error: {e}"})
             else:
-                # It's a regular log line
-                self.logs.append({"timestamp": time.time(), "message": line})
-
+                            # It's a regular log line
+                            self.logs.append({"timestamp": time.time(), "message": line})
 
 
     def start_task(self, payload: Dict[str, Any]) -> bool:
@@ -182,14 +189,25 @@ class TaskManager:
             try:
                 # Get the system's preferred console encoding (e.g., 'gbk' on Chinese Windows)
                 system_encoding = locale.getpreferredencoding(False)
+
+                # 注入环境变量以便子进程知道 WebServer 的内部接口位置
+                import os as system_os
+                env = system_os.environ.copy()
+                # 获取当前 WebServer 的运行地址
+                env["AINIEE_INTERNAL_API_URL"] = task_manager.api_url
+                # 强制子进程使用 UTF-8 编码输出，防止在 Windows 下产生编码冲突
+                env["PYTHONIOENCODING"] = "utf-8"
+
                 self.process = subprocess.Popen(
                     cli_args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    encoding=system_encoding,
-                    errors='ignore', # Add extra safety
-                    bufsize=1
+                    encoding='utf-8',
+                    errors='replace', # 增加解码容错，防止非法字符导致线程崩溃
+                    bufsize=1,
+                    cwd=PROJECT_ROOT,
+                    env=env # 传递环境变量
                 )
                 
                 self.monitor_thread = threading.Thread(target=self._process_monitor)
@@ -989,8 +1007,23 @@ async def get_task_status():
     return {
         "stats": task_manager.stats,
         "logs": list(task_manager.logs),
-        "chart_data": list(task_manager.chart_data)
+        "chart_data": list(task_manager.chart_data),
+        "comparison": {
+            "source": task_manager.current_source,
+            "translation": task_manager.current_translation
+        }
     }
+
+class InternalComparisonPayload(BaseModel):
+    source: str
+    translation: str
+
+@app.post("/api/internal/update_comparison")
+async def internal_update_comparison(payload: InternalComparisonPayload):
+    """Internal endpoint for subprocesses to push comparison data."""
+    task_manager.current_source = payload.source
+    task_manager.current_translation = payload.translation
+    return {"status": "ok"}
 
 # --- File Management Endpoints ---
 
@@ -1218,6 +1251,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8000, monitor_mode: bool = F
     """Starts the FastAPI server in a separate thread."""
     global SYSTEM_MODE
     SYSTEM_MODE = "monitor" if monitor_mode else "full"
+    
+    # 动态记录 WebServer 的地址，以便子进程上报数据
+    task_manager.api_url = f"http://{host}:{port}"
     
     try:
         import uvicorn

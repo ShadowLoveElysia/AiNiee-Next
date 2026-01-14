@@ -70,6 +70,13 @@ class InputListener:
             try:
                 if self._kbhit():
                     char = self._getch()
+                    
+                    # Windows extended keys (0x00 or 0xE0) are followed by a scan code
+                    if sys.platform == "win32" and char in (b'\x00', b'\xe0'):
+                        if self._kbhit():
+                            self._getch() # Consume the scan code
+                        continue
+
                     # Decode bytes to string
                     try:
                         char_str = char.decode('utf-8', 'ignore')

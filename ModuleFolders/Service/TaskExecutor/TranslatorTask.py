@@ -138,6 +138,11 @@ class TranslatorTask(Base):
                 preview_text += f" (+{len(source_preview)-1} lines)"
             self.print(f"[dim][{self.task_id}] Translating: {preview_text}[/dim]")
             self.print(f"[STATUS] [{self.task_id}] Translating: {preview_text}")
+            
+            # 对照模式下不再单独发送原文，改为在结果返回后打包发送
+            all_source = "\n".join(self.source_text_dict.values())
+        else:
+            all_source = ""
 
         wait_start_time = time.time()
         while True:
@@ -334,19 +339,51 @@ class TranslatorTask(Base):
         # 去除回复内容的数字序号
         response_dict = ResponseExtractor.remove_numbered_prefix(self, response_dict)
 
+        # ---------------------------------------------------------
+        # 结果处理与数据发送
+        # ---------------------------------------------------------
+        
+        # 1. 后处理与恢复
+        restore_response_dict = {}
+        if response_dict:
+            try:
+                temp_dict = copy.copy(response_dict)
+                restore_response_dict = self.text_processor.restore_all(self.config, temp_dict, self.prefix_codes, self.suffix_codes, self.placeholder_order, self.affix_whitespace_storage)
+            except Exception as e:
+                self.error(f"[{self.task_id}] Post-processing error: {e}")
+                restore_response_dict = response_dict
 
-        # 模型回复日志
+        # 2. 强制发送 TUI 数据 (双通道)
+        if self.config.show_detailed_logs:
+            all_trans = "\n".join(restore_response_dict.values()) if restore_response_dict else "[Error: No Data]"
+            # 通道1: 事件总线 (用于宿主进程/监控模式)
+            self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": all_source, "data": all_trans})
+            
+            # 通道2: 网页端同步 (直接调用 WebServer 内部接口)
+            import requests, os as system_os
+            try:
+                # 动态获取父进程传递的 WebServer 地址
+                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
+                requests.post(
+                    f"{internal_api_base}/api/internal/update_comparison",
+                    json={"source": all_source, "translation": all_trans},
+                    timeout=1
+                )
+            except:
+                pass
+
+        # 3. 模型回复日志
         if response_think:
             self.extra_log.append("模型思考内容：\n" + response_think)
         if self.is_debug():
             self.extra_log.append("模型回复内容：\n" + response_content)
 
-        # 检查译文
+        # 4. 检查译文并决定返回 (完全恢复原始逻辑结构)
         if check_result == False:
             error = f"[{self.task_id}] [ERROR] 译文文本未通过检查，将在下一轮次的翻译中重新翻译 - {error_content}"
 
             # 打印任务结果
-            if self.is_debug() or self.config.show_detailed_logs:
+            if self.is_debug() and not self.config.show_detailed_logs:
                 self.print(
                     self.generate_log_table(
                         *self.generate_log_rows(
@@ -362,11 +399,15 @@ class TranslatorTask(Base):
                 )
             else:
                 self.error(error)
+                
+            return {
+                "check_result": False,
+                "row_count": 0,
+                "prompt_tokens": self.request_tokens_consume,
+                "completion_tokens": 0,
+                "extra_info": getattr(self, "extra_info", {})
+            }
         else:
-            # 各种翻译后处理
-            restore_response_dict = copy.copy(response_dict)
-            restore_response_dict = self.text_processor.restore_all(self.config, restore_response_dict, self.prefix_codes, self.suffix_codes, self.placeholder_order, self.affix_whitespace_storage)
-
             # 更新译文结果到缓存数据中
             for item, response in zip(self.items, restore_response_dict.values()):
                 with item.atomic_scope():
@@ -374,11 +415,11 @@ class TranslatorTask(Base):
                     item.translated_text = response
                     item.translation_status = TranslationStatus.TRANSLATED
 
-
-            # 打印任务结果
+            # 打印成功日志
             if Base.work_status != Base.STATUS.STOPING:
                 self.print(f"[bold green]√ [{self.task_id}] Done! ({self.row_count} lines processed) | {(time.time() - task_start_time):.2f}s | {prompt_tokens}+{completion_tokens}T[/bold green]")
-                if self.is_debug() or self.config.show_detailed_logs:
+                # 在对照模式下，不打印详细的表格日志，避免 TUI 日志区过于拥挤
+                if self.is_debug() and not self.config.show_detailed_logs:
                     self.print(
                         self.generate_log_table(
                             *self.generate_log_rows(
@@ -393,17 +434,6 @@ class TranslatorTask(Base):
                         )
                     )
 
-
-        # 否则返回译文检查的结果
-        if check_result == False:
-            return {
-                "check_result": False,
-                "row_count": 0,
-                "prompt_tokens": self.request_tokens_consume,
-                "completion_tokens": 0,
-                "extra_info": getattr(self, "extra_info", {})
-            }
-        else:
             return {
                 "check_result": check_result,
                 "row_count": self.row_count,

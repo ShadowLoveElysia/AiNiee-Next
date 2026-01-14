@@ -53,7 +53,7 @@
     "prompt_current_selection": "現在: ",
     "prompt_template_select": "プロンプトテンプレートを選択: ",
     "setting_limit_mode": "翻訳モード (行数/トークン)",
-    "setting_detailed_logs": "詳細な翻訳ログを表示する",
+    "setting_detailed_logs": "詳細な翻訳ログを表示する（翻訳対照モードを有効にする）",
     "setting_cache_backup": "キャッシュの自動バックアップを有効にする (8秒毎)",
     "setting_auto_restore_ebook": "電子書の元形式を自動復元 (電子書のみ)",
     "setting_dry_run": "最初のタスクのプレビューを有効にする (Tokenの無駄遣い防止)",
@@ -257,5 +257,6 @@
         "banner_model": "モデル",
         "banner_threads": "スレッド",
         "banner_context": "文脈",
-        "banner_think": "思考"
+        "banner_think": "思考",
+        "warn_conv_direction": "⚠️ 変換方向が逆の可能性があります"
     }

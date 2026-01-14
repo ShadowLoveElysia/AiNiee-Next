@@ -54,7 +54,7 @@
     "msg_prompt_updated": "Prompt template updated.",
     "prompt_template_select": "Select Prompt Template: ",
     "setting_limit_mode": "Translation Mode (Line/Token)",
-    "setting_detailed_logs": "Show Detailed Translation Logs",
+    "setting_detailed_logs": "Show Detailed Translation Logs (Enable Comparison Mode)",
     "setting_cache_backup": "Enable Auto Cache Backup (every 8s)",
     "setting_auto_restore_ebook": "Auto-restore E-book Original Format (E-book only)",
     "setting_dry_run": "Enable First Task Preview (Dry Run)",
@@ -264,5 +264,6 @@
         "banner_model": "Model",
         "banner_threads": "Threads",
         "banner_context": "Context",
-        "banner_think": "Think"
+        "banner_think": "Think",
+        "warn_conv_direction": "⚠️ Conversion direction may be reversed"
     }

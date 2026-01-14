@@ -102,6 +102,11 @@ class PolisherTask(Base):
             self.print(f"[dim][{self.task_id}] Polishing: {preview_text}[/dim]")
             self.print(f"[STATUS] [{self.task_id}] Polishing: {preview_text}")
 
+            # 对照模式下不再单独发送原文，改为在结果返回后打包发送
+            all_source = "\n".join(self.source_text_dict.values())
+        else:
+            all_source = ""
+
         wait_start_time = time.time()
         while True:
             # 检测是否收到停止翻译事件
@@ -316,7 +321,7 @@ class PolisherTask(Base):
             error = f"[{self.task_id}] [ERROR] 译文文本未通过检查，将在下一轮次的翻译中重新翻译 - {error_content}"
 
             # 打印任务结果
-            if self.is_debug() or self.config.show_detailed_logs:
+            if self.is_debug() and not self.config.show_detailed_logs:
                 self.print(
                     self.generate_log_table(
                         *self.generate_log_rows(
@@ -337,6 +342,24 @@ class PolisherTask(Base):
             restore_response_dict = copy.copy(response_dict)
             restore_response_dict = self.text_processor.restore_all(self.config, restore_response_dict)
 
+            # --- NEW: 发送对照数据 ---
+            if self.config.show_detailed_logs:
+                all_res = "\n".join(restore_response_dict.values())
+                # 通道1: 事件总线
+                self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": all_source, "data": all_res})
+                
+                # 通道2: 网页端同步
+                import requests, os as system_os
+                try:
+                    # 动态获取父进程传递的 WebServer 地址
+                    internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
+                    requests.post(
+                        f"{internal_api_base}/api/internal/update_comparison",
+                        json={"source": all_source, "translation": all_res},
+                        timeout=1
+                    )
+                except:
+                    pass
 
             # 更新译文结果到缓存数据中
             for item, response in zip(self.items, restore_response_dict.values()):
@@ -349,7 +372,8 @@ class PolisherTask(Base):
             # 打印任务结果
             if Base.work_status != Base.STATUS.STOPING:
                 self.print(f"[bold green]√ [{self.task_id}] Done! ({self.row_count} lines processed) | {(time.time() - task_start_time):.2f}s | {prompt_tokens}+{completion_tokens}T[/bold green]")
-                if self.is_debug() or self.config.show_detailed_logs:
+                # 对照模式下隐藏详细表格以节省空间
+                if self.is_debug() and not self.config.show_detailed_logs:
                     self.print(
                         self.generate_log_table(
                             *self.generate_log_rows(
