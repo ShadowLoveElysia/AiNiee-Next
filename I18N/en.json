@@ -251,5 +251,18 @@
         "prompt_toggle_plugin": "Enter ID to toggle plugin enable status",
         "label_plugin_name": "Plugin Name",
         "label_status": "Status",
-        "label_description": "Description"
+        "label_description": "Description",
+        "banner_langs": "Langs",
+        "banner_conv": "S/T Conv",
+        "banner_bilingual": "Bilingual",
+        "banner_on": "ON",
+        "banner_off": "OFF",
+        "banner_trans_first": "Trans->Src",
+        "banner_source_first": "Src->Trans",
+        "banner_not_enabled": "Not Enabled",
+        "banner_api": "API",
+        "banner_model": "Model",
+        "banner_threads": "Threads",
+        "banner_context": "Context",
+        "banner_think": "Think"
     }

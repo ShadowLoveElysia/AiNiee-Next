@@ -252,5 +252,18 @@
         "prompt_toggle_plugin": "输入ID切换插件启用状态",
         "label_plugin_name": "插件名称",
         "label_status": "状态",
-        "label_description": "功能描述"
+        "label_description": "功能描述",
+        "banner_langs": "语言",
+        "banner_conv": "简繁转换",
+        "banner_bilingual": "双语对照",
+        "banner_on": "开启",
+        "banner_off": "关闭",
+        "banner_trans_first": "译->原",
+        "banner_source_first": "原->译",
+        "banner_not_enabled": "未开启",
+        "banner_api": "接口",
+        "banner_model": "模型",
+        "banner_threads": "线程",
+        "banner_context": "上下文",
+        "banner_think": "思考"
     }

@@ -844,9 +844,60 @@ class CLIMenu:
                     if 'V' in v_full: v_str = "V" + v_full.split('V')[-1].strip()
         except: pass
 
+        # 整理重要设置状态
+        src = self.config.get("source_language", "Unknown")
+        tgt = self.config.get("target_language", "Unknown")
+        conv_on = self.config.get("response_conversion_toggle", False)
+        conv_preset = self.config.get("opencc_preset", "None")
+        bilingual_order = self.config.get("bilingual_text_order", "translation_first")
+        
+        # 判断双语是否真正开启
+        plugin_enables = self.root_config.get("plugin_enables", {})
+        is_plugin_bilingual = plugin_enables.get("BilingualPlugin", False)
+        proj_type = self.config.get("translation_project", "AutoType")
+        is_type_bilingual = proj_type in ["Txt", "Epub", "Srt"]
+        bilingual_active = is_plugin_bilingual or is_type_bilingual
+
+        # 获取第二行参数
+        target_platform = self.config.get("target_platform", "Unknown")
+        model_name = self.config.get("model", "Unknown")
+        user_threads = self.config.get("user_thread_counts", 0)
+        context_lines = self.config.get("pre_line_counts", 3)
+        think_on = self.config.get("think_switch", False)
+        is_local = target_platform.lower() in ["sakura", "localllm"]
+
+        # 使用 I18N 获取文字
+        conv_on_text = i18n.get("banner_on")
+        conv_off_text = i18n.get("banner_off")
+        trans_first_text = i18n.get("banner_trans_first")
+        source_first_text = i18n.get("banner_source_first")
+        not_enabled_text = i18n.get("banner_not_enabled")
+        
+        conv_status = f"[green]{conv_on_text} ({conv_preset})[/green]" if conv_on else f"[red]{conv_off_text}[/red]"
+        order_text = trans_first_text if bilingual_order == "translation_first" else source_first_text
+        order_status = f"[cyan]{order_text}[/cyan]" if bilingual_active else f"[red]{not_enabled_text}[/red] ([dim]{order_text}[/dim])"
+        
+        # 第二行状态构建
+        threads_display = f"Auto" if user_threads == 0 else str(user_threads)
+        think_status = ""
+        if not is_local:
+            think_text = f"[green]{conv_on_text}[/green]" if think_on else f"[red]{conv_off_text}[/red]"
+            think_status = f" | [bold]{i18n.get('banner_think')}:[/bold] {think_text}"
+
+        settings_line_1 = f"| [bold]{i18n.get('banner_langs')}:[/bold] {src} -> {tgt} | [bold]{i18n.get('banner_conv')}:[/bold] {conv_status} | [bold]{i18n.get('banner_bilingual')}:[/bold] {order_status} |"
+        settings_line_2 = f"| [bold]{i18n.get('banner_api')}:[/bold] {target_platform} | [bold]{i18n.get('banner_model')}:[/bold] {model_name} | [bold]{i18n.get('banner_threads')}:[/bold] {threads_display} | [bold]{i18n.get('banner_context')}:[/bold] {context_lines}{think_status} |"
+
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
-        console.print(Panel.fit(f"[bold cyan]AiNiee CLI[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\nGUI Original: By NEKOparapa\nCLI Version: By ShadowLoveElysia\nLang: {current_lang}", title="Welcome"))
+        
+        banner_content = (
+            f"[bold cyan]AiNiee CLI[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
+            f"[dim]GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia[/dim]\n"
+            f"{settings_line_1}\n"
+            f"{settings_line_2}"
+        )
+        
+        console.print(Panel.fit(banner_content, title="Status", border_style="cyan"))
 
     def run_wizard(self):
         self.display_banner()
