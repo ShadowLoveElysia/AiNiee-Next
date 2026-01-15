@@ -412,12 +412,26 @@ class TaskUI:
             self.refresh_layout()
 
 class WebLogger:
-    def __init__(self, stream=None):
+    def __init__(self, stream=None, show_detailed=False):
         self.last_stats_time = 0
         self.stream = stream or sys.__stdout__
+        self.show_detailed = show_detailed
+        self.internal_api_url = os.environ.get("AINIEE_INTERNAL_API_URL")
+        self.current_source = ""
+        self._last_result_time = 0
+
+    def _push_to_web(self, source, translation):
+        if not self.internal_api_url: return
+        try:
+            import httpx
+            # 同步发送，但在本地网络下通常极快
+            httpx.post(f"{self.internal_api_url}/api/internal/update_comparison", 
+                      json={"source": source, "translation": translation},
+                      timeout=1.0)
+        except: pass
 
     def log(self, msg):
-        # 预处理：将对象转为字符串
+        # 1. 预处理：将对象转为字符串
         if not isinstance(msg, str):
             from io import StringIO
             with StringIO() as buf:
@@ -426,6 +440,17 @@ class WebLogger:
                 msg_str = buf.getvalue()
         else:
             msg_str = msg
+
+        # 2. 拦截实时对照信号
+        if "<<<RAW_RESULT>>>" in msg_str:
+            if not self.show_detailed: return
+            if time.time() - self._last_result_time < 0.5: return
+            try:
+                data = msg_str.split("<<<RAW_RESULT>>>")[1].strip()
+                if data:
+                    self._push_to_web(self.current_source, data)
+            except: pass
+            return
 
         if msg_str:
             # Strip rich markup for web log stream
@@ -437,12 +462,23 @@ class WebLogger:
             except: pass
 
     def on_source_data(self, event, data):
-        """Web 模式下通过 stdout 信号同步，此处不处理单发原文"""
-        pass
+        """Web 模式下同步原文，用于后续对照发送"""
+        if not self.show_detailed: return
+        self.current_source = str(data.get("data", ""))
 
     def on_result_data(self, event, data):
-        """Web 模式下通过子进程的 stdout 信号直接由任务类发送，此处不再重复分发"""
-        pass
+        """Web 模式下接收到译文数据包，推送至 WebServer"""
+        if not self.show_detailed: return
+        raw_content = str(data.get("data", ""))
+        source_content = data.get("source")
+        if not raw_content and not source_content: return
+        
+        if source_content:
+            self.current_source = str(source_content)
+        
+        if raw_content:
+            self._push_to_web(self.current_source, raw_content)
+            self._last_result_time = time.time()
 
     def update_progress(self, event, data):
         if not data: return
@@ -2118,7 +2154,7 @@ class CLIMenu:
 
         # Start Logic
         if web_mode:
-            self.ui = WebLogger(stream=original_stdout)
+            self.ui = WebLogger(stream=original_stdout, show_detailed=self.config.get("show_detailed_logs", False))
         else:
             self.ui = TaskUI(parent_cli=self)
             

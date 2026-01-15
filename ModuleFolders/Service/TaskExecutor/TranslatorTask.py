@@ -2,6 +2,7 @@ import copy
 import threading
 import re
 import time
+import requests
 import itertools
 
 from rich import box
@@ -356,11 +357,14 @@ class TranslatorTask(Base):
         # 2. 强制发送 TUI 数据 (双通道)
         if self.config.show_detailed_logs:
             all_trans = "\n".join(restore_response_dict.values()) if restore_response_dict else "[Error: No Data]"
+            source_preview = list(self.source_text_dict.values())
+            all_source = "\n".join(source_preview) if source_preview else ""
+
             # 通道1: 事件总线 (用于宿主进程/监控模式)
             self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": all_source, "data": all_trans})
             
             # 通道2: 网页端同步 (直接调用 WebServer 内部接口)
-            import requests, os as system_os
+            import os as system_os
             try:
                 # 动态获取父进程传递的 WebServer 地址
                 internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")

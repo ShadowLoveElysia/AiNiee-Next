@@ -1,6 +1,7 @@
 import copy
 import re
 import time
+import requests
 import itertools
 
 from rich import box
@@ -342,24 +343,26 @@ class PolisherTask(Base):
             restore_response_dict = copy.copy(response_dict)
             restore_response_dict = self.text_processor.restore_all(self.config, restore_response_dict)
 
-            # --- NEW: 发送对照数据 ---
-            if self.config.show_detailed_logs:
-                all_res = "\n".join(restore_response_dict.values())
-                # 通道1: 事件总线
-                self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": all_source, "data": all_res})
-                
-                # 通道2: 网页端同步
-                import requests, os as system_os
-                try:
-                    # 动态获取父进程传递的 WebServer 地址
-                    internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
-                    requests.post(
-                        f"{internal_api_base}/api/internal/update_comparison",
-                        json={"source": all_source, "translation": all_res},
-                        timeout=1
-                    )
-                except:
-                    pass
+        # 2. 强制发送 TUI 数据 (双通道)
+        if self.config.show_detailed_logs:
+            all_res = "\n".join(restore_response_dict.values()) if restore_response_dict else "[Error: No Data]"
+            source_preview = list(self.source_text_dict.values())
+            all_source = "\n".join(source_preview) if source_preview else ""
+
+            # 通道1: 事件总线 (用于宿主进程/监控模式)
+            self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": all_source, "data": all_res})
+
+            # 通道2: 网页端同步
+            import os as system_os
+            try:
+                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
+                requests.post(
+                    f"{internal_api_base}/api/internal/update_comparison",
+                    json={"source": all_source, "translation": all_res},
+                    timeout=1
+                )
+            except:
+                pass
 
             # 更新译文结果到缓存数据中
             for item, response in zip(self.items, restore_response_dict.values()):
