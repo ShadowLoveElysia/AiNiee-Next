@@ -626,5 +626,6 @@
     "label_input_path": "",
     "interactive_mode": true,
     "translation_prompt_selection": {},
-    "polishing_prompt_selection": {}
+    "polishing_prompt_selection": {},
+    "unlocked_themes": ["default"]
 }

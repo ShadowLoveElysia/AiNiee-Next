@@ -7,42 +7,15 @@ github版本/
 # Ignore personal config
 Resource/config.json
 
-# WebServer: Ignore source, keep dist
-
-Tools/WebServer/components/
-
-Tools/WebServer/contexts/
-
-Tools/WebServer/pages/
-
-Tools/WebServer/services/
-
-Tools/WebServer/App.tsx
-
-Tools/WebServer/constants.ts
-
-Tools/WebServer/index.html
-
-Tools/WebServer/index.tsx
-
-Tools/WebServer/tsconfig.json
-
-Tools/WebServer/types.ts
-
-Tools/WebServer/vite.config.ts
-
-Tools/WebServer/package.json
-
-Tools/WebServer/package-lock.json
-
+# WebServer
 Tools/WebServer/node_modules/
-
-Tools/WebServer/.gitignore
-
-
-
-# Keep dist
-
+Tools/WebServer/components/
+Tools/WebServer/pages/
+Tools/WebServer/contexts/
+Tools/WebServer/services/
+Tools/WebServer/App.tsx
+Tools/WebServer/constants.ts
+Tools/WebServer/types.ts
 !Tools/WebServer/dist/
 
 
