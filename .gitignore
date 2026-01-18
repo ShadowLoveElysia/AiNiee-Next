@@ -4,8 +4,10 @@ __pycache__/
 *.pyc
 github版本/
 
-# Ignore personal config
+# Ignore personal config and profiles
 Resource/config.json
+Resource/profiles/
+Resource/queue_tasks.json
 
 # WebServer
 Tools/WebServer/node_modules/
