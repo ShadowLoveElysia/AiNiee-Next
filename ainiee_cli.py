@@ -47,6 +47,7 @@ except Exception: pass
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Base.PluginManager import PluginManager
 from ModuleFolders.Infrastructure.Cache.CacheItem import TranslationStatus
+from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager, QueueTaskItem
 from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
 from ModuleFolders.Domain.FileReader.FileReader import FileReader
 from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
@@ -529,6 +530,7 @@ class CLIMenu:
         self.task_executor = TaskExecutor(self.plugin_manager, self.cache_manager, self.file_reader, self.file_outputer)
         self.file_selector = FileSelector(i18n)
         self.update_manager = UpdateManager(i18n)
+        self.queue_manager = QueueManager()  # 添加队列管理器
         
         # 输入监听器
         self.input_listener = InputListener()
@@ -1075,13 +1077,15 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_polishing", "export_only", "settings", "api_settings", "glossary", "plugin_settings", "profiles", "update", "start_web_server"]
-            colors = ["green", "green", "magenta", "blue", "blue", "yellow", "cyan", "cyan", "dim", "bold magenta"]
+            menus = ["start_translation", "start_polishing", "export_only", "queue_management", "settings", "api_settings", "glossary", "plugin_settings", "profiles", "update", "start_web_server"]
+            colors = ["green", "green", "magenta", "bright_blue", "blue", "blue", "yellow", "cyan", "cyan", "dim", "bold magenta"]
             
-            for i, (m, c) in enumerate(zip(menus, colors)): 
+            for i, (m, c) in enumerate(zip(menus, colors)):
                 label = i18n.get(f"menu_{m}")
                 if m == "start_web_server" and label == f"menu_{m}":
                     label = "Start Web Server" # Fallback if not in json
+                elif m == "queue_management" and label == f"menu_{m}":
+                    label = "队列管理 (Queue Management)" # Fallback if not in json
                 table.add_row(f"[{c}]{i+1}.[/]", label)
                 
             table.add_row("[red]0.[/]", i18n.get("menu_exit")); console.print(table)
@@ -1089,12 +1093,13 @@ class CLIMenu:
             console.print("\n")
             
             actions = [
-                sys.exit, 
-                lambda: self.run_task(TaskType.TRANSLATION), 
-                lambda: self.run_task(TaskType.POLISH), 
-                self.run_export_only, 
-                self.settings_menu, 
-                self.api_settings_menu, 
+                sys.exit,
+                lambda: self.run_task(TaskType.TRANSLATION),
+                lambda: self.run_task(TaskType.POLISH),
+                self.run_export_only,
+                self.queue_management_menu,  # 添加队列管理
+                self.settings_menu,
+                self.api_settings_menu,
                 self.prompt_menu,
                 self.plugin_settings_menu,
                 self.profiles_menu,
@@ -1102,6 +1107,276 @@ class CLIMenu:
                 self.start_web_server
             ]
             actions[choice]()
+
+    def queue_management_menu(self):
+        """队列管理菜单"""
+        while True:
+            self.display_banner()
+            console.print(Panel(f"[bold]队列管理 (Queue Management)[/bold]"))
+
+            # 显示当前队列状态
+            tasks = self.queue_manager.get_all_tasks()
+            if tasks:
+                table = Table(show_header=True)
+                table.add_column("序号", style="dim", width=4)
+                table.add_column("类型", width=8)
+                table.add_column("输入文件", style="cyan")
+                table.add_column("状态", width=12)
+
+                for i, task in enumerate(tasks, 1):
+                    task_type = "翻译" if task.task_type == TaskType.TRANSLATION else "润色"
+                    filename = os.path.basename(task.input_path)
+                    status_color = {
+                        "waiting": "[yellow]等待中[/yellow]",
+                        "translating": "[blue]翻译中[/blue]",
+                        "polishing": "[blue]润色中[/blue]",
+                        "completed": "[green]已完成[/green]",
+                        "error": "[red]错误[/red]",
+                        "stopped": "[red]已停止[/red]"
+                    }.get(task.status, task.status)
+
+                    table.add_row(str(i), task_type, filename, status_color)
+
+                console.print(table)
+                console.print(f"\n[dim]当前队列中有 {len(tasks)} 个任务[/dim]\n")
+            else:
+                console.print("[dim]队列为空[/dim]\n")
+
+            # 菜单选项
+            options_table = Table(show_header=False, box=None)
+            options_table.add_row("[green]1.[/]", "添加新任务到队列")
+            options_table.add_row("[red]2.[/]", "移除指定任务")
+            options_table.add_row("[blue]3.[/]", "精细化修改（自定义每个任务设置）")
+            options_table.add_row("[cyan]4.[/]", "在编辑器中编辑队列文件")
+            options_table.add_row("[red]5.[/]", "清空所有任务")
+            options_table.add_row("[bold green]6.[/]", "开始顺序执行队列")
+            options_table.add_row("[yellow]7.[/]", "调整队列顺序")
+            options_table.add_row("[dim]0.[/]", "返回上一级")
+
+            console.print(options_table)
+
+            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(8)], show_choices=False)
+            console.print()
+
+            if choice == 0:
+                break
+            elif choice == 1:
+                self._add_task_to_queue()
+            elif choice == 2:
+                self._remove_task_from_queue()
+            elif choice == 3:
+                self._edit_task_settings()
+            elif choice == 4:
+                self._edit_queue_file_in_editor()
+            elif choice == 5:
+                self._clear_all_tasks()
+            elif choice == 6:
+                self._execute_queue()
+            elif choice == 7:
+                self._reorder_queue()
+
+    def _add_task_to_queue(self):
+        """添加新任务到队列"""
+        # 选择任务类型
+        console.print("[bold]选择任务类型:[/bold]")
+        task_type_table = Table(show_header=False, box=None)
+        task_type_table.add_row("[green]1.[/]", "翻译任务")
+        task_type_table.add_row("[blue]2.[/]", "润色任务")
+        console.print(task_type_table)
+
+        task_choice = IntPrompt.ask("选择任务类型", choices=["1", "2"], show_choices=False)
+        task_type = TaskType.TRANSLATION if task_choice == 1 else TaskType.POLISH
+
+        # 选择输入文件
+        input_path = self.file_selector.select_file()
+        if not input_path:
+            console.print("[red]未选择文件，取消添加任务[/red]")
+            return
+
+        # 创建任务项（使用当前配置）
+        task = QueueTaskItem(
+            task_type=task_type,
+            input_path=input_path,
+            output_path=self.config.get("label_output_path"),
+            profile=self.active_profile_name,
+            rules_profile=self.active_rules_profile_name,
+            source_lang=self.config.get("source_language"),
+            target_lang=self.config.get("target_language"),
+            project_type=self.config.get("translation_project"),
+            platform=self.config.get("target_platform"),
+            api_url=self.config.get("base_url"),
+            api_key=self.config.get("api_key"),
+            model=self.config.get("model"),
+            threads=self.config.get("user_thread_counts"),
+            retry=self.config.get("retry_count"),
+            timeout=self.config.get("request_timeout"),
+            rounds=self.config.get("round_limit"),
+            pre_lines=self.config.get("pre_line_counts"),
+            lines_limit=self.config.get("lines_limit"),
+            tokens_limit=self.config.get("tokens_limit"),
+            think_depth=self.config.get("think_depth"),
+            thinking_budget=self.config.get("thinking_budget")
+        )
+
+        self.queue_manager.add_task(task)
+        console.print(f"[green]已添加任务到队列: {os.path.basename(input_path)}[/green]")
+        Prompt.ask("\n按回车键继续...")
+
+    def _remove_task_from_queue(self):
+        """移除指定任务"""
+        tasks = self.queue_manager.get_all_tasks()
+        if not tasks:
+            console.print("[red]队列为空，无任务可移除[/red]")
+            Prompt.ask("\n按回车键继续...")
+            return
+
+        try:
+            index = IntPrompt.ask(f"请输入要移除的任务序号 (1-{len(tasks)})", choices=[str(i) for i in range(1, len(tasks) + 1)])
+            self.queue_manager.remove_task(index - 1)
+            console.print(f"[green]已移除第 {index} 个任务[/green]")
+        except Exception as e:
+            console.print(f"[red]移除任务失败: {e}[/red]")
+
+        Prompt.ask("\n按回车键继续...")
+
+    def _edit_task_settings(self):
+        """精细化修改任务设置"""
+        tasks = self.queue_manager.get_all_tasks()
+        if not tasks:
+            console.print("[red]队列为空，无任务可编辑[/red]")
+            Prompt.ask("\n按回车键继续...")
+            return
+
+        try:
+            index = IntPrompt.ask(f"请输入要编辑的任务序号 (1-{len(tasks)})", choices=[str(i) for i in range(1, len(tasks) + 1)])
+            task = tasks[index - 1]
+
+            if task.locked:
+                console.print("[red]该任务正在执行中，无法编辑[/red]")
+                Prompt.ask("\n按回车键继续...")
+                return
+
+            # 简化编辑界面，只显示主要设置
+            console.print(f"[bold]编辑任务: {os.path.basename(task.input_path)}[/bold]\n")
+
+            # 编辑基础设置
+            if Confirm.ask("是否修改输出路径?", default=False):
+                task.output_path = Prompt.ask("输出路径", default=task.output_path or "")
+
+            if Confirm.ask("是否修改源语言?", default=False):
+                task.source_lang = Prompt.ask("源语言", default=task.source_lang or "")
+
+            if Confirm.ask("是否修改目标语言?", default=False):
+                task.target_lang = Prompt.ask("目标语言", default=task.target_lang or "")
+
+            if Confirm.ask("是否修改API模型?", default=False):
+                task.model = Prompt.ask("API模型", default=task.model or "")
+
+            if Confirm.ask("是否修改线程数?", default=False):
+                task.threads = IntPrompt.ask("线程数", default=task.threads or 0)
+
+            if Confirm.ask("是否修改思考深度?", default=False):
+                task.think_depth = IntPrompt.ask("思考深度", default=task.think_depth or 0)
+
+            if Confirm.ask("是否修改思考预算?", default=False):
+                task.thinking_budget = IntPrompt.ask("思考预算", default=task.thinking_budget or 0)
+
+            self.queue_manager.save_tasks()
+            console.print("[green]任务设置已保存[/green]")
+
+        except Exception as e:
+            console.print(f"[red]编辑任务失败: {e}[/red]")
+
+        Prompt.ask("\n按回车键继续...")
+
+    def _edit_queue_file_in_editor(self):
+        """在编辑器中编辑队列文件"""
+        try:
+            queue_file = self.queue_manager.queue_file
+            if not os.path.exists(queue_file):
+                console.print("[red]队列文件不存在[/red]")
+                Prompt.ask("\n按回车键继续...")
+                return
+
+            # 尝试用系统默认编辑器打开
+            if os.name == 'nt':  # Windows
+                os.startfile(queue_file)
+            else:  # Unix/Linux
+                os.system(f"xdg-open {queue_file}")
+
+            console.print(f"[green]已在编辑器中打开队列文件: {queue_file}[/green]")
+            console.print("[yellow]编辑完成后，队列将自动重新加载[/yellow]")
+
+            Prompt.ask("\n编辑完成后按回车键重新加载...")
+            self.queue_manager.load_tasks()
+            console.print("[green]队列文件已重新加载[/green]")
+
+        except Exception as e:
+            console.print(f"[red]打开编辑器失败: {e}[/red]")
+
+        Prompt.ask("\n按回车键继续...")
+
+    def _clear_all_tasks(self):
+        """清空所有任务"""
+        tasks = self.queue_manager.get_all_tasks()
+        if not tasks:
+            console.print("[red]队列已经为空[/red]")
+            Prompt.ask("\n按回车键继续...")
+            return
+
+        if Confirm.ask(f"确认要清空队列中的所有 {len(tasks)} 个任务吗?", default=False):
+            self.queue_manager.clear_tasks()
+            console.print("[green]所有任务已清空[/green]")
+        else:
+            console.print("[yellow]操作已取消[/yellow]")
+
+        Prompt.ask("\n按回车键继续...")
+
+    def _execute_queue(self):
+        """开始顺序执行队列"""
+        tasks = self.queue_manager.get_all_tasks()
+        if not tasks:
+            console.print("[red]队列为空，无任务可执行[/red]")
+            Prompt.ask("\n按回车键继续...")
+            return
+
+        console.print(f"[bold green]开始执行队列中的 {len(tasks)} 个任务[/bold green]")
+
+        # 这里应该调用队列管理器的执行方法
+        # 但需要与现有的任务执行系统集成
+        try:
+            self.queue_manager.execute_all_tasks(self)
+            console.print("[bold green]队列执行完成[/bold green]")
+        except Exception as e:
+            console.print(f"[red]队列执行失败: {e}[/red]")
+
+        Prompt.ask("\n按回车键继续...")
+
+    def _reorder_queue(self):
+        """调整队列顺序"""
+        tasks = self.queue_manager.get_all_tasks()
+        if len(tasks) < 2:
+            console.print("[red]队列中任务数量不足，无法调整顺序[/red]")
+            Prompt.ask("\n按回车键继续...")
+            return
+
+        console.print("[bold]当前队列顺序:[/bold]")
+        for i, task in enumerate(tasks, 1):
+            console.print(f"{i}. {os.path.basename(task.input_path)}")
+
+        try:
+            from_pos = IntPrompt.ask(f"请输入要移动的任务序号 (1-{len(tasks)})",
+                                   choices=[str(i) for i in range(1, len(tasks) + 1)])
+            to_pos = IntPrompt.ask(f"请输入目标位置 (1-{len(tasks)})",
+                                 choices=[str(i) for i in range(1, len(tasks) + 1)])
+
+            self.queue_manager.reorder_task(from_pos - 1, to_pos - 1)
+            console.print(f"[green]已将第 {from_pos} 个任务移动到第 {to_pos} 位[/green]")
+
+        except Exception as e:
+            console.print(f"[red]调整顺序失败: {e}[/red]")
+
+        Prompt.ask("\n按回车键继续...")
 
     def rules_profiles_menu(self):
         while True:
@@ -1291,17 +1566,21 @@ class CLIMenu:
             table.add_row("20", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
             table.add_row("21", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
             table.add_row("22", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
+            table.add_row("23", "XLSX自动转换 (XLSX Auto Conversion)", "[green]ON[/]" if self.config.get("enable_xlsx_conversion", True) else "[red]OFF[/]")
+            table.add_row("24", i18n.get("menu_api_think_switch"), "[green]ON[/]" if self.config.get("think_switch", False) else "[red]OFF[/]")
+            table.add_row("25", i18n.get("menu_api_think_depth"), str(self.config.get("think_depth", 0)))
+            table.add_row("26", "思考预算 (Thinking Budget)", str(self.config.get("thinking_budget", 0)))
 
             table.add_section()
             # --- Section 3: Sub-menus & Advanced ---
-            table.add_row("23", i18n.get("setting_project_type"), self.config.get("translation_project", "AutoType"))
-            table.add_row("24", i18n.get("setting_trans_mode"), f"{limit_mode_str} ({self.config.get(limit_val_key, 20)})")
-            table.add_row("25", i18n.get("menu_api_pool_settings"), f"[cyan]{len(self.config.get('backup_apis', []))} APIs[/]")
-            table.add_row("26", i18n.get("menu_prompt_features"), "...")
-            table.add_row("27", i18n.get("menu_response_checks"), "...")
+            table.add_row("27", i18n.get("setting_project_type"), self.config.get("translation_project", "AutoType"))
+            table.add_row("28", i18n.get("setting_trans_mode"), f"{limit_mode_str} ({self.config.get(limit_val_key, 20)})")
+            table.add_row("29", i18n.get("menu_api_pool_settings"), f"[cyan]{len(self.config.get('backup_apis', []))} APIs[/]")
+            table.add_row("30", i18n.get("menu_prompt_features"), "...")
+            table.add_row("31", i18n.get("menu_response_checks"), "...")
 
             console.print(table); console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(28)], show_choices=False)
+            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(32)], show_choices=False)
             console.print("\n")
 
             if choice == 0: break
@@ -1331,13 +1610,17 @@ class CLIMenu:
             elif choice == 20: self.config["enable_smart_round_limit"] = not self.config.get("enable_smart_round_limit", False)
             elif choice == 21: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
             elif choice == 22: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
+            elif choice == 23: self.config["enable_xlsx_conversion"] = not self.config.get("enable_xlsx_conversion", True)
+            elif choice == 24: self.config["think_switch"] = not self.config.get("think_switch", False)
+            elif choice == 25: self.config["think_depth"] = IntPrompt.ask(i18n.get("prompt_think_depth"), default=self.config.get("think_depth", 0))
+            elif choice == 26: self.config["thinking_budget"] = IntPrompt.ask("思考预算 (Thinking Budget, 0-10000)", default=self.config.get("thinking_budget", 0))
 
             # Section 3
-            elif choice == 23: self.project_type_menu()
-            elif choice == 24: self.trans_mode_menu()
-            elif choice == 25: self.api_pool_menu()
-            elif choice == 26: self.prompt_features_menu()
-            elif choice == 27: self.response_checks_menu()
+            elif choice == 27: self.project_type_menu()
+            elif choice == 28: self.trans_mode_menu()
+            elif choice == 29: self.api_pool_menu()
+            elif choice == 30: self.prompt_features_menu()
+            elif choice == 31: self.response_checks_menu()
 
             self.save_config()
 
@@ -2280,6 +2563,8 @@ class CLIMenu:
 
                 # --- Middleware Conversion Logic (Moved Inside Live) ---
                 middleware_exts = ['.mobi', '.azw3', '.kepub', '.fb2', '.lit', '.lrf', '.pdb', '.pmlz', '.rb', '.rtf', '.tcr', '.txtz', '.htmlz']
+                if self.config.get("enable_xlsx_conversion", True):
+                    middleware_exts.append('.xlsx')
                 
                 # We need to access target_path from outer scope. 
                 # Since we modify it, we should be careful. 
@@ -2297,31 +2582,58 @@ class CLIMenu:
                     # 确保输出目录和临时转换文件夹已创建
                     os.makedirs(opath, exist_ok=True)
                     temp_conv_dir = os.path.join(opath, "temp_conv")
-                    
-                    # 逻辑优化：只要临时 EPUB 存在且有效，就跳过转换
-                    potential_epub = os.path.join(temp_conv_dir, f"{base_name}.epub")
-                    if os.path.exists(potential_epub) and os.path.getsize(potential_epub) > 0:
-                        self.ui.log(i18n.get("msg_epub_reuse").format(os.path.basename(potential_epub)))
-                        current_target_path = potential_epub
+
+                    if original_ext == '.xlsx':
+                        # XLSX转换逻辑
+                        potential_csv_dir = os.path.join(temp_conv_dir, f"{base_name}_csv")
+                        potential_csv_main = os.path.join(potential_csv_dir, f"{base_name}.csv")
+                        if os.path.exists(potential_csv_main) and os.path.getsize(potential_csv_main) > 0:
+                            self.ui.log(f"复用现有CSV文件: {os.path.basename(potential_csv_main)}")
+                            current_target_path = potential_csv_main
+                        else:
+                            self.ui.log(f"开始将XLSX转换为CSV格式...")
+                            os.makedirs(potential_csv_dir, exist_ok=True)
+                            try:
+                                import sys
+                                sys.path.insert(0, PROJECT_ROOT)
+                                from xlsx_converter import XlsxConverter
+                                converter = XlsxConverter(current_target_path, potential_csv_dir, "to_csv")
+                                csv_files = converter.convert()
+                                if csv_files:
+                                    # 使用主CSV文件进行翻译
+                                    main_csv = os.path.join(potential_csv_dir, csv_files[0]["csv_file"])
+                                    self.ui.log(f"XLSX已转换为CSV: {os.path.basename(main_csv)}")
+                                    current_target_path = main_csv
+                                else:
+                                    raise Exception("转换失败：未生成CSV文件")
+                            except Exception as e:
+                                self.ui.log(f"[red]XLSX转换失败: {e}[/red]")
+                                return False
                     else:
-                        self.ui.log(i18n.get("msg_epub_conv_start").format(original_ext))
-                        os.makedirs(temp_conv_dir, exist_ok=True)
-                        conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
-                        # 增加 --AiNiee 参数以抑制版权信息写入
-                        cmd = f'uv run "{conv_script}" -p "{current_target_path}" -f 1 -m novel -op "{temp_conv_dir}" -o "{base_name}" --AiNiee'
-                        try:
-                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                            if result.returncode == 0:
-                                epubs = [f for f in os.listdir(temp_conv_dir) if f.endswith(".epub")]
-                                if epubs:
-                                    new_path = os.path.join(temp_conv_dir, epubs[0])
-                                    self.ui.log(i18n.get("msg_epub_conv_success").format(os.path.basename(new_path)))
-                                    current_target_path = new_path
-                                else: raise Exception("No EPUB found")
-                            else: raise Exception(f"Conversion failed: {result.stderr}")
-                        except Exception as e:
-                            self.ui.log(i18n.get("msg_epub_conv_fail").format(e))
-                            time.sleep(2); return 
+                        # 逻辑优化：只要临时 EPUB 存在且有效，就跳过转换
+                        potential_epub = os.path.join(temp_conv_dir, f"{base_name}.epub")
+                        if os.path.exists(potential_epub) and os.path.getsize(potential_epub) > 0:
+                            self.ui.log(i18n.get("msg_epub_reuse").format(os.path.basename(potential_epub)))
+                            current_target_path = potential_epub
+                        else:
+                            self.ui.log(i18n.get("msg_epub_conv_start").format(original_ext))
+                            os.makedirs(temp_conv_dir, exist_ok=True)
+                            conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
+                            # 增加 --AiNiee 参数以抑制版权信息写入
+                            cmd = f'uv run "{conv_script}" -p "{current_target_path}" -f 1 -m novel -op "{temp_conv_dir}" -o "{base_name}" --AiNiee'
+                            try:
+                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                                if result.returncode == 0:
+                                    epubs = [f for f in os.listdir(temp_conv_dir) if f.endswith(".epub")]
+                                    if epubs:
+                                        new_path = os.path.join(temp_conv_dir, epubs[0])
+                                        self.ui.log(i18n.get("msg_epub_conv_success").format(os.path.basename(new_path)))
+                                        current_target_path = new_path
+                                    else: raise Exception("No EPUB found")
+                                else: raise Exception(f"Conversion failed: {result.stderr}")
+                            except Exception as e:
+                                self.ui.log(i18n.get("msg_epub_conv_fail").format(e))
+                                time.sleep(2); return 
                 
                 # --- 1. 文件与缓存加载 ---
                 try:
@@ -2485,14 +2797,34 @@ class CLIMenu:
                 Prompt.ask(f"\n{i18n.get('msg_task_ended')}")
             
             # --- Post-Task Logic (Reverse Conversion) ---
-            if task_success and is_middleware_converted and self.config.get("enable_auto_restore_ebook", False):
-                 self.ui.log(f"[cyan]Restoring original format...[/cyan]")
-                 # ... Reuse existing logic or simplified ...
-                 # Since I can't easily reuse the exact block without copying, I'll implement a simple one
-                 output_dir = self.config.get("label_output_path")
-                 if output_dir:
-                     translated_epubs = [f for f in os.listdir(output_dir) if f.endswith(".epub")]
-                     if translated_epubs:
+            if task_success and is_middleware_converted:
+                output_dir = self.config.get("label_output_path")
+
+                # XLSX 回转逻辑
+                if original_ext == '.xlsx' and self.config.get("enable_xlsx_conversion", True):
+                    self.ui.log(f"[cyan]正在将CSV回转为XLSX格式...[/cyan]")
+                    if output_dir:
+                        try:
+                            import sys
+                            sys.path.insert(0, PROJECT_ROOT)
+                            from xlsx_converter import XlsxConverter
+                            temp_conv_dir = os.path.join(opath, "temp_conv")
+                            csv_dir = os.path.join(temp_conv_dir, f"{base_name}_csv")
+                            if os.path.exists(csv_dir):
+                                converter = XlsxConverter("", csv_dir, "to_xlsx")
+                                restored_xlsx = converter.convert()
+                                self.ui.log(f"[green]XLSX文件已恢复: {restored_xlsx}[/green]")
+                        except Exception as e:
+                            self.ui.log(f"[red]XLSX回转失败: {e}[/red]")
+
+                # 电子书回转逻辑
+                elif original_ext != '.xlsx' and self.config.get("enable_auto_restore_ebook", False):
+                    self.ui.log(f"[cyan]Restoring original format...[/cyan]")
+                    # ... Reuse existing logic or simplified ...
+                    # Since I can't easily reuse the exact block without copying, I'll implement a simple one
+                    if output_dir:
+                        translated_epubs = [f for f in os.listdir(output_dir) if f.endswith(".epub")]
+                        if translated_epubs:
                          base_name = os.path.splitext(os.path.basename(target_path))[0] # This is the temp epub name
                          # Wait, target_path was swapped to the temp epub. 
                          # We need to map back to original ext.
