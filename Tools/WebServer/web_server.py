@@ -387,6 +387,39 @@ class PluginEnableRequest(BaseModel):
 class DeleteFileRequest(BaseModel):
     files: List[str]
 
+class QueueTaskItem(BaseModel):
+    task_type: int
+    input_path: str
+    output_path: Optional[str] = None
+    profile: Optional[str] = None
+    rules_profile: Optional[str] = None
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = None
+    project_type: Optional[str] = None
+    platform: Optional[str] = None
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    threads: Optional[int] = None
+    retry: Optional[int] = None
+    timeout: Optional[int] = None
+    rounds: Optional[int] = None
+    pre_lines: Optional[int] = None
+    lines_limit: Optional[int] = None
+    tokens_limit: Optional[int] = None
+    think_depth: Optional[str] = None
+    thinking_budget: Optional[int] = None
+    status: Optional[str] = "waiting"
+
+class QueueMoveRequest(BaseModel):
+    to_index: int
+
+class QueueReorderRequest(BaseModel):
+    new_order: List[int]
+
+class QueueRawRequest(BaseModel):
+    content: str
+
 class TaskPayload(BaseModel):
     """Pydantic model that EXACTLY matches the frontend's TaskPayload interface in types.ts"""
     task: str
@@ -1226,6 +1259,318 @@ async def get_writing_style_draft():
     res = get_draft_generic("writing_style_draft.json")
     if res is None: return {"content": ""}
     return {"content": res}
+
+# --- Queue Management API ---
+
+def get_queue_manager():
+    """Get QueueManager instance"""
+    try:
+        from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
+        return QueueManager()
+    except ImportError:
+        raise HTTPException(status_code=500, detail="QueueManager not available")
+
+@app.get("/api/queue")
+async def get_queue():
+    """Get all tasks in the queue"""
+    try:
+        qm = get_queue_manager()
+        tasks = []
+
+        for idx, task in enumerate(qm.tasks):
+            # Ensure all tasks have the locked attribute and default status
+            if not hasattr(task, 'locked'):
+                task.locked = False
+            if not hasattr(task, 'status'):
+                task.status = "waiting"
+
+            task_dict = {
+                "task_type": task.task_type,
+                "input_path": task.input_path,
+                "output_path": getattr(task, "output_path", ""),
+                "profile": getattr(task, "profile", ""),
+                "rules_profile": getattr(task, "rules_profile", ""),
+                "source_lang": getattr(task, "source_lang", ""),
+                "target_lang": getattr(task, "target_lang", ""),
+                "project_type": getattr(task, "project_type", ""),
+                "platform": getattr(task, "platform", ""),
+                "api_url": getattr(task, "api_url", ""),
+                "api_key": getattr(task, "api_key", ""),
+                "model": getattr(task, "model", ""),
+                "threads": getattr(task, "threads", None),
+                "retry": getattr(task, "retry", None),
+                "timeout": getattr(task, "timeout", None),
+                "rounds": getattr(task, "rounds", None),
+                "pre_lines": getattr(task, "pre_lines", None),
+                "lines_limit": getattr(task, "lines_limit", None),
+                "tokens_limit": getattr(task, "tokens_limit", None),
+                "think_depth": getattr(task, "think_depth", ""),
+                "thinking_budget": getattr(task, "thinking_budget", None),
+                "status": getattr(task, "status", "waiting"),
+                "locked": getattr(task, "locked", False)
+            }
+            tasks.append(task_dict)
+        return tasks
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/queue")
+async def add_to_queue(item: QueueTaskItem):
+    """Add a new task to the queue"""
+    try:
+        qm = get_queue_manager()
+        from ModuleFolders.Service.TaskQueue.QueueManager import QueueTaskItem as QueueTaskItemImpl
+
+        # Create task with proper constructor parameters
+        task = QueueTaskItemImpl(
+            task_type=item.task_type,
+            input_path=item.input_path,
+            output_path=item.output_path,
+            profile=item.profile,
+            rules_profile=item.rules_profile,
+            source_lang=item.source_lang,
+            target_lang=item.target_lang,
+            project_type=item.project_type,
+            platform=item.platform,
+            api_url=item.api_url,
+            api_key=item.api_key,
+            model=item.model,
+            threads=item.threads,
+            retry=item.retry,
+            timeout=item.timeout,
+            rounds=item.rounds,
+            pre_lines=item.pre_lines,
+            lines_limit=item.lines_limit,
+            tokens_limit=item.tokens_limit,
+            think_depth=item.think_depth,
+            thinking_budget=item.thinking_budget
+        )
+
+        # Ensure the task has proper defaults
+        task.status = "waiting"
+        task.locked = False
+
+        qm.add_task(task)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/queue/{index}")
+async def remove_from_queue(index: int):
+    """Remove a task from the queue"""
+    try:
+        qm = get_queue_manager()
+        if qm.remove_task(index):
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to remove task")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/queue/{index}")
+async def update_queue_item(index: int, item: QueueTaskItem):
+    """Update a task in the queue"""
+    try:
+        qm = get_queue_manager()
+        if index < 0 or index >= len(qm.tasks):
+            raise HTTPException(status_code=400, detail="Invalid task index")
+
+        task = qm.tasks[index]
+        task.task_type = item.task_type
+        task.input_path = item.input_path
+        if item.output_path:
+            task.output_path = item.output_path
+        if item.profile:
+            task.profile = item.profile
+        if item.rules_profile:
+            task.rules_profile = item.rules_profile
+        if item.source_lang:
+            task.source_lang = item.source_lang
+        if item.target_lang:
+            task.target_lang = item.target_lang
+        if item.project_type:
+            task.project_type = item.project_type
+        if item.platform:
+            task.platform = item.platform
+        if item.api_url:
+            task.api_url = item.api_url
+        if item.api_key:
+            task.api_key = item.api_key
+        if item.model:
+            task.model = item.model
+        if item.threads is not None:
+            task.threads = item.threads
+        if item.retry is not None:
+            task.retry = item.retry
+        if item.timeout is not None:
+            task.timeout = item.timeout
+        if item.rounds is not None:
+            task.rounds = item.rounds
+        if item.pre_lines is not None:
+            task.pre_lines = item.pre_lines
+        if item.lines_limit is not None:
+            task.lines_limit = item.lines_limit
+        if item.tokens_limit is not None:
+            task.tokens_limit = item.tokens_limit
+        if item.think_depth:
+            task.think_depth = item.think_depth
+        if item.thinking_budget is not None:
+            task.thinking_budget = item.thinking_budget
+
+        if qm.update_task(index, task):
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to update task")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/queue/clear")
+async def clear_queue():
+    """Clear all tasks from the queue"""
+    try:
+        qm = get_queue_manager()
+        if qm.clear_tasks():
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to clear queue")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/queue/run")
+async def run_queue():
+    """Start queue execution"""
+    try:
+        qm = get_queue_manager()
+        # Check if QueueManager has run_queue method, if not use alternative
+        if hasattr(qm, 'run_queue'):
+            qm.run_queue()
+        else:
+            # Alternative: set is_running flag or call CLI task execution
+            qm.is_running = True
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/queue/edit_file")
+async def edit_queue_file():
+    """Open queue file in external editor"""
+    try:
+        qm = get_queue_manager()
+        # Check if method exists, if not provide fallback
+        if hasattr(qm, 'open_queue_editor'):
+            qm.open_queue_editor()
+        else:
+            # Fallback: could open file with system editor
+            import subprocess
+            import sys
+            if sys.platform.startswith('win'):
+                subprocess.run(['notepad', qm.queue_file])
+            else:
+                subprocess.run(['xdg-open', qm.queue_file])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/queue/raw")
+async def get_queue_raw():
+    """Get raw queue JSON content"""
+    try:
+        qm = get_queue_manager()
+        # Read the file directly if method doesn't exist
+        if hasattr(qm, 'get_queue_json'):
+            content = qm.get_queue_json()
+        else:
+            # Fallback: read file content directly
+            try:
+                with open(qm.queue_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except FileNotFoundError:
+                content = "[]"
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/queue/raw")
+async def save_queue_raw(request: QueueRawRequest):
+    """Save raw queue JSON content"""
+    try:
+        qm = get_queue_manager()
+        if hasattr(qm, 'load_from_json'):
+            qm.load_from_json(request.content)
+        else:
+            # Fallback: save to file directly and reload
+            try:
+                import rapidjson as json
+                # Validate JSON first
+                json.loads(request.content)
+                # Save to file
+                with open(qm.queue_file, 'w', encoding='utf-8') as f:
+                    f.write(request.content)
+                # Reload tasks
+                qm.load_tasks()
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON format")
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/queue/{from_index}/move")
+async def move_queue_item(from_index: int, request: QueueMoveRequest):
+    """Move a task to a different position"""
+    try:
+        qm = get_queue_manager()
+
+        if from_index < 0 or from_index >= len(qm.tasks) or request.to_index < 0 or request.to_index >= len(qm.tasks):
+            raise HTTPException(status_code=400, detail="Invalid task index")
+
+        # Check if tasks can be modified
+        if not qm.can_modify_task(from_index):
+            raise HTTPException(status_code=400, detail="Source task is locked")
+
+        # Check range between from and to for locked tasks
+        start, end = min(from_index, request.to_index), max(from_index, request.to_index)
+        for i in range(start, end + 1):
+            if i != from_index and not qm.can_modify_task(i):
+                raise HTTPException(status_code=400, detail="Cannot move task due to locked tasks in path")
+
+        # Use QueueManager's move_task method
+        if qm.move_task(from_index, request.to_index):
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to move task")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/queue/reorder")
+async def reorder_queue(request: QueueReorderRequest):
+    """Reorder tasks according to new order"""
+    try:
+        qm = get_queue_manager()
+        if len(request.new_order) != len(qm.tasks):
+            raise HTTPException(status_code=400, detail="New order length doesn't match queue length")
+
+        # Use QueueManager's reorder_tasks method if available
+        if hasattr(qm, 'reorder_tasks'):
+            if qm.reorder_tasks(request.new_order):
+                return {"success": True}
+            else:
+                raise HTTPException(status_code=400, detail="Failed to reorder tasks")
+        else:
+            # Fallback: manual reorder
+            # Validate indices first
+            for i in request.new_order:
+                if i < 0 or i >= len(qm.tasks):
+                    raise HTTPException(status_code=400, detail="Invalid task index in new order")
+
+            # Reorder tasks according to new order
+            new_tasks = [qm.tasks[i] for i in request.new_order]
+            qm.tasks = new_tasks
+            qm.save_tasks()
+            return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Static File Serving for the React Frontend ---
 

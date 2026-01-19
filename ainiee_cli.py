@@ -624,6 +624,19 @@ class CLIMenu:
 
             editor_console = Console()
 
+            def get_localized_status(status):
+                status_map = {
+                    "waiting": i18n.get("task_status_waiting"),
+                    "translating": i18n.get("task_status_translating"),
+                    "translated": i18n.get("task_status_translated"),
+                    "polishing": i18n.get("task_status_polishing"),
+                    "completed": i18n.get("task_status_completed"),
+                    "running": i18n.get("task_status_running"),
+                    "error": i18n.get("task_status_error"),
+                    "stopped": i18n.get("task_status_stopped")
+                }
+                return status_map.get(status.lower(), status.upper())
+
             while True:
                 # 热重载队列数据
                 queue_manager.hot_reload_queue()
@@ -653,7 +666,7 @@ class CLIMenu:
 
                     table.add_row(
                         str(i + 1),
-                        f"[{status_style}]{task.status}[/{status_style}]",
+                        f"[{status_style}]{get_localized_status(task.status)}[/{status_style}]",
                         task.task_type,
                         task.input_path[-35:] + "..." if len(task.input_path) > 35 else task.input_path,
                         locked_symbol
@@ -1248,9 +1261,9 @@ class CLIMenu:
                 if m == "start_web_server" and label == f"menu_{m}":
                     label = "Start Web Server" # Fallback if not in json
                 if m == "task_queue" and label == f"menu_{m}":
-                    label = "Task Queue Management" # Fallback
+                    label = i18n.get("menu_task_queue")
                 if m == "start_all_in_one" and label == f"menu_{m}":
-                    label = "Translate & Polish (All-in-One)"
+                    label = i18n.get("menu_start_all_in_one")
                 table.add_row(f"[{c}]{i+1}.[/]", label)
                 
             table.add_row("[red]0.[/]", i18n.get("menu_exit")); console.print(table)
@@ -3112,6 +3125,19 @@ class CLIMenu:
     def task_queue_menu(self):
         from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager, QueueTaskItem
         qm = QueueManager()
+
+        def get_localized_status(status):
+            status_map = {
+                "waiting": i18n.get("task_status_waiting"),
+                "translating": i18n.get("task_status_translating"),
+                "translated": i18n.get("task_status_translated"),
+                "polishing": i18n.get("task_status_polishing"),
+                "completed": i18n.get("task_status_completed"),
+                "running": i18n.get("task_status_running"),
+                "error": i18n.get("task_status_error"),
+                "stopped": i18n.get("task_status_stopped")
+            }
+            return status_map.get(status.lower(), status.upper())
         
         while True:
             self.display_banner()
@@ -3119,10 +3145,10 @@ class CLIMenu:
             
             if qm.tasks:
                 table = Table(show_header=True, box=None)
-                table.add_column("ID", style="dim")
-                table.add_column("Task")
-                table.add_column("Details")
-                table.add_column("Status")
+                table.add_column(i18n.get("table_column_id"), style="dim")
+                table.add_column(i18n.get("table_column_task"))
+                table.add_column(i18n.get("table_column_details"))
+                table.add_column(i18n.get("table_column_status"))
                 
                 for i, task in enumerate(qm.tasks):
                     status_style = "green" if task.status == "completed" else "yellow" if task.status == "running" else "dim"
@@ -3132,7 +3158,7 @@ class CLIMenu:
                         str(i+1),
                         f"[{type_str}] {os.path.basename(task.input_path)}",
                         details,
-                        f"[{status_style}]{task.status.upper()}[/]"
+                        f"[{status_style}]{get_localized_status(task.status)}[/]"
                     )
                 console.print(table)
             else:
@@ -3186,7 +3212,11 @@ class CLIMenu:
                     console.print(Panel(f"[bold]{i18n.get('menu_queue_edit_fine')}[/bold]: #{idx+1} {os.path.basename(t.input_path)}"))
                     
                     # 1. Task Type
-                    t_type_map = {TaskType.TRANSLATION: "Translation", TaskType.POLISH: "Polishing", TaskType.TRANSLATE_AND_POLISH: "All-in-One"}
+                    t_type_map = {
+                        TaskType.TRANSLATION: i18n.get("task_type_translation"),
+                        TaskType.POLISH: i18n.get("task_type_polishing"),
+                        TaskType.TRANSLATE_AND_POLISH: i18n.get("task_type_all_in_one")
+                    }
                     console.print(f"\n[cyan]{i18n.get('ui_recent_type')}:[/] {t_type_map.get(t.task_type, 'Unknown')}")
                     new_task_type_str = Prompt.ask(f"{i18n.get('prompt_task_type_queue')}{i18n.get('tip_follow_profile')}", 
                                                    choices=list(t_type_map.values()) + [""], 
@@ -3340,7 +3370,7 @@ class CLIMenu:
                     type_str = "T+P" if task.task_type == TaskType.TRANSLATE_AND_POLISH else "T" if task.task_type == TaskType.TRANSLATION else "P"
                     console.print(f"  {i+1}. [{type_str}] {os.path.basename(task.input_path)}")
 
-                console.print(f"\n[cyan]Options:[/]")
+                console.print(f"\n[cyan]{i18n.get('options_label')}:[/]")
                 console.print(f"[cyan]1.[/] {i18n.get('menu_queue_move_up')}")
                 console.print(f"[cyan]2.[/] {i18n.get('menu_queue_move_down')}")
                 console.print(f"[cyan]3.[/] {i18n.get('menu_queue_move_to')}")
