@@ -333,6 +333,7 @@ class AppConfig(BaseModel):
     target_language: Optional[str] = None
     actual_thread_counts: Optional[int] = None
     temp_file_limit: Optional[int] = 10
+    cache_editor_page_size: Optional[int] = 15
     # Add other fields from your config...
     class Config:
         extra = 'allow' # Allow extra fields not defined here
@@ -1259,6 +1260,332 @@ async def get_writing_style_draft():
     res = get_draft_generic("writing_style_draft.json")
     if res is None: return {"content": ""}
     return {"content": res}
+
+# --- Cache Management API ---
+
+class CacheItem(BaseModel):
+    id: int
+    file_path: str
+    text_index: int
+    source: str
+    translation: str
+    original_translation: str
+    translation_status: int
+    modified: bool = False
+
+class CacheUpdateRequest(BaseModel):
+    item_id: int
+    translation: str
+
+class CacheLoadRequest(BaseModel):
+    project_path: str
+
+# Global cache manager instance
+_cache_manager_instance = None
+
+def get_cache_manager():
+    """Get CacheManager singleton instance"""
+    global _cache_manager_instance
+    try:
+        if _cache_manager_instance is None:
+            from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
+            _cache_manager_instance = CacheManager()
+        return _cache_manager_instance
+    except ImportError:
+        raise HTTPException(status_code=500, detail="CacheManager not available")
+
+@app.get("/api/cache/status")
+async def get_cache_status():
+    """Get cache loading status and basic info"""
+    try:
+        cache_manager = get_cache_manager()
+        has_project = hasattr(cache_manager, 'project') and cache_manager.project and cache_manager.project.files
+
+        if has_project:
+            file_count = len(cache_manager.project.files)
+            total_items = cache_manager.get_item_count()
+            return {
+                "loaded": True,
+                "file_count": file_count,
+                "total_items": total_items,
+                "project_name": getattr(cache_manager.project, 'project_name', 'Unknown Project')
+            }
+        else:
+            return {
+                "loaded": False,
+                "file_count": 0,
+                "total_items": 0,
+                "project_name": None
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get cache status: {e}")
+
+@app.post("/api/cache/load")
+async def load_cache(request: CacheLoadRequest):
+    """Load cache data from project path"""
+    try:
+        cache_manager = get_cache_manager()
+
+        # Smart path handling - detect if path already points to cache file or directory
+        input_path = request.project_path.strip()
+
+        # Normalize path separators for Windows
+        input_path = os.path.normpath(input_path)
+
+        # Determine the correct output_path for CacheManager
+        if input_path.endswith("AinieeCacheData.json"):
+            # Path points directly to cache file
+            output_path = os.path.dirname(os.path.dirname(input_path))  # Remove /cache/AinieeCacheData.json
+        elif input_path.endswith("cache"):
+            # Path points to cache directory
+            output_path = os.path.dirname(input_path)  # Remove /cache
+        elif "AinieeCacheData.json" in input_path:
+            # Handle case where path contains the filename but endswith failed due to encoding issues
+            cache_filename_pos = input_path.find("AinieeCacheData.json")
+            if cache_filename_pos != -1:
+                cache_dir = input_path[:cache_filename_pos].rstrip(os.path.sep)
+                output_path = os.path.dirname(cache_dir)
+                input_path = os.path.join(cache_dir, "AinieeCacheData.json")
+        else:
+            # Path points to project directory (output directory)
+            output_path = input_path
+
+        # Validate that cache file exists before attempting to load
+        if input_path.endswith("AinieeCacheData.json"):
+            # User provided path to cache file directly - use it
+            cache_file_to_check = input_path
+        elif "AinieeCacheData.json" in input_path:
+            # Path contains cache filename somewhere - extract it properly
+            cache_filename_pos = input_path.find("AinieeCacheData.json")
+            cache_file_to_check = input_path[:cache_filename_pos + len("AinieeCacheData.json")]
+        else:
+            # User provided project directory - construct cache file path
+            cache_file_to_check = os.path.join(output_path, "cache", "AinieeCacheData.json")
+
+        cache_file_to_check = os.path.normpath(cache_file_to_check)
+
+        if not os.path.exists(cache_file_to_check):
+            # Try to provide more helpful error information
+            cache_dir = os.path.dirname(cache_file_to_check)
+            if not os.path.exists(cache_dir):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Cache directory not found: {cache_dir}. Please check if the project path is correct."
+                )
+            else:
+                # List files in cache directory to help debug
+                try:
+                    files_in_cache = os.listdir(cache_dir)
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Cache file 'AinieeCacheData.json' not found in {cache_dir}. Found files: {files_in_cache}"
+                    )
+                except PermissionError:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Cache file not found: {cache_file_to_check}. Permission denied accessing cache directory."
+                    )
+
+        # Load cache data - CacheManager expects output_path, not the full cache file path
+        cache_manager.load_from_file(output_path)
+
+        if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+            raise HTTPException(status_code=500, detail="Failed to load cache data")
+
+        file_count = len(cache_manager.project.files)
+        total_items = cache_manager.get_item_count()
+
+        return {
+            "success": True,
+            "message": f"Cache loaded successfully. Found {file_count} files with {total_items} items.",
+            "file_count": file_count,
+            "total_items": total_items
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load cache: {e}")
+
+@app.get("/api/cache/items")
+async def get_cache_items(page: int = 1, page_size: Optional[int] = None, search: str = None):
+    """Get paginated cache items"""
+    try:
+        cache_manager = get_cache_manager()
+
+        if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+            raise HTTPException(status_code=400, detail="No cache data loaded")
+
+        # Get page size from config if not provided
+        if page_size is None:
+            try:
+                config = get_config_data()
+                page_size = config.get('cache_editor_page_size', 15)
+            except:
+                page_size = 15
+
+        # Extract items (similar to TUI's _extract_cache_items)
+        items = []
+        with cache_manager.file_lock:
+            for file_path, cache_file in cache_manager.project.files.items():
+                for idx, item in enumerate(cache_file.items):
+                    if item.source_text and item.source_text.strip():
+                        translation = ""
+                        if item.translated_text:
+                            translation = item.translated_text
+                        elif item.polished_text:
+                            translation = item.polished_text
+
+                        # Include all items with source text (translated or not)
+                        items.append({
+                            'id': len(items),
+                            'file_path': file_path,
+                            'text_index': item.text_index,
+                            'source': item.source_text,
+                            'translation': translation,
+                            'original_translation': translation,
+                            'translation_status': item.translation_status,
+                            'modified': False
+                        })
+
+        # Apply search filter
+        if search and search.strip():
+            search_lower = search.lower()
+            items = [
+                item for item in items
+                if search_lower in item['source'].lower() or search_lower in item['translation'].lower()
+            ]
+
+        # Apply pagination
+        total_items = len(items)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_items = items[start_idx:end_idx]
+
+        total_pages = (total_items + page_size - 1) // page_size
+
+        return {
+            "items": paginated_items,
+            "pagination": {
+                "current_page": page,
+                "page_size": page_size,
+                "total_items": total_items,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get cache items: {e}")
+
+class CacheUpdateRequestWithPath(BaseModel):
+    item_id: int
+    translation: str
+    project_path: str
+
+@app.put("/api/cache/items/{item_id}")
+async def update_cache_item(item_id: int, request: CacheUpdateRequestWithPath):
+    """Update a cache item's translation"""
+    try:
+        cache_manager = get_cache_manager()
+
+        if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+            raise HTTPException(status_code=400, detail="No cache data loaded")
+
+        # Parse project path same way as load_cache
+        input_path = request.project_path.strip()
+        input_path = os.path.normpath(input_path)
+
+        # Determine the correct output_path for CacheManager (same logic as load_cache)
+        if input_path.endswith("AinieeCacheData.json"):
+            output_path = os.path.dirname(os.path.dirname(input_path))
+        elif input_path.endswith("cache"):
+            output_path = os.path.dirname(input_path)
+        elif "AinieeCacheData.json" in input_path:
+            # Handle case where path contains the filename but endswith failed
+            cache_filename_pos = input_path.find("AinieeCacheData.json")
+            if cache_filename_pos != -1:
+                cache_dir = input_path[:cache_filename_pos].rstrip(os.path.sep)
+                output_path = os.path.dirname(cache_dir)
+        else:
+            output_path = input_path
+
+        # Find the item to update
+        item_found = False
+        current_idx = 0
+
+        with cache_manager.file_lock:
+            for file_path, cache_file in cache_manager.project.files.items():
+                for item in cache_file.items:
+                    if item.source_text and item.source_text.strip():
+                        if current_idx == item_id:
+                            # Update the translation
+                            new_translation = request.translation
+
+                            if item.translation_status == 2:  # POLISHED
+                                item.polished_text = new_translation
+                            else:
+                                item.translated_text = new_translation
+                                if item.translation_status == 0:
+                                    item.translation_status = 1
+
+                            # Save to file
+                            cache_manager.require_save_to_file(output_path)
+                            item_found = True
+                            break
+
+                        current_idx += 1
+
+                if item_found:
+                    break
+
+        if not item_found:
+            raise HTTPException(status_code=404, detail="Cache item not found")
+
+        return {"success": True, "message": "Cache item updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update cache item: {e}")
+
+@app.post("/api/cache/search")
+async def search_cache_items(query: str, scope: str = "all", is_regex: bool = False):
+    """Search cache items with advanced options"""
+    try:
+        cache_manager = get_cache_manager()
+
+        if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+            raise HTTPException(status_code=400, detail="No cache data loaded")
+
+        # Use cache manager's search functionality
+        results = cache_manager.search_items(query, scope, is_regex, False)
+
+        # Convert results to web format
+        search_results = []
+        for file_path, line_num, cache_item in results:
+            translation = cache_item.translated_text or cache_item.polished_text or ""
+            search_results.append({
+                "file_path": file_path,
+                "line_number": line_num,
+                "source": cache_item.source_text,
+                "translation": translation,
+                "text_index": cache_item.text_index,
+                "translation_status": cache_item.translation_status
+            })
+
+        return {
+            "results": search_results,
+            "total_found": len(search_results),
+            "query": query,
+            "scope": scope
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to search cache: {e}")
 
 # --- Queue Management API ---
 

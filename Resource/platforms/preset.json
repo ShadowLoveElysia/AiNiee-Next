@@ -65,6 +65,7 @@
     "recent_projects": [],
     "label_output_path": "",
     "polishing_output_path": "",
+    "cache_editor_page_size": 15,
     "platforms": {
         "sakura": {
             "tag": "sakura",
