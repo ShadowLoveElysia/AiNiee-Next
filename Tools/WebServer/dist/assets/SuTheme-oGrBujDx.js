@@ -1,4 +1,4 @@
-import{r as o,j as e}from"./index-Cd9o2-mK.js";const r=({active:s})=>(o.useEffect(()=>{if(s)return document.documentElement.classList.add("su-mode"),()=>document.documentElement.classList.remove("su-mode")},[s]),e.jsxs(e.Fragment,{children:[s&&e.jsxs("div",{className:"su-overlay",children:[e.jsx("div",{className:"su-vignette"}),e.jsx("div",{className:"su-glow-orb su-glow-1"}),e.jsx("div",{className:"su-glow-orb su-glow-2"})]}),e.jsx("style",{children:`
+import{r as o,j as e}from"./index-B11QL8wu.js";const r=({active:s})=>(o.useEffect(()=>{if(s)return document.documentElement.classList.add("su-mode"),()=>document.documentElement.classList.remove("su-mode")},[s]),e.jsxs(e.Fragment,{children:[s&&e.jsxs("div",{className:"su-overlay",children:[e.jsx("div",{className:"su-vignette"}),e.jsx("div",{className:"su-glow-orb su-glow-1"}),e.jsx("div",{className:"su-glow-orb su-glow-2"})]}),e.jsx("style",{children:`
         :root.su-mode {
           --su-green: #88a070;
           --su-teal: #4a6b6b;

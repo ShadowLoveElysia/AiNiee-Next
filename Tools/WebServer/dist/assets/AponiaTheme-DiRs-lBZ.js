@@ -1,4 +1,4 @@
-import{r as n,j as a}from"./index-Cd9o2-mK.js";const i=({active:o})=>(n.useEffect(()=>{if(o)return document.documentElement.classList.add("aponia-mode"),()=>document.documentElement.classList.remove("aponia-mode")},[o]),a.jsxs(a.Fragment,{children:[o&&a.jsxs("div",{className:"aponia-overlay",children:[a.jsx("div",{className:"aponia-vignette"}),a.jsx("div",{className:"aponia-glow-orb aponia-glow-1"}),a.jsx("div",{className:"aponia-glow-orb aponia-glow-2"})]}),a.jsx("style",{children:`
+import{r as n,j as a}from"./index-B11QL8wu.js";const i=({active:o})=>(n.useEffect(()=>{if(o)return document.documentElement.classList.add("aponia-mode"),()=>document.documentElement.classList.remove("aponia-mode")},[o]),a.jsxs(a.Fragment,{children:[o&&a.jsxs("div",{className:"aponia-overlay",children:[a.jsx("div",{className:"aponia-vignette"}),a.jsx("div",{className:"aponia-glow-orb aponia-glow-1"}),a.jsx("div",{className:"aponia-glow-orb aponia-glow-2"})]}),a.jsx("style",{children:`
         :root.aponia-mode {
           --aponia-purple: #9d81ba;
           --aponia-blue: #5b7da1;

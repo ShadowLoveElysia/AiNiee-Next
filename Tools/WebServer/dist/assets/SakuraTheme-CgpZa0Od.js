@@ -1,4 +1,4 @@
-import{r as s,j as a}from"./index-Cd9o2-mK.js";const o=({active:r})=>(s.useEffect(()=>{if(r)return document.documentElement.classList.add("sakura-mode"),()=>document.documentElement.classList.remove("sakura-mode")},[r]),a.jsxs(a.Fragment,{children:[r&&a.jsxs("div",{className:"sakura-overlay",children:[a.jsx("div",{className:"sakura-vignette"}),a.jsx("div",{className:"sakura-glow-orb sakura-glow-1"}),a.jsx("div",{className:"sakura-glow-orb sakura-glow-2"})]}),a.jsx("style",{children:`
+import{r as s,j as a}from"./index-B11QL8wu.js";const o=({active:r})=>(s.useEffect(()=>{if(r)return document.documentElement.classList.add("sakura-mode"),()=>document.documentElement.classList.remove("sakura-mode")},[r]),a.jsxs(a.Fragment,{children:[r&&a.jsxs("div",{className:"sakura-overlay",children:[a.jsx("div",{className:"sakura-vignette"}),a.jsx("div",{className:"sakura-glow-orb sakura-glow-1"}),a.jsx("div",{className:"sakura-glow-orb sakura-glow-2"})]}),a.jsx("style",{children:`
         :root.sakura-mode {
           --sakura-pink: #f4b0c7;
           --sakura-red: #e63946;

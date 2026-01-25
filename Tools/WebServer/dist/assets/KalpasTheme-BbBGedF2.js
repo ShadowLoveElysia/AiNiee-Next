@@ -1,4 +1,4 @@
-import{r,j as a}from"./index-Cd9o2-mK.js";const t=({active:o})=>(r.useEffect(()=>{if(o)return document.documentElement.classList.add("kalpas-mode"),()=>{document.documentElement.classList.remove("kalpas-mode")}},[o]),a.jsxs(a.Fragment,{children:[o&&a.jsxs("div",{className:"kalpas-overlay",children:[a.jsx("div",{className:"kalpas-vignette"}),a.jsx("div",{className:"kalpas-glow-orb kalpas-glow-1"}),a.jsx("div",{className:"kalpas-glow-orb kalpas-glow-2"}),a.jsx("div",{className:"kalpas-embers"})]}),a.jsx("style",{children:`
+import{r,j as a}from"./index-B11QL8wu.js";const t=({active:o})=>(r.useEffect(()=>{if(o)return document.documentElement.classList.add("kalpas-mode"),()=>{document.documentElement.classList.remove("kalpas-mode")}},[o]),a.jsxs(a.Fragment,{children:[o&&a.jsxs("div",{className:"kalpas-overlay",children:[a.jsx("div",{className:"kalpas-vignette"}),a.jsx("div",{className:"kalpas-glow-orb kalpas-glow-1"}),a.jsx("div",{className:"kalpas-glow-orb kalpas-glow-2"}),a.jsx("div",{className:"kalpas-embers"})]}),a.jsx("style",{children:`
         :root.kalpas-mode {
           --kalpas-red: #ff4d4d;
           --kalpas-orange: #ff8c00;

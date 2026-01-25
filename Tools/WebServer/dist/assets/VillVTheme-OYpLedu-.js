@@ -1,4 +1,4 @@
-import{r as o,j as l}from"./index-Cd9o2-mK.js";const t=({active:e})=>(o.useEffect(()=>{if(e)return document.documentElement.classList.add("villv-mode"),()=>document.documentElement.classList.remove("villv-mode")},[e]),l.jsxs(l.Fragment,{children:[e&&l.jsxs("div",{className:"villv-overlay",children:[l.jsx("div",{className:"villv-vignette"}),l.jsx("div",{className:"villv-glow-orb villv-glow-1"}),l.jsx("div",{className:"villv-glow-orb villv-glow-2"})]}),l.jsx("style",{children:`
+import{r as o,j as l}from"./index-B11QL8wu.js";const t=({active:e})=>(o.useEffect(()=>{if(e)return document.documentElement.classList.add("villv-mode"),()=>document.documentElement.classList.remove("villv-mode")},[e]),l.jsxs(l.Fragment,{children:[e&&l.jsxs("div",{className:"villv-overlay",children:[l.jsx("div",{className:"villv-vignette"}),l.jsx("div",{className:"villv-glow-orb villv-glow-1"}),l.jsx("div",{className:"villv-glow-orb villv-glow-2"})]}),l.jsx("style",{children:`
         :root.villv-mode {
           --villv-gold: #c5a059;
           --villv-brass: #845a33;

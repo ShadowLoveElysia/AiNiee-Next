@@ -1,4 +1,4 @@
-import{r as a,j as o}from"./index-Cd9o2-mK.js";const e=({active:r})=>(a.useEffect(()=>{if(r)return document.documentElement.classList.add("pardo-mode"),()=>{document.documentElement.classList.remove("pardo-mode")}},[r]),o.jsxs(o.Fragment,{children:[r&&o.jsxs("div",{className:"pardo-overlay",children:[o.jsx("div",{className:"pardo-vignette"}),o.jsx("div",{className:"pardo-glow-orb pardo-glow-1"}),o.jsx("div",{className:"pardo-glow-orb pardo-glow-2"}),o.jsx("div",{className:"pardo-paw-container"})]}),o.jsx("style",{children:`
+import{r as a,j as o}from"./index-B11QL8wu.js";const e=({active:r})=>(a.useEffect(()=>{if(r)return document.documentElement.classList.add("pardo-mode"),()=>{document.documentElement.classList.remove("pardo-mode")}},[r]),o.jsxs(o.Fragment,{children:[r&&o.jsxs("div",{className:"pardo-overlay",children:[o.jsx("div",{className:"pardo-vignette"}),o.jsx("div",{className:"pardo-glow-orb pardo-glow-1"}),o.jsx("div",{className:"pardo-glow-orb pardo-glow-2"}),o.jsx("div",{className:"pardo-paw-container"})]}),o.jsx("style",{children:`
         :root.pardo-mode {
           --pardo-yellow: #f8e1a7;
           --pardo-orange: #e6b8a2;

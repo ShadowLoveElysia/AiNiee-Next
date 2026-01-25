@@ -1,4 +1,4 @@
-import{r as e,j as o}from"./index-Cd9o2-mK.js";const r=({active:a})=>(e.useEffect(()=>{if(a)return document.documentElement.classList.add("kosma-mode"),()=>document.documentElement.classList.remove("kosma-mode")},[a]),o.jsxs(o.Fragment,{children:[a&&o.jsxs("div",{className:"kosma-overlay",children:[o.jsx("div",{className:"kosma-vignette"}),o.jsx("div",{className:"kosma-glow-orb kosma-glow-1"}),o.jsx("div",{className:"kosma-glow-orb kosma-glow-2"})]}),o.jsx("style",{children:`
+import{r as e,j as o}from"./index-B11QL8wu.js";const r=({active:a})=>(e.useEffect(()=>{if(a)return document.documentElement.classList.add("kosma-mode"),()=>document.documentElement.classList.remove("kosma-mode")},[a]),o.jsxs(o.Fragment,{children:[a&&o.jsxs("div",{className:"kosma-overlay",children:[o.jsx("div",{className:"kosma-vignette"}),o.jsx("div",{className:"kosma-glow-orb kosma-glow-1"}),o.jsx("div",{className:"kosma-glow-orb kosma-glow-2"})]}),o.jsx("style",{children:`
         :root.kosma-mode {
           --kosma-dark: #02040a;
           --kosma-blue: #1a2a4a;

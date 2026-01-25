@@ -1,4 +1,4 @@
-import{r as o,j as e}from"./index-Cd9o2-mK.js";const i=({active:n})=>(o.useEffect(()=>{if(n)return document.documentElement.classList.add("kevin-mode"),()=>document.documentElement.classList.remove("kevin-mode")},[n]),e.jsxs(e.Fragment,{children:[n&&e.jsxs("div",{className:"theme-overlay-container",children:[e.jsx("div",{className:"kevin-vignette"}),e.jsx("div",{className:"kevin-glow-orb kevin-glow-1"}),e.jsx("div",{className:"kevin-glow-orb kevin-glow-2"}),e.jsx("div",{className:"kevin-frost-vignette"})]}),e.jsx("style",{children:`
+import{r as o,j as e}from"./index-B11QL8wu.js";const i=({active:n})=>(o.useEffect(()=>{if(n)return document.documentElement.classList.add("kevin-mode"),()=>document.documentElement.classList.remove("kevin-mode")},[n]),e.jsxs(e.Fragment,{children:[n&&e.jsxs("div",{className:"theme-overlay-container",children:[e.jsx("div",{className:"kevin-vignette"}),e.jsx("div",{className:"kevin-glow-orb kevin-glow-1"}),e.jsx("div",{className:"kevin-glow-orb kevin-glow-2"}),e.jsx("div",{className:"kevin-frost-vignette"})]}),e.jsx("style",{children:`
         :root.kevin-mode {
           --kevin-primary: #00f2ff;
           --kevin-secondary: #70a1ff;

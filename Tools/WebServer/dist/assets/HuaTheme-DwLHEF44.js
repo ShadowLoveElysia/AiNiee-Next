@@ -1,4 +1,4 @@
-import{r as o,j as a}from"./index-Cd9o2-mK.js";const r=({active:e})=>(o.useEffect(()=>{if(e)return document.documentElement.classList.add("hua-mode"),()=>document.documentElement.classList.remove("hua-mode")},[e]),a.jsxs(a.Fragment,{children:[e&&a.jsxs("div",{className:"hua-overlay",children:[a.jsx("div",{className:"hua-vignette"}),a.jsx("div",{className:"hua-glow-orb hua-glow-1"}),a.jsx("div",{className:"hua-glow-orb hua-glow-2"})]}),a.jsx("style",{children:`
+import{r as o,j as a}from"./index-B11QL8wu.js";const r=({active:e})=>(o.useEffect(()=>{if(e)return document.documentElement.classList.add("hua-mode"),()=>document.documentElement.classList.remove("hua-mode")},[e]),a.jsxs(a.Fragment,{children:[e&&a.jsxs("div",{className:"hua-overlay",children:[a.jsx("div",{className:"hua-vignette"}),a.jsx("div",{className:"hua-glow-orb hua-glow-1"}),a.jsx("div",{className:"hua-glow-orb hua-glow-2"})]}),a.jsx("style",{children:`
         :root.hua-mode {
           --hua-red: #8b0000;
           --hua-orange: #d4a017;
