@@ -105,14 +105,20 @@ class OpenaiRequester(Base):
             
             # 简单的关键词匹配来判断是否为 API/网络 错误
             api_error_keywords = [
-                "429", "500", "502", "503", "timeout", "connection", 
+                "429", "500", "502", "503", "timeout", "connection",
                 "rate limit", "service unavailable", "bad gateway",
-                "api_key", "insufficient_quota" # 这些通常不需要重试，但也属于 API 错误，交给上层判断
+                "api_key", "insufficient_quota", # 这些通常不需要重试，但也属于 API 错误，交给上层判断
+                "403", "unsupported_country", "region", "territory" # 地区限制错误
             ]
             
             if any(k in error_str for k in api_error_keywords):
                 error_type = "API_FAIL"
-            
+
+            # 检测地区限制错误并提供特殊提示
+            region_error_keywords = ["403", "unsupported_country", "region", "territory", "request_forbidden"]
+            if any(k in error_str for k in region_error_keywords):
+                self.error(Base.i18n.get("msg_region_restriction_detected"))
+
             if Base.work_status != Base.STATUS.STOPING:
                 self.error(f"请求任务错误 ({error_type}) ... {e}", e if self.is_debug() else None)
             else:

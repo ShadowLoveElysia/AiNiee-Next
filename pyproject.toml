@@ -3,7 +3,7 @@ name = "ainiee-cli"
 version = "0.1.0"
 description = "A CLI-based hard fork of AiNiee for batch translation."
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 dependencies = [
     "pyinstaller",
     "openai>=1.59.3",
@@ -83,6 +83,4 @@ packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18
 [tool.hatch.build.targets.sdist]
 include = ["AiNiee-CLI.py", "pyproject.toml", "README.md", "LICENSE"]
 
-[tool.uv]
-python = "3.10"
 

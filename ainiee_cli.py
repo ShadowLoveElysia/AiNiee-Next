@@ -426,9 +426,20 @@ class TaskUI:
             else:
                 hotkeys = i18n.get("label_shortcuts")
             
+            # 获取代理状态信息
+            proxy_enabled = getattr(self, 'config', {}).get("proxy_enabled", False)
+            proxy_status = "ON" if proxy_enabled else "OFF"
+            proxy_info = ""
+            if proxy_enabled:
+                https_proxy = getattr(self, 'config', {}).get("https_proxy", "")
+                http_proxy = getattr(self, 'config', {}).get("http_proxy", "")
+                proxy_ip = https_proxy or http_proxy
+                if proxy_ip:
+                    proxy_info = f" ({proxy_ip})"
+
             stats_markup = (
                 f"File: [bold]{current_file}[/] | RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{tokens}[/]\n"
-                f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}"
+                f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {i18n.get('label_proxy_status')} {proxy_status}{proxy_info} | {hotkeys}"
             )
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
             
@@ -540,6 +551,7 @@ class CLIMenu:
         self.active_profile_name = "default"
         self.active_rules_profile_name = "default"
         self.load_config()
+        self.setup_proxy_environment()
 
         self.plugin_manager = PluginManager()
         self.plugin_manager.load_plugins_from_directory(os.path.join(PROJECT_ROOT, "PluginScripts"))
@@ -1257,6 +1269,35 @@ class CLIMenu:
             self.active_rules_profile_name = "default"
         
         self._migrate_and_load_profiles()
+
+    def setup_proxy_environment(self):
+        """设置代理环境变量"""
+        import os
+
+        if self.config.get("proxy_enabled", False):
+            http_proxy = self.config.get("http_proxy", "").strip()
+            https_proxy = self.config.get("https_proxy", "").strip()
+
+            if http_proxy:
+                os.environ["HTTP_PROXY"] = http_proxy
+                os.environ["http_proxy"] = http_proxy
+
+            if https_proxy:
+                os.environ["HTTPS_PROXY"] = https_proxy
+                os.environ["https_proxy"] = https_proxy
+
+            # 如果只设置了一个代理，将其用于两种协议
+            if https_proxy and not http_proxy:
+                os.environ["HTTP_PROXY"] = https_proxy
+                os.environ["http_proxy"] = https_proxy
+            elif http_proxy and not https_proxy:
+                os.environ["HTTPS_PROXY"] = http_proxy
+                os.environ["https_proxy"] = http_proxy
+
+            # 打印代理启用提示
+            proxy_info = https_proxy or http_proxy
+            if proxy_info:
+                print(f"[INFO] {i18n.get('msg_proxy_enabled')}: {proxy_info}")
 
     def save_config(self, save_root=False):
         # 1. Save Settings (Exclude rules)
@@ -2114,14 +2155,15 @@ class CLIMenu:
             table.add_row("20", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
             table.add_row("21", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
             table.add_row("22", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
+            table.add_row("23", i18n.get("setting_proxy"), "[green]ON[/]" if self.config.get("proxy_enabled", False) else "[red]OFF[/]")
 
             # Thinking features (always show)
             think_switch = self.config.get("think_switch", False)
-            table.add_row("23", i18n.get("menu_api_think_switch"), "[green]ON[/]" if think_switch else "[red]OFF[/]")
+            table.add_row("24", i18n.get("menu_api_think_switch"), "[green]ON[/]" if think_switch else "[red]OFF[/]")
 
             table.add_section()
             # --- Section 3: Thinking & Advanced Settings ---
-            next_id = 24
+            next_id = 25
             # Always show thinking settings
             think_depth = self.config.get("think_depth", "low")
             think_budget = self.config.get("thinking_budget", 4096)
@@ -2183,13 +2225,23 @@ class CLIMenu:
             elif choice == 21: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
             elif choice == 22: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
 
-            # Thinking features (always enabled)
+            # Proxy settings (skip for local LLM)
             elif choice == 23:
+                current_platform = self.config.get("target_platform", "").lower()
+                if current_platform in ["sakura", "localllm"]:
+                    console.print(f"[yellow]{i18n.get('msg_proxy_skip_local')}[/yellow]")
+                    time.sleep(2)
+                else:
+                    self.proxy_settings_menu()
+
+            # Thinking features (always enabled)
+            elif choice == 24:
                 new_state = not self.config.get("think_switch", False)
                 self.config["think_switch"] = new_state
                 # Sync to platform config
                 if self.config.get("target_platform") in self.config.get("platforms", {}):
                     self.config["platforms"][self.config.get("target_platform")]["think_switch"] = new_state
+                    self.proxy_settings_menu()
 
             elif choice == 24:  # Think Depth
                 if api_format == "Anthropic":
@@ -2327,6 +2379,56 @@ class CLIMenu:
                 
                 self.config["translation_project"] = types[sub_choice - 1]
             self.save_config(); return
+
+    def proxy_settings_menu(self):
+        """代理设置菜单"""
+        while True:
+            console.clear()
+            console.print(Panel(f"[bold]{i18n.get('menu_proxy_settings')}[/bold]"))
+
+            # 显示当前代理设置状态
+            proxy_enabled = self.config.get("proxy_enabled", False)
+            http_proxy = self.config.get("http_proxy", "")
+            https_proxy = self.config.get("https_proxy", "")
+
+            settings_info = [
+                f"[cyan]1.[/] {i18n.get('setting_proxy_enabled')}: [green]{i18n.get('enabled' if proxy_enabled else 'disabled')}[/green]",
+                f"[cyan]2.[/] {i18n.get('setting_http_proxy')}: [green]{http_proxy or i18n.get('not_set')}[/green]",
+                f"[cyan]3.[/] {i18n.get('setting_https_proxy')}: [green]{https_proxy or i18n.get('not_set')}[/green]",
+            ]
+
+            for info in settings_info:
+                console.print(info)
+
+            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+
+            try:
+                choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(4)], show_choices=False)
+                if choice == 0:
+                    break
+                elif choice == 1:
+                    self.config["proxy_enabled"] = not self.config.get("proxy_enabled", False)
+                    self.save_config()
+                    self.setup_proxy_environment()  # 重新设置环境变量
+                    if self.config.get("proxy_enabled", False):
+                        console.print(f"[yellow]{i18n.get('msg_proxy_no_proxy_reminder')}[/yellow]")
+                        time.sleep(3)
+                elif choice == 2:
+                    new_proxy = Prompt.ask(i18n.get('prompt_http_proxy'), default=http_proxy)
+                    self.config["http_proxy"] = new_proxy.strip()
+                    self.save_config()
+                    if self.config.get("proxy_enabled", False):
+                        self.setup_proxy_environment()  # 重新设置环境变量
+                elif choice == 3:
+                    new_proxy = Prompt.ask(i18n.get('prompt_https_proxy'), default=https_proxy)
+                    self.config["https_proxy"] = new_proxy.strip()
+                    self.save_config()
+                    if self.config.get("proxy_enabled", False):
+                        self.setup_proxy_environment()  # 重新设置环境变量
+            except (ValueError, KeyboardInterrupt):
+                console.print(f"[red]{i18n.get('error_invalid_input')}[/red]")
+                time.sleep(1)
+
     def api_settings_menu(self):
         while True:
             self.display_banner(); current_p, current_m = self.config.get("target_platform", "None"), self.config.get("model", "None")
@@ -3110,6 +3212,7 @@ class CLIMenu:
 
         original_ext = os.path.splitext(target_path)[1].lower()
         is_middleware_converted = False
+        is_xlsx_converted = False
 
         # Patch tqdm to avoid conflict with Rich Live
         import ModuleFolders.Service.TaskExecutor.TaskExecutor as TaskExecutorModule
@@ -3480,10 +3583,16 @@ class CLIMenu:
                         import winsound
                         winsound.MessageBeep()
                     except ImportError:
-                        print("提示：winsound模块在此系统上不可用（Linux/Docker环境）")
-                        pass
+                        # Linux/Mac环境下使用终端响铃
+                        try:
+                            print("\a", end="", flush=True)
+                        except:
+                            pass
                     except:
-                        print("\a")
+                        try:
+                            print("\a", end="", flush=True)
+                        except:
+                            pass
                 
                 # Summary Report
                 lines = last_task_data.get("line", 0); tokens = last_task_data.get("token", 0); duration = last_task_data.get("time", 1)
@@ -3558,10 +3667,16 @@ class CLIMenu:
                         import winsound
                         winsound.MessageBeep()
                     except ImportError:
-                        print("提示：winsound模块在此系统上不可用（Linux/Docker环境）")
-                        pass
+                        # Linux/Mac环境下使用终端响铃
+                        try:
+                            print("\a", end="", flush=True)
+                        except:
+                            pass
                     except:
-                        print("\a")
+                        try:
+                            print("\a", end="", flush=True)
+                        except:
+                            pass
             
             if not non_interactive and not web_mode and not from_queue:
                 Prompt.ask(f"\n{i18n.get('msg_task_ended')}")
