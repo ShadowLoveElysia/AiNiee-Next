@@ -15,7 +15,6 @@ import collections
 import glob
 import rapidjson as json
 import shutil
-import winsound
 import subprocess
 import argparse
 import threading
@@ -3477,8 +3476,14 @@ class CLIMenu:
             
             if success.is_set():
                 if self.config.get("enable_task_notification", True):
-                    try: winsound.MessageBeep()
-                    except: print("\a")
+                    try:
+                        import winsound
+                        winsound.MessageBeep()
+                    except ImportError:
+                        print("提示：winsound模块在此系统上不可用（Linux/Docker环境）")
+                        pass
+                    except:
+                        print("\a")
                 
                 # Summary Report
                 lines = last_task_data.get("line", 0); tokens = last_task_data.get("token", 0); duration = last_task_data.get("time", 1)
@@ -3549,8 +3554,14 @@ class CLIMenu:
             if task_success:
                 self.ui.log("[bold green]All Done![/bold green]")
                 if self.config.get("enable_task_notification", True):
-                    try: winsound.MessageBeep()
-                    except: print("\a")
+                    try:
+                        import winsound
+                        winsound.MessageBeep()
+                    except ImportError:
+                        print("提示：winsound模块在此系统上不可用（Linux/Docker环境）")
+                        pass
+                    except:
+                        print("\a")
             
             if not non_interactive and not web_mode and not from_queue:
                 Prompt.ask(f"\n{i18n.get('msg_task_ended')}")

@@ -13,8 +13,11 @@ class OfficeFileConverter(BaseFileConverter):
     }
 
     def __enter__(self):
-        import pythoncom
-        from win32com import client
+        try:
+            import pythoncom
+            from win32com import client
+        except ImportError:
+            raise RuntimeError("提示：Office文件转换功能仅在Windows系统上可用（需要Microsoft Office和pywin32）") from None
 
         pythoncom.CoInitialize()
         try:
@@ -28,7 +31,11 @@ class OfficeFileConverter(BaseFileConverter):
             raise RuntimeError("不能打开Word程序，请确保安装了 Microsoft Office") from e
 
     def __exit__(self, exc_type, exc, exc_tb):
-        import pythoncom
+        try:
+            import pythoncom
+        except ImportError:
+            # 如果无法导入pythoncom，说明不在Windows环境，直接返回
+            return
 
         # Dispatch函数会复用已有的Word进程，多次退出会导致后面的com对象没有Quit函数
         if self.office and hasattr(self.office, 'Quit'):
