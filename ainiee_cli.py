@@ -19,6 +19,7 @@ import winsound
 import subprocess
 import argparse
 import threading
+import requests
 
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -417,6 +418,18 @@ class TaskUI:
                 except:
                     pass  # 静默忽略错误，使用默认文件名
 
+            # --- Push to WebServer ---
+            if self.web_task_manager:
+                self.web_task_manager.push_stats({
+                    "rpm": rpm,
+                    "tpm": tpm_k,
+                    "totalProgress": total,
+                    "completedProgress": completed,
+                    "totalTokens": tokens,
+                    "currentFile": current_file,
+                    "status": "running"
+                })
+
             rpm_str = f"{rpm:.2f}"
             tpm_str = f"{tpm_k:.2f}k"
             status_text = i18n.get(self.current_status_key)
@@ -595,11 +608,20 @@ class CLIMenu:
                 ws_module.profile_handlers['delete'] = self._host_delete_profile
 
                 self.web_server_thread = run_server(host="0.0.0.0", port=8000, monitor_mode=True)
+
+                # 设置环境变量，让后续启动的翻译任务能推送数据到这个webserver
+                os.environ["AINIEE_INTERNAL_API_URL"] = "http://127.0.0.1:8000"
+
                 Base.print(f"[bold green]{i18n.get('msg_web_server_started_bg')}[/bold green]")
                 Base.print(f"[cyan]您可以通过 http://{local_ip}:8000 访问网页监控面板[/cyan]")
                 
                 # Signal TUI takeover if running
                 if self.task_running and hasattr(self, "ui") and isinstance(self.ui, TaskUI):
+                    self.ui.web_task_manager = ws_module.task_manager
+                    self.ui._server_ip = local_ip
+
+                # Always establish web_task_manager connection when server starts
+                if hasattr(self, "ui") and self.ui:
                     self.ui.web_task_manager = ws_module.task_manager
                     self.ui._server_ip = local_ip
                     
@@ -696,8 +718,68 @@ class CLIMenu:
             # 如果无法启动监控，静默失败
             pass
 
+    def _parse_and_push_stats(self, stats_line):
+        """解析[STATS]行并推送统计数据到webserver"""
+        try:
+            import re
+            stats_data = {}
+
+            # 解析RPM
+            rpm_match = re.search(r"RPM:\s*([\d\.]+)", stats_line)
+            if rpm_match:
+                stats_data["rpm"] = float(rpm_match.group(1))
+
+            # 解析TPM
+            tpm_match = re.search(r"TPM:\s*([\d\.]+k?)", stats_line)
+            if tpm_match:
+                tpm_val = tpm_match.group(1).replace('k', '')
+                stats_data["tpm"] = float(tpm_val)
+
+            # 解析进度
+            progress_match = re.search(r"Progress:\s*(\d+)/(\d+)", stats_line)
+            if progress_match:
+                stats_data["completedProgress"] = int(progress_match.group(1))
+                stats_data["totalProgress"] = int(progress_match.group(2))
+
+            # 解析Tokens
+            tokens_match = re.search(r"Tokens:\s*(\d+)", stats_line)
+            if tokens_match:
+                stats_data["totalTokens"] = int(tokens_match.group(1))
+
+            # 推送统计数据
+            if stats_data:
+                self._push_stats_to_webserver(stats_data)
+
+        except Exception:
+            # 解析失败时静默处理
+            pass
+
+    def _push_stats_to_webserver(self, stats_data):
+        """推送统计数据到webserver"""
+        try:
+            response = requests.post(
+                "http://127.0.0.1:8000/api/internal/update_stats",
+                json=stats_data,
+                timeout=1.0
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def _push_log_to_webserver(self, message, log_type="info"):
+        """推送日志消息到webserver"""
+        try:
+            response = requests.post(
+                "http://127.0.0.1:8000/api/internal/push_log",
+                json={"message": message, "type": log_type},
+                timeout=1.0
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
+
     def _display_new_queue_logs(self, log_file):
-        """显示新的队列日志条目"""
+        """显示新的队列日志条目并推送数据到webserver"""
         try:
             with open(log_file, 'r', encoding='utf-8') as f:
                 f.seek(self._last_queue_log_size)
@@ -712,6 +794,13 @@ class CLIMenu:
                             message = line.split('] ', 1)[1]
                         else:
                             message = line
+
+                        # 解析统计数据行
+                        if "[STATS]" in message:
+                            self._parse_and_push_stats(message)
+
+                        # 推送日志消息到webserver
+                        self._push_log_to_webserver(message)
 
                         # 在TUI中显示队列操作日志
                         if hasattr(self, 'ui') and self.ui:
@@ -771,6 +860,15 @@ class CLIMenu:
                 sock.close()
                 if result == 0:
                     self.ui.log(f"[green]{i18n.get('msg_web_server_ready')}[/green]")
+
+                    # Establish web_task_manager connection
+                    try:
+                        import Tools.WebServer.web_server as ws_module
+                        if hasattr(self, "ui") and self.ui:
+                            self.ui.web_task_manager = ws_module.task_manager
+                    except Exception as e:
+                        self.ui.log(f"[yellow]Warning: Could not establish web connection: {e}[/yellow]")
+
                     self.start_queue_log_monitor()  # 启动队列日志监控
                     return
             except:
@@ -1100,36 +1198,36 @@ class CLIMenu:
         task_map = {
             'translate': TaskType.TRANSLATION,
             'polish': TaskType.POLISH,
-            'all_in_one': TaskType.TRANSLATE_AND_POLISH,
-            'queue': TaskType.QUEUE
+            'all_in_one': TaskType.TRANSLATE_AND_POLISH
         }
 
-        if args.task in task_map:
-            if args.task == 'queue':
-                from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
-                qm = QueueManager()
-                # 检查是否传入了自定义队列文件
-                if args.queue_file:
-                    qm.load_tasks(args.queue_file)
-                
-                if not qm.tasks:
-                     console.print(f"[red]Error: Task queue is empty (File: {qm.queue_file}). Cannot run queue task.[/red]")
-                     return
-                
-                console.print(f"[bold green]Running Task Queue ({len(qm.tasks)} items)...[/bold green]")
-                self._is_queue_mode = True  # 标记进入队列模式
-                self.start_queue_log_monitor()  # 启动队列日志监控
-                qm.start_queue(self)
-                # We need to wait for queue to finish if in non-interactive mode
-                try:
-                    while qm.is_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    Base.work_status = Base.STATUS.STOPING
-                finally:
-                    self.stop_queue_log_monitor()  # 停止队列日志监控
-                    self._is_queue_mode = False  # 清除队列模式标记
-            elif args.task == 'all_in_one':
+        if args.task == 'queue':
+            from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
+            qm = QueueManager()
+            # 检查是否传入了自定义队列文件
+            if args.queue_file:
+                qm.load_tasks(args.queue_file)
+            
+            if not qm.tasks:
+                    console.print(f"[red]Error: Task queue is empty (File: {qm.queue_file}). Cannot run queue task.[/red]")
+                    return
+            
+            console.print(f"[bold green]Running Task Queue ({len(qm.tasks)} items)...[/bold green]")
+            self._is_queue_mode = True  # 标记进入队列模式
+            self.start_queue_log_monitor()  # 启动队列日志监控
+            qm.start_queue(self)
+            # We need to wait for queue to finish if in non-interactive mode
+            try:
+                while qm.is_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                Base.work_status = Base.STATUS.STOPING
+            finally:
+                self.stop_queue_log_monitor()  # 停止队列日志监控
+                self._is_queue_mode = False  # 清除队列模式标记
+
+        elif args.task in task_map:
+            if args.task == 'all_in_one':
                 # 在非交互模式下，如果传入了 input_path，则使用它
                 if args.input_path:
                     # 使用 run_task 组合逻辑，因为 run_all_in_one 内部带 path 选择
