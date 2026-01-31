@@ -1,4 +1,4 @@
-name: Docker & Release Build
+name: Docker
 
 on:
   schedule:
@@ -8,6 +8,7 @@ on:
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
+  # 【新增】当发布 Release 时触发，确保文件能挂载到 Release 页面
   release:
     types: [published]
 
@@ -19,7 +20,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # 【修改】从 read 改为 write，否则无法上传文件到 Release
       packages: write
       id-token: write
 
@@ -27,29 +28,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Build WebServer Dist
-        run: |
-          # 如果你的 package.json 在根目录，直接运行：
-          npm install
-          npm run build 
-          # 运行完后，当前环境下已经有了 dist 文件夹，Docker 构建会自动看到它
-
+      # --- 保留原有的 Docker 构建逻辑 ---
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v3.3.0
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20
+        with:
+          cosign-release: 'v2.2.4'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226
 
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -57,17 +48,13 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=edge,branch=main
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
@@ -83,28 +70,26 @@ jobs:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
 
-      - name: Package Full Deployment Assets
-        if: github.event_name == 'release'
+      # --- 【新增步骤】打包并上传 Docker 部署文件到 Release ---
+      
+      - name: Package Docker Deployment Files
+        # 仅在发布 Release 或推送版本标签时运行
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
         run: |
-          # 创建一个带版本号的文件夹名
-          PKG_NAME="Ainiee-CLI-Full-${{ github.ref_name }}"
-          mkdir -p $PKG_NAME
+          mkdir -p deploy_package
           
-          # 拷贝编译好的 dist 
-          cp -r dist $PKG_NAME/
+          cp Dockerfile pyproject.toml uv.lock README.md deploy_package/
           
-          # 拷贝运行所需的其他文件 (按需修改)
-          cp ainiee_cli.py $PKG_NAME/
-          cp -r ModuleFolders $PKG_NAME/
-          cp pyproject.toml uv.lock README.md Dockerfile $PKG_NAME/
+          # 如果有 docker-compose.yml 也拷进去
+          [ -f docker-compose.yml ] && cp docker-compose.yml deploy_package/
           
           # 压缩
-          zip -r ${PKG_NAME}.zip $PKG_NAME/
+          zip -r docker-deploy.zip deploy_package/
 
-      - name: Upload Assets to Release
+      - name: Upload Docker Assets to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: Ainiee-CLI-Full-*.zip
+          files: docker-deploy.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
