@@ -39,12 +39,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv package manager
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy project definition
-COPY pyproject.toml ./
-# If uv.lock exists, copying it would be good, but we'll stick to pyproject.toml for now.
+# Copy project definition and metadata required for build/sync
+COPY pyproject.toml README.md LICENSE ./
 # Using 'uv sync' will install dependencies from pyproject.toml. 
-# We remove --frozen to allow it to generate a lockfile if missing.
-RUN uv sync
+# We use --no-install-project because the source code is not yet copied.
+RUN uv sync --no-install-project
 
 # Copy project source code
 COPY ainiee_cli.py ./
