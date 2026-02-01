@@ -336,6 +336,7 @@ class TaskExecutor(Base):
                 # so that the current session's RPM/TPM is calculated based on current session's delta.
                 self.project_status_data.resume_offset_line = self.project_status_data.line
                 self.project_status_data.resume_offset_token = self.project_status_data.token
+                self.project_status_data.resume_offset_requests = self.project_status_data.total_requests
             # ----------------------------------------------------------------
             # ----------------------------------------------------------------
 
@@ -573,7 +574,12 @@ class TaskExecutor(Base):
                 self.project_status_data = self.cache_manager.project.stats_data
                 self.project_status_data.total_line = self.cache_manager.get_item_count()
                 self.project_status_data.start_time = time.time() # 重置开始时间
-                self.project_status_data.total_completion_tokens = 0 # 重置完成的token数量                  
+                self.project_status_data.total_completion_tokens = 0 # 重置完成的token数量
+
+                # --- Fix RPM/TPM calculation for resumed tasks ---
+                self.project_status_data.resume_offset_line = self.project_status_data.line
+                self.project_status_data.resume_offset_token = self.project_status_data.token
+                self.project_status_data.resume_offset_requests = self.project_status_data.total_requests
             # ----------------------------------------------------------------
 
             # 更新初始进度
@@ -767,6 +773,7 @@ class TaskExecutor(Base):
                 
                 # Add session-specific metrics for correct Rate calculation (Resume Fix)
                 stats_dict['session_token'] = self.project_status_data.token - self.project_status_data.resume_offset_token
+                stats_dict['session_requests'] = self.project_status_data.total_requests - self.project_status_data.resume_offset_requests
 
             self.cache_manager.require_save_to_file(self.session_output_path)
             self.emit(Base.EVENT.TASK_UPDATE, stats_dict)

@@ -382,10 +382,11 @@ class TaskUI:
             
             # Use session tokens for TPM calculation if available (Resume Fix)
             calc_tokens = d.get("session_token", tokens)
+            calc_requests = d.get("session_requests", d.get("total_requests", 0))
 
             # 计算指标
             if elapsed > 0:
-                rpm = (d.get("total_requests", 0) / (elapsed / 60))
+                rpm = (calc_requests / (elapsed / 60))
                 tpm_k = (calc_tokens / (elapsed / 60) / 1000)
             else: rpm, tpm_k = 0, 0
             
@@ -539,8 +540,9 @@ class WebLogger:
         
         # Use session tokens for TPM calculation if available (Resume Fix)
         calc_tokens = d.get("session_token", tokens)
+        calc_requests = d.get("session_requests", d.get("total_requests", 0))
         
-        rpm = (d.get("total_requests", 0) / (elapsed / 60)) if elapsed > 0 else 0
+        rpm = (calc_requests / (elapsed / 60)) if elapsed > 0 else 0
         tpm_k = (calc_tokens / (elapsed / 60) / 1000) if elapsed > 0 else 0
         
         try:

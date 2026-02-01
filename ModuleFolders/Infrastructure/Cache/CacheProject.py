@@ -44,6 +44,7 @@ class CacheProjectStatistics(ThreadSafeCache):
     time: float = 0.0
     resume_offset_line: int = 0
     resume_offset_token: int = 0
+    resume_offset_requests: int = 0
 
 
 @dataclass(repr=False)
