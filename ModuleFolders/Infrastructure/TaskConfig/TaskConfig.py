@@ -118,6 +118,8 @@ class TaskConfig(Base):
         self.exclude_rule_str = ""
         self.think_switch = False
         self.think_depth = 0
+        self.thinking_budget = 4096
+        self.structured_output_mode = 0
         self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
 
     def __repr__(self) -> str:
@@ -399,6 +401,7 @@ class TaskConfig(Base):
         think_switch = self.platforms.get(target_platform).get("think_switch")
         think_depth = self.platforms.get(target_platform).get("think_depth")
         thinking_budget = self.platforms.get(target_platform).get("thinking_budget", -1)
+        structured_output_mode = self.platforms.get(target_platform).get("structured_output_mode", 0)
 
         params = {
             "target_platform": target_platform,
@@ -417,7 +420,8 @@ class TaskConfig(Base):
             "extra_body": extra_body,
             "think_switch": think_switch,
             "think_depth": think_depth,
-            "thinking_budget": thinking_budget
+            "thinking_budget": thinking_budget,
+            "structured_output_mode": structured_output_mode
         }
 
         return params

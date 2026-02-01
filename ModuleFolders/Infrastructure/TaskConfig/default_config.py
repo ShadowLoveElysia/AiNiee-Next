@@ -206,6 +206,7 @@ DEFAULT_CONFIG = {
             "frequency_penalty": 0.0,
             "think_switch": False,
             "think_depth": "low",
+            "structured_output_mode": 0,
             "auto_complete": False,
             "model_datas": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
             "key_in_settings": [
@@ -219,6 +220,7 @@ DEFAULT_CONFIG = {
                 "frequency_penalty",
                 "think_switch",
                 "think_depth",
+                "structured_output_mode"
             ],
         },
         "deepseek": {
@@ -519,6 +521,7 @@ DEFAULT_CONFIG = {
             "frequency_penalty": 0.0,
             "think_switch": False,
             "think_depth": "low",
+            "structured_output_mode": 0,
             "auto_complete": False,
             "model_datas": [
                 "deepseek-ai/DeepSeek-V3",
@@ -537,7 +540,8 @@ DEFAULT_CONFIG = {
                 "temperature",
                 "presence_penalty",
                 "frequency_penalty",
-                "think_switch"
+                "think_switch",
+                "structured_output_mode"
             ],
         },
         "custom_openai": {
@@ -557,6 +561,7 @@ DEFAULT_CONFIG = {
             "frequency_penalty": 0.0,
             "think_switch": False,
             "think_depth": "low",
+            "structured_output_mode": 0,
             "auto_complete": True,
             "model_datas": [
                 "gpt-4o",
@@ -574,7 +579,8 @@ DEFAULT_CONFIG = {
                 "temperature",
                 "presence_penalty",
                 "frequency_penalty",
-                "think_switch"
+                "think_switch",
+                "structured_output_mode"
             ]
         },
         "custom": {

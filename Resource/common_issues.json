@@ -1,0 +1,84 @@
+{
+    "api_issues": [
+        {
+            "pattern": ["401", "Unauthorized", "Invalid API Key"],
+            "title": {
+                "zh_CN": "API 密钥错误 (401)",
+                "en": "API Key Error (401)",
+                "ja": "APIキーエラー (401)"
+            },
+            "solution": {
+                "zh_CN": "1. 检查 API Key 是否填写正确。\n2. 确保您选择的【平台类型】与 Key 所属的服务商匹配（例如：Gemini 的 Key 必须选择 Google 平台）。\n3. 检查 API Key 是否已过期或额度耗尽。",
+                "en": "1. Check if the API Key is correct.\n2. Ensure the [Platform Type] matches the provider (e.g., use Google platform for Gemini keys).\n3. Check if the key is expired or out of quota.",
+                "ja": "1. APIキーが正しく入力されているか確認してください。\n2. 選択した【プラットフォーム】がAPIプロバイダーと一致しているか確認してください（例：GeminiのキーはGoogleプラットフォームを選択）。\n3. キーの有効期限や残高を確認してください。"
+            }
+        },
+        {
+            "pattern": ["403", "Forbidden", "Permission Denied"],
+            "title": {
+                "zh_CN": "访问被拒绝 (403)",
+                "en": "Access Forbidden (403)",
+                "ja": "アクセス拒否 (403)"
+            },
+            "solution": {
+                "zh_CN": "1. 您的 IP 可能被服务商封锁（常见于 Google Gemini 限制地区）。\n2. 尝试切换代理节点或检查代理配置。\n3. 确认 API Key 拥有访问该模型的权限。",
+                "en": "1. Your IP might be blocked by the provider (common for Google Gemini in restricted regions).\n2. Try switching proxy nodes or check proxy settings.\n3. Ensure the API key has permission for the selected model.",
+                "ja": "1. IPがプロバイダーによってブロックされている可能性があります（Google Geminiの制限地域など）。\n2. プロキシノードを切り替えるか、設定を確認してください。\n3. APIキーに対象モデルへのアクセス権限があるか確認してください。"
+            }
+        },
+        {
+            "pattern": ["429", "Rate Limit", "Too Many Requests"],
+            "title": {
+                "zh_CN": "请求频率过高 (429)",
+                "en": "Rate Limit Exceeded (429)",
+                "ja": "リクエスト回数制限 (429)"
+            },
+            "solution": {
+                "zh_CN": "1. 服务商限制了请求频率，请在【项目设置】中调低线程数。\n2. 如果使用免费额度，建议等待一段时间后再试。\n3. 考虑配置备用 API 以实现故障转移。",
+                "en": "1. Rate limit exceeded. Lower the thread count in [Project Settings].\n2. If using a free tier, wait for some time before retrying.\n3. Consider configuring backup APIs for failover.",
+                "ja": "1. リクエスト制限に達しました。【プロジェクト設定】でスレッド数を下げてください。\n2. 無料枠を使用している場合は、しばらく待ってから再試行してください。\n3. 失敗時に備えてバックアップAPIの設定を検討してください。"
+            }
+        },
+        {
+            "pattern": ["400", "Bad Request", "invalid_request_error"],
+            "title": {
+                "zh_CN": "请求参数错误 (400)",
+                "en": "Bad Request (400)",
+                "ja": "不正なリクエスト (400)"
+            },
+            "solution": {
+                "zh_CN": "1. 检查模型名称是否填写正确（例如 gemini-1.5-pro 而不是 gemini-pro）。\n2. 某些参数可能不被目标平台支持。\n3. 检查【API 地址】是否包含了多余的路径（如不需要在末尾加 /chat/completions）。",
+                "en": "1. Check if the model name is correct (e.g., gemini-1.5-pro instead of gemini-pro).\n2. Some parameters might not be supported by the target platform.\n3. Check if the [API Base URL] has unnecessary path segments (e.g., /chat/completions should not be added manually).",
+                "ja": "1. モデル名が正しいか確認してください（例：gemini-pro ではなく gemini-1.5-pro）。\n2. 一部のパラメータが対象プラットフォームでサポートされていない可能性があります。\n3. 【API URL】に余計なパスが含まれていないか確認してください（例：末尾に /chat/completions を追加する必要はありません）。"
+            }
+        }
+    ],
+    "network_issues": [
+        {
+            "pattern": ["Timeout", "ConnectionError", "Max retries exceeded"],
+            "title": {
+                "zh_CN": "网络连接超时",
+                "en": "Network Timeout",
+                "ja": "ネットワーク接続タイムアウト"
+            },
+            "solution": {
+                "zh_CN": "1. 检查网络连接是否正常。\n2. 检查代理设置。如果开启了全局代理，请确保其工作正常。\n3. 目标 API 服务器可能暂时不稳定，建议稍后重试。",
+                "en": "1. Check your internet connection.\n2. Check proxy settings. Ensure global proxy is working if enabled.\n3. The API server might be unstable. Try again later.",
+                "ja": "1. ネットワーク接続を確認してください。\n2. プロキシ設定を確認してください。グローバルプロキシを使用している場合は、正常に動作しているか確認してください。\n3. APIサーバーが一時的に不安定な可能性があります。しばらく経ってから再試行してください。"
+            }
+        },
+        {
+            "pattern": ["SSL", "SSLError", "certificate verify failed", "CERTIFICATE_VERIFY_FAILED"],
+            "title": {
+                "zh_CN": "SSL 证书校验失败 (HTTPS 问题)",
+                "en": "SSL Certificate Verify Failed",
+                "ja": "SSL証明書検証失敗"
+            },
+            "solution": {
+                "zh_CN": "1. **安全软件拦截**：检查是否安装了 360、腾讯电脑管家或某些“上网盾”，它们会通过注入自签名证书监听流量，导致 Python 信任失败。尝试暂时关闭或卸载相关组件。\n2. **代理配置**：如果您使用了代理软件（如 Clash, V2Ray），请确保其“系统代理”模式正确，或尝试关闭 SSL 嗅探/拦截。\n3. **系统证书过期**：请更新 Windows 补丁，确保根证书列表是最新的。\n4. **环境变量**：可以尝试设置环境变量 `PYTHONHTTPSVERIFY=0` (不推荐，仅限应急)。",
+                "en": "1. **Security Software**: Check if antivirus or firewalls (like 360, Kaspersky) are intercepting HTTPS traffic with self-signed certificates. Try disabling them temporarily.\n2. **Proxy Settings**: If using a proxy (Clash, V2Ray), ensure it's not performing MITM/SSL inspection on the traffic.\n3. **Outdated CA**: Update your OS or `certifi` package to ensure root certificates are up-to-date.\n4. **Workaround**: Setting `PYTHONHTTPSVERIFY=0` might skip verification (not recommended for security).",
+                "ja": "1. **セキュリティソフト**: 360安全衛士やカスペルスキーなどがHTTPS通信をインターセプトし、自己署名証明書を挿入している可能性があります。一時的に無効にして確認してください。\n2. **プロキシ設定**: プロキシ（Clashなど）を使用している場合、SSLインスペクションが有効になっていないか確認してください。\n3. **証明書の更新**: OSのアップデートを行い、ルート証明書が最新であることを確認してください。"
+            }
+        }
+    ]
+}

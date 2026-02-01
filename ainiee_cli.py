@@ -19,6 +19,8 @@ import subprocess
 import argparse
 import threading
 import requests
+import traceback
+from datetime import datetime
 
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -1612,8 +1614,8 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "update", "start_web_server"]
-            colors = ["green", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "dim", "bold magenta"]
+            menus = ["start_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "start_web_server"]
+            colors = ["green", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta"]
             
             for i, (m, c) in enumerate(zip(menus, colors)): 
                 label = i18n.get(f"menu_{m}")
@@ -1642,6 +1644,7 @@ class CLIMenu:
                 self.plugin_settings_menu,
                 self.task_queue_menu,
                 self.profiles_menu,
+                self.qa_menu,
                 self.update_manager.start_update,
                 self.start_web_server
             ]
@@ -1771,6 +1774,324 @@ class CLIMenu:
                 else:
                     console.print(f"[yellow]{i18n.get('msg_delete_cancel')}[/yellow]")
                 time.sleep(1)
+
+    def qa_menu(self):
+        qa_path = os.path.join(PROJECT_ROOT, "Resource", "common_issues.json")
+        if not os.path.exists(qa_path): return
+        with open(qa_path, 'r', encoding='utf-8') as f: qa_data = json.load(f)
+        
+        while True:
+            self.display_banner()
+            console.print(Panel(f"[bold]{i18n.get('menu_qa')}[/bold]"))
+            categories = list(qa_data.keys())
+            table = Table(show_header=False, box=None)
+            for i, cat in enumerate(categories):
+                table.add_row(f"[cyan]{i+1}.[/]", cat.replace("_", " ").title())
+            console.print(table)
+            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+            
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(categories)+1)], show_choices=False)
+            if choice == 0: break
+            
+            cat_key = categories[choice - 1]
+            issues = qa_data[cat_key]
+            while True:
+                self.display_banner()
+                console.print(Panel(f"[bold]{cat_key.replace('_', ' ').title()}[/bold]"))
+                for i, issue in enumerate(issues):
+                    console.print(f"[cyan]{i+1}.[/] {issue['title'].get(current_lang, issue['title'].get('en'))}")
+                console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+                
+                i_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(issues)+1)], show_choices=False)
+                if i_choice == 0: break
+                
+                sel_issue = issues[i_choice - 1]
+                console.print(Panel(sel_issue['solution'].get(current_lang, sel_issue['solution'].get('en')), title=sel_issue['title'].get(current_lang, sel_issue['title'].get('en'))))
+                Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+
+    def handle_crash(self, error_msg, temp_config=None):
+        """Elegant error handling menu for crashes."""
+        self.task_running = False
+        console.print("\n")
+        console.print(Panel(f"[bold yellow]{i18n.get('msg_program_error')}[/bold yellow]", border_style="yellow"))
+        
+        # 1. 针对性引导 (API/网络)
+        transient_keywords = ["401", "403", "429", "500", "Timeout", "Connection", "SSL", "rate_limit", "bad request"]
+        if any(k.lower() in error_msg.lower() for k in transient_keywords):
+            console.print(f"[bold yellow]![/] [yellow]{i18n.get('msg_api_transient_error')}[/yellow]\n")
+
+        # 2. 自动匹配本地 QA
+        qa_path = os.path.join(PROJECT_ROOT, "Resource", "common_issues.json")
+        if os.path.exists(qa_path):
+            with open(qa_path, 'r', encoding='utf-8') as f: qa_data = json.load(f)
+            matched_solutions = []
+            for cat in qa_data.values():
+                for issue in cat:
+                    if any(p.lower() in error_msg.lower() for p in issue['pattern']):
+                        matched_solutions.append(issue)
+            
+            if matched_solutions:
+                console.print(f"[bold cyan]{i18n.get('msg_qa_title')}:[/bold cyan]")
+                for sol in matched_solutions:
+                    title = sol['title'].get(current_lang, sol['title'].get('en'))
+                    content = sol['solution'].get(current_lang, sol['solution'].get('en'))
+                    console.print(Panel(content, title=f"[bold green]{title}[/bold green]", border_style="green"))
+                console.print("\n")
+
+        # 3. 环境信息 (灰字显示)
+        current_p = temp_config["target_platform"] if temp_config else self.config.get("target_platform", "None")
+        current_m = temp_config["model"] if temp_config else self.config.get("model", "None")
+        is_temp = " [yellow](Temporary API)[/]" if temp_config else ""
+        console.print(f"[dim]Environment: {current_p} - {current_m}{is_temp}[/dim]\n")
+
+        # 4. 功能选项
+        table = Table(show_header=False, box=None)
+        table.add_row("[cyan]1.[/]", i18n.get("error_menu_analyze_llm"))
+        table.add_row("[cyan]2.[/]", i18n.get("error_menu_analyze_github"))
+        table.add_row("[cyan]3.[/]", i18n.get("error_menu_update"))
+        table.add_row("[cyan]4.[/]", i18n.get("error_menu_save_log"))
+        table.add_row("[cyan]5.[/]", i18n.get("menu_error_temp_api"))
+        table.add_row("[red]0.[/]", i18n.get("error_menu_exit"))
+        console.print(table)
+        
+        choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["0", "1", "2", "3", "4", "5"], show_choices=False)
+        
+        if choice == 1: # LLM Analyze
+            analysis = self._analyze_error_with_llm(error_msg, temp_config)
+            if analysis:
+                console.print(Panel(analysis, title=f"[bold cyan]{i18n.get('msg_llm_analysis_result')}[/bold cyan]"))
+                
+                # 检测是否为代码问题关键词
+                code_issue_keywords = ["此为代码问题", "This is a code issue", "これはコードの問題です"]
+                if any(kw in analysis for kw in code_issue_keywords):
+                    if Confirm.ask(f"\n[bold yellow]{i18n.get('msg_ask_submit_issue')}[/bold yellow]"):
+                        self._prepare_github_issue(error_msg, analysis)
+                else:
+                    Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+            self.handle_crash(error_msg, temp_config) 
+        elif choice == 2: # GitHub Issue
+            analysis = None
+            if Confirm.ask(f"{i18n.get('msg_confirm_llm_analyze_first')}"):
+                analysis = self._analyze_error_with_llm(error_msg, temp_config)
+            
+            # 如果已经分析过了，再次确认是否真的是代码问题（如果用户之前在选项 1 已经跳转过这里可能重复，但逻辑上保持一致）
+            self._prepare_github_issue(error_msg, analysis)
+            self.handle_crash(error_msg, temp_config)
+        elif choice == 3: # Update
+            self.update_manager.start_update()
+        elif choice == 4: # Save Log
+            path = self._save_error_log(error_msg)
+            console.print(f"[green]{i18n.get('msg_error_saved').format(path=path)}[/green]")
+            time.sleep(2)
+            self.handle_crash(error_msg, temp_config)
+        elif choice == 5: # Temp API
+            preset_path = os.path.join(PROJECT_ROOT, "Resource", "platforms", "preset.json")
+            if not os.path.exists(preset_path): return
+            with open(preset_path, 'r', encoding='utf-8') as f: preset = json.load(f)
+            
+            platforms = preset.get("platforms", {})
+            online_platforms = {k: v for k, v in platforms.items() if v.get("group") in ["online", "custom"]}
+            
+            sorted_keys = sorted(online_platforms.keys())
+            console.print(Panel(i18n.get("prompt_temp_api_platform")))
+            p_table = Table(show_header=False, box=None)
+            for i, k in enumerate(sorted_keys):
+                p_table.add_row(f"[cyan]{i+1}.[/]", online_platforms[k].get("name", k))
+            console.print(p_table)
+            
+            plat_idx = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(sorted_keys)+1)], show_choices=False)
+            if plat_idx == 0:
+                self.handle_crash(error_msg, temp_config)
+                return
+            
+            sel_tag = sorted_keys[plat_idx - 1]
+            sel_conf = online_platforms[sel_tag].copy()
+            
+            # Ask for key settings
+            if "api_key" in sel_conf.get("key_in_settings", []) or "api_key" in sel_conf:
+                sel_conf["api_key"] = Prompt.ask(i18n.get("prompt_temp_api_key"), password=True).strip()
+            
+            if "api_url" in sel_conf.get("key_in_settings", []) or sel_tag == "custom":
+                sel_conf["api_url"] = Prompt.ask(i18n.get("prompt_temp_api_url"), default=sel_conf.get("api_url", "")).strip()
+            
+            if "model" in sel_conf.get("key_in_settings", []):
+                model_options = sel_conf.get("model_datas", [])
+                if model_options:
+                    console.print(f"\n[cyan]Suggested Models for {sel_tag}:[/] {', '.join(model_options)}")
+                sel_conf["model"] = Prompt.ask(i18n.get("prompt_temp_model"), default=sel_conf.get("model", "")).strip()
+
+            # Thinking settings
+            if Confirm.ask(i18n.get("prompt_temp_think_switch"), default=False):
+                sel_conf["think_switch"] = True
+                if sel_conf.get("api_format") == "Anthropic":
+                    sel_conf["think_depth"] = Prompt.ask(i18n.get("prompt_temp_think_depth"), choices=["low", "medium", "high"], default="low")
+                else:
+                    sel_conf["think_depth"] = Prompt.ask(i18n.get("prompt_temp_think_depth"), default="0")
+                sel_conf["thinking_budget"] = IntPrompt.ask(i18n.get("prompt_temp_think_budget"), default=4096)
+            else:
+                sel_conf["think_switch"] = False
+
+            temp_config = sel_conf
+            temp_config["target_platform"] = sel_tag
+            
+            if temp_config.get("api_key"):
+                console.print(f"[green]{i18n.get('msg_temp_api_ok')}[/green]")
+                self.handle_crash(error_msg, temp_config)
+            else:
+                self.handle_crash(error_msg, temp_config)
+        else:
+            sys.exit(1)
+
+    def _analyze_error_with_llm(self, error_msg, temp_config=None):
+        # 检查是否配置了在线 API
+        if not temp_config and self.config.get("target_platform", "None").lower() in ["none", "localllm", "sakura"]:
+            console.print(f"[yellow]{i18n.get('msg_temp_api_prompt')}[/yellow]")
+            console.print(f"[red]{i18n.get('msg_api_not_configured')}[/red]")
+            return None
+        
+        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+        import copy
+
+        # 1. 创建影子配置字典
+        # 如果是临时配置，从预设文件开始构建，确保环境干净
+        if temp_config:
+            preset_path = os.path.join(PROJECT_ROOT, "Resource", "platforms", "preset.json")
+            try:
+                with open(preset_path, 'r', encoding='utf-8') as f:
+                    config_shadow = json.load(f)
+            except:
+                config_shadow = copy.deepcopy(self.config)
+            
+            plat = temp_config["target_platform"]
+            config_shadow["target_platform"] = plat
+            config_shadow["api_settings"] = {"translate": plat, "polish": plat}
+            if "platforms" not in config_shadow: config_shadow["platforms"] = {}
+            if plat not in config_shadow["platforms"]:
+                # 如果预设中没有这个平台，创建一个基础结构
+                config_shadow["platforms"][plat] = {"api_format": "OpenAI"}
+            
+            config_shadow["platforms"][plat].update(temp_config)
+            # 同步关键外层字段
+            config_shadow["base_url"] = temp_config.get("api_url")
+            config_shadow["api_key"] = temp_config.get("api_key")
+            config_shadow["model"] = temp_config.get("model")
+            if temp_config.get("think_switch"):
+                config_shadow["think_switch"] = True
+                config_shadow["think_depth"] = temp_config.get("think_depth")
+                config_shadow["thinking_budget"] = temp_config.get("thinking_budget")
+        else:
+            config_shadow = copy.deepcopy(self.config)
+
+        # 3. 影子配置落盘 (确保 TaskConfig 运行在最真实的逻辑下)
+        temp_cfg_path = os.path.join(PROJECT_ROOT, "Resource", "temp_crash_config.json")
+        try:
+            with open(temp_cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(config_shadow, f, indent=4, ensure_ascii=False)
+            
+            # 4. 使用标准的 TaskConfig 流程加载
+            test_task_config = TaskConfig()
+            test_task_config.initialize(config_shadow)
+            
+            # 抑制初始化时的打印输出
+            original_base_print = Base.print
+            Base.print = lambda *args, **kwargs: None
+            try:
+                test_task_config.prepare_for_translation(TaskType.TRANSLATION)
+                # 获取最终经过校验和补全的请求参数包
+                plat_conf = test_task_config.get_platform_configuration("translationReq")
+            finally:
+                Base.print = original_base_print
+
+            # 兼容性修正：LLMRequester 有时期望 'model' 而不是 'model_name'
+            if "model_name" in plat_conf and "model" not in plat_conf:
+                plat_conf["model"] = plat_conf["model_name"]
+            
+            # 设置适合分析的采样参数
+            plat_conf["temperature"] = 1.0
+            plat_conf["top_p"] = 1.0
+            
+            # 5. 执行分析请求
+            requester = LLMRequester()
+            
+            # 从外部文件加载 Prompt
+            prompt_path = os.path.join(PROJECT_ROOT, "Resource", "Prompt", "System", "error_analysis.json")
+            system_prompt = "You are a Python expert helping a user with a crash."
+            try:
+                if os.path.exists(prompt_path):
+                    with open(prompt_path, 'r', encoding='utf-8') as f:
+                        prompts = json.load(f)
+                        system_prompt = prompts.get("system_prompt", {}).get(current_lang, prompts.get("system_prompt", {}).get("en", system_prompt))
+            except Exception: pass
+            
+            user_content = (
+                f"The program crashed. \n"
+                f"Environment: OS={sys.platform}, Python={sys.version.split()[0]}, "
+                f"App Version={self.update_manager.get_local_version_full()}\n\n"
+                f"Project File Structure Context:\n"
+                f"- Core Logic: ainiee_cli.py, ModuleFolders/*\n"
+                f"- User Extensions: PluginScripts/*\n"
+                f"- Resources: Resource/*\n\n"
+                f"Traceback:\n{error_msg}\n\n"
+                f"Strict Analysis Request:\n"
+                f"Analyze if the crash is due to external factors (Network, API Key, Environment, SSL) or internal software defects (Bugs in AiNiee-CLI code).\n"
+                f"Note: Network/SSL/429/401 errors are NEVER code bugs unless the code is fundamentally misusing the library.\n"
+                f"If the error occurs in a third-party library (like requests, urllib3, ssl) due to network conditions, it is NOT a code bug."
+            )
+            
+            console.print(f"[cyan]{i18n.get('msg_llm_analyzing')}[/cyan]")
+            
+            skip, think, content, p_t, c_t = requester.sent_request(
+                [{"role": "user", "content": user_content}],
+                system_prompt,
+                plat_conf
+            )
+            
+            if skip:
+                console.print(f"[red]LLM Analysis failed: {content}[/red]")
+                return None
+            return content
+
+        finally:
+            # 6. 主动清理影子文件
+            if os.path.exists(temp_cfg_path):
+                try: os.remove(temp_cfg_path)
+                except: pass
+        
+        if skip:
+            console.print(f"[red]LLM Analysis failed: {content}[/red]")
+            return None
+        return content
+
+    def _prepare_github_issue(self, error_msg, analysis=None):
+        env_info = f"- OS: {sys.platform}\n- Python: {sys.version.split()[0]}\n- App Version: {self.update_manager.get_local_version_full()}"
+        issue_body = f"## Error Description\n\n```python\n{error_msg}\n```\n\n## Environment\n{env_info}\n"
+        if analysis:
+            issue_body += f"\n## LLM Analysis Result\n{analysis}\n"
+        
+        console.print(Panel(issue_body, title="GitHub Issue Template"))
+        
+        # Localized Guide
+        console.print(f"\n[bold cyan]{i18n.get('msg_github_guide')}[/bold cyan]")
+        console.print(f"[bold cyan]{i18n.get('msg_github_issue_template')}[/bold cyan]")
+        
+        import webbrowser
+        webbrowser.open("https://github.com/ShadowLoveElysia/AiNiee-CLI/issues/new")
+        Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+
+    def _save_error_log(self, error_msg):
+        log_dir = os.path.join(PROJECT_ROOT, "output", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        filename = f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        path = os.path.join(log_dir, filename)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+            f.write(f"Environment: OS={sys.platform}, Python={sys.version}\n")
+            f.write(f"Version: {self.update_manager.get_local_version_full()}\n")
+            f.write("-" * 40 + "\n")
+            f.write(error_msg)
+        return path
 
     def first_time_lang_setup(self):
         global current_lang, i18n
@@ -2623,22 +2944,27 @@ class CLIMenu:
             think_sw = self.config.get("think_switch", plat_conf.get("think_switch", False))
             think_dp = self.config.get("think_depth", plat_conf.get("think_depth", "low"))
             think_budget = self.config.get("thinking_budget", plat_conf.get("thinking_budget", 4096))
+            structured_mode = plat_conf.get("structured_output_mode", 0)
+
+            # 映射显示名称
+            mode_display = ["OFF", "JSON Mode", "Function Call"][structured_mode] if structured_mode < 3 else "Unknown"
 
             table.add_row("1", i18n.get("label_platform"), tp)
             table.add_row("2", i18n.get("label_url"), self.config.get("base_url", ""))
             table.add_row("3", i18n.get("label_key"), "****")
             table.add_row("4", i18n.get("label_model"), self.config.get("model", ""))
             table.add_row("5", i18n.get("menu_api_think_switch"), "[green]ON[/]" if think_sw else "[red]OFF[/]")
+            table.add_row("6", i18n.get("menu_api_structured_output_switch"), f"[cyan]{mode_display}[/cyan]")
             
             api_format = plat_conf.get("api_format", "")
             is_local_platform = tp.lower() in ["sakura", "localllm"]
 
             # Always show thinking options
-            table.add_row("6", i18n.get("menu_api_think_depth"), str(think_dp))
-            table.add_row("7", i18n.get("menu_api_think_budget"), str(think_budget))
+            table.add_row("7", i18n.get("menu_api_think_depth"), str(think_dp))
+            table.add_row("8", i18n.get("menu_api_think_budget"), str(think_budget))
 
             if api_format == "Anthropic":
-                table.add_row("8", i18n.get("menu_fetch_models"), "...")
+                table.add_row("9", i18n.get("menu_fetch_models"), "...")
 
             console.print(table)
 
@@ -2650,7 +2976,7 @@ class CLIMenu:
                     console.print(f"\n[red]⚠️ {i18n.get('warning_thinking_compatibility')}[/red]")
 
             console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=list("012345678"), show_choices=False)
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=list("0123456789"), show_choices=False)
             console.print()
             
             if choice == 0: break
@@ -2676,7 +3002,12 @@ class CLIMenu:
                 # Sync to platform config
                 if tp in self.config.get("platforms", {}):
                     self.config["platforms"][tp]["think_switch"] = new_state
-            elif choice == 6:  # Think Depth
+            elif choice == 6:
+                # 循环切换模式: 0 -> 1 -> 2 -> 0
+                new_mode = (structured_mode + 1) % 3
+                if tp in self.config.get("platforms", {}):
+                    self.config["platforms"][tp]["structured_output_mode"] = new_mode
+            elif choice == 7:  # Think Depth
                 if api_format == "Anthropic":
                     val = Prompt.ask(i18n.get("prompt_think_depth_claude"), choices=["low", "medium", "high"], default=str(think_dp))
                 else:
@@ -2685,12 +3016,12 @@ class CLIMenu:
                 self.config["think_depth"] = val
                 if tp in self.config.get("platforms", {}):
                     self.config["platforms"][tp]["think_depth"] = val
-            elif choice == 7:  # Think Budget
+            elif choice == 8:  # Think Budget
                 val = IntPrompt.ask(i18n.get("prompt_think_budget"), default=int(think_budget))
                 self.config["thinking_budget"] = val
                 if tp in self.config.get("platforms", {}):
                     self.config["platforms"][tp]["thinking_budget"] = val
-            elif choice == 8 and api_format == "Anthropic":
+            elif choice == 9 and api_format == "Anthropic":
                 from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
                 from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
                 
@@ -3371,18 +3702,24 @@ class CLIMenu:
 
         from ModuleFolders.Base.EventManager import EventManager
 
+        # --- 任务追踪状态 ---
+        self._is_critical_failure = False
+        self._last_crash_msg = None
+
         def on_complete(e, d): 
-            self.ui.log(f"[bold green]{i18n.get('msg_task_completed')}[/bold green]")
-            nonlocal task_success
-            task_success = True
+            self.ui.log(f"[bold green]✓ {i18n.get('msg_task_completed')}[/bold green]")
             success.set(); finished.set()
+        
         def on_stop(e, d): 
             self.ui.log(f"[bold yellow]{i18n.get('msg_task_stopped')}[/bold yellow]")
-            # 不要在这里设置 finished，因为 P 之后还要能 R
+            # 记录是否为熔断导致的停止
+            if d and d.get("status") == "critical_error":
+                self._is_critical_failure = True
         
         # 订阅事件
         EventManager.get_singleton().subscribe(Base.EVENT.TASK_COMPLETED, on_complete)
         EventManager.get_singleton().subscribe(Base.EVENT.TASK_STOP_DONE, on_stop)
+        EventManager.get_singleton().subscribe(Base.EVENT.SYSTEM_STATUS_UPDATE, on_stop) # 借用 on_stop 处理状态更新
         EventManager.get_singleton().subscribe(Base.EVENT.TASK_UPDATE, self.ui.update_progress)
         EventManager.get_singleton().subscribe(Base.EVENT.SYSTEM_STATUS_UPDATE, self.ui.update_status)
         EventManager.get_singleton().subscribe(Base.EVENT.TUI_SOURCE_DATA, self.ui.on_source_data)
@@ -3620,7 +3957,7 @@ class CLIMenu:
 
         try:
             if web_mode:
-                 is_middleware_converted = run_task_logic()
+                is_middleware_converted = run_task_logic()
             else:
                 # 提前启动 Live，确保加载过程可见
                 with Live(self.ui.layout, console=self.ui_console, refresh_per_second=10, screen=True, transient=False) as live:
@@ -3629,12 +3966,19 @@ class CLIMenu:
         except KeyboardInterrupt: self.signal_handler(None, None)
         except Exception as e:
             # Capture and log the error before TUI disappears
+            import traceback
+            error_full = traceback.format_exc()
             err_msg = f"[bold red]Critical Task Error: {str(e)}[/bold red]"
             if hasattr(self, "ui") and self.ui:
                 self.ui.log(err_msg)
             else:
                 console.print(err_msg)
             time.sleep(1) # Give a moment for the log to register
+            
+            # 标记为真正的崩溃
+            self._last_crash_msg = error_full
+            self._is_critical_failure = True
+
         finally:
             if not web_mode:
                 self.input_listener.stop()
@@ -3651,9 +3995,18 @@ class CLIMenu:
             self.task_running = False; Base.print = self.original_print
             EventManager.get_singleton().unsubscribe(Base.EVENT.TASK_COMPLETED, on_complete)
             EventManager.get_singleton().unsubscribe(Base.EVENT.TASK_STOP_DONE, on_stop)
+            EventManager.get_singleton().unsubscribe(Base.EVENT.SYSTEM_STATUS_UPDATE, on_stop)
             EventManager.get_singleton().unsubscribe(Base.EVENT.TASK_UPDATE, self.ui.update_progress)
             EventManager.get_singleton().unsubscribe(Base.EVENT.TASK_UPDATE, track_last_data)
-            EventManager.get_singleton().unsubscribe(Base.EVENT.SYSTEM_STATUS_UPDATE, self.ui.update_status)
+            
+            # --- 报错处理逻辑 (仅在致命失败时触发) ---
+            if self._is_critical_failure and not success.is_set():
+                # 只有发生了崩溃异常，或触发了 critical_error 熔断，且任务最终未完成时才弹出
+                crash_msg = self._last_crash_msg or "Task was terminated due to exceeding critical error threshold."
+                if not non_interactive:
+                    self.handle_crash(crash_msg)
+                else:
+                    console.print(f"[bold red]Task failed fatally. Check logs.[/bold red]")
             
             if success.is_set():
                 if self.config.get("enable_task_notification", True):
@@ -4327,10 +4680,17 @@ def main():
     args = parser.parse_args()
 
     cli = CLIMenu()
-    if args.task and args.input_path:
-        cli.run_non_interactive(args)
-    else:
-        cli.main_menu()
+    try:
+        if args.task and args.input_path:
+            cli.run_non_interactive(args)
+        else:
+            cli.main_menu()
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        cli.handle_crash(error_msg)
 
 if __name__ == "__main__":
     main()

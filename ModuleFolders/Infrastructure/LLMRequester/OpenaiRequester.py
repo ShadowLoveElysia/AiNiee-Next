@@ -98,8 +98,14 @@ class OpenaiRequester(Base):
                         response_think = ""
                     response_content = message.content
                 
-                prompt_tokens = int(response.usage.prompt_tokens) if hasattr(response, "usage") else 0
-                completion_tokens = int(response.usage.completion_tokens) if hasattr(response, "usage") else 0
+                # 安全获取消耗
+                prompt_tokens = 0
+                completion_tokens = 0
+                if hasattr(response, "usage") and response.usage:
+                    prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+                    completion_tokens = getattr(response.usage, "completion_tokens", 0)
+
+                return False, response_think, response_content, int(prompt_tokens), int(completion_tokens)
 
             except Exception as sdk_err:
                 # 如果 SDK 请求失败，尝试使用 httpx 兼容 SSE 格式 (解决部分中转站强制 SSE 问题)
@@ -123,6 +129,7 @@ class OpenaiRequester(Base):
                                 # SSE 解析逻辑：遍历所有行并聚合内容
                                 full_content = ""
                                 full_think = ""
+                                usage = {"prompt_tokens": 0, "completion_tokens": 0}
                                 lines = raw_text.split("\n")
                                 for line in lines:
                                     if line.startswith("data:"):
@@ -130,18 +137,20 @@ class OpenaiRequester(Base):
                                         if json_str == "[DONE]": break
                                         try:
                                             res_json = json.loads(json_str)
-                                            if "choices" in res_json:
+                                            if isinstance(res_json, dict) and "choices" in res_json:
                                                 choice = res_json["choices"][0]
-                                                # 获取正文内容
-                                                c = choice.get("message", {}).get("content", "") or choice.get("delta", {}).get("content", "")
+                                                # 获取内容
+                                                delta = choice.get("delta", {})
+                                                c = delta.get("content", "")
                                                 if c: full_content += c
-                                                # 获取思考内容
-                                                t = choice.get("message", {}).get("reasoning_content", "") or choice.get("delta", {}).get("reasoning_content", "")
+                                                t = delta.get("reasoning_content", "")
                                                 if t: full_think += t
+                                            # SSE 模式下尝试在最后一个包获取 usage
+                                            if isinstance(res_json, dict) and "usage" in res_json and res_json["usage"]:
+                                                usage["prompt_tokens"] = res_json["usage"].get("prompt_tokens", 0)
+                                                usage["completion_tokens"] = res_json["usage"].get("completion_tokens", 0)
                                         except: continue
-                                response_content = full_content
-                                response_think = full_think
-                                prompt_tokens, completion_tokens = 0, 0 
+                                return False, full_think, full_content, int(usage["prompt_tokens"]), int(usage["completion_tokens"])
                             else:
                                 raise sdk_err
                         else:
@@ -171,17 +180,3 @@ class OpenaiRequester(Base):
                 self.print(f"[dim]Request aborted due to stop signal: {e}[/dim]")
 
             return True, error_type, str(e), 0, 0
-
-        # 获取指令消耗
-        try:
-            prompt_tokens = int(response.usage.prompt_tokens)
-        except Exception:
-            prompt_tokens = 0
-
-        # 获取回复消耗
-        try:
-            completion_tokens = int(response.usage.completion_tokens)
-        except Exception:
-            completion_tokens = 0
-
-        return False, response_think, response_content, prompt_tokens, completion_tokens
