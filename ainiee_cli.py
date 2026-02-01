@@ -379,11 +379,14 @@ class TaskUI:
             d = self._last_progress_data
             completed, total = d["line"], d["total_line"]
             tokens, elapsed = d["token"], d["time"]
+            
+            # Use session tokens for TPM calculation if available (Resume Fix)
+            calc_tokens = d.get("session_token", tokens)
 
             # 计算指标
             if elapsed > 0:
                 rpm = (d.get("total_requests", 0) / (elapsed / 60))
-                tpm_k = (tokens / (elapsed / 60) / 1000)
+                tpm_k = (calc_tokens / (elapsed / 60) / 1000)
             else: rpm, tpm_k = 0, 0
             
             # 更新 Header (详细模式专用)
@@ -534,8 +537,11 @@ class WebLogger:
         tokens = d.get("token", 0)
         elapsed = d.get("time", 0)
         
+        # Use session tokens for TPM calculation if available (Resume Fix)
+        calc_tokens = d.get("session_token", tokens)
+        
         rpm = (d.get("total_requests", 0) / (elapsed / 60)) if elapsed > 0 else 0
-        tpm_k = (tokens / (elapsed / 60) / 1000) if elapsed > 0 else 0
+        tpm_k = (calc_tokens / (elapsed / 60) / 1000) if elapsed > 0 else 0
         
         try:
             self.stream.write(f"[STATS] RPM: {rpm:.2f} | TPM: {tpm_k:.2f}k | Progress: {completed}/{total} | Tokens: {tokens}\n")

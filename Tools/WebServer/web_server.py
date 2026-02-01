@@ -200,6 +200,8 @@ class TaskManager:
                 env["AINIEE_INTERNAL_API_URL"] = task_manager.api_url
                 # 强制子进程使用 UTF-8 编码输出，防止在 Windows 下产生编码冲突
                 env["PYTHONIOENCODING"] = "utf-8"
+                # 标记该进程为后端 Worker，与核心主进程（WebServer）区分
+                env["AINIEE_BACKEND_WORKER"] = "1"
 
                 self.process = subprocess.Popen(
                     cli_args,
@@ -293,14 +295,14 @@ class TaskManager:
             
             self.status = "stopping"
             self.stats["status"] = "stopping"
-            self.logs.append({"timestamp": time.time(), "message": "Sending stop signal..."})
+            self.logs.append({"timestamp": time.time(), "message": "Sending force stop signal..."})
             
             try:
-                self.process.terminate()
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
+                # Direct force kill as requested (Data safety guaranteed by cache)
                 self.process.kill()
-                self.logs.append({"timestamp": time.time(), "message": "Process did not respond, forcing kill."})
+                self.process.wait(timeout=2)
+            except Exception as e:
+                self.logs.append({"timestamp": time.time(), "message": f"Force stop error: {e}"})
             
             self.status = "idle"
             self.stats["status"] = "idle"

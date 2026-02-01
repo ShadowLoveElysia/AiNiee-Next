@@ -42,6 +42,8 @@ class CacheProjectStatistics(ThreadSafeCache):
     token: int = 0
     total_completion_tokens: int = 0
     time: float = 0.0
+    resume_offset_line: int = 0
+    resume_offset_token: int = 0
 
 
 @dataclass(repr=False)

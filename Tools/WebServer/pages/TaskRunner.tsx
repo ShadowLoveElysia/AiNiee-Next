@@ -245,6 +245,7 @@ export const TaskRunner: React.FC = () => {
           ...prev, 
           isRunning: true, 
           chartData: [],
+          logs: [],
           stats: { 
               ...(prev.stats || {}), 
               status: 'running',
