@@ -2772,56 +2772,84 @@ class CLIMenu:
                 time.sleep(1)
     def select_api_menu(self, online: bool):
         local_keys = ["localllm", "sakura"]; platforms = self.config.get("platforms", {})
-        options = {k: v for k, v in platforms.items() if (k.lower() not in local_keys) == online}
-        if not options: return
         
-        # Refactored to numeric selection
-        sorted_keys = sorted(list(options.keys()))
+        # 分类逻辑
+        official_options = {}
+        custom_options = {}
+        
+        target_options = {k: v for k, v in platforms.items() if (k.lower() not in local_keys) == online}
+        
+        for k, v in target_options.items():
+            # 根据 group 判定，或者根据 tag 是否包含 custom 判定
+            group = v.get("group", "")
+            if group == "custom" or "custom" in k.lower():
+                custom_options[k] = v
+            else:
+                official_options[k] = v
+
+        if not target_options: return
+        
+        # 显示菜单
         console.print(Panel(f"[bold]{i18n.get('msg_api_select_' + ('online' if online else 'local'))}[/bold]"))
-        table = Table(show_header=False, box=None)
-        for i, k in enumerate(sorted_keys):
-            table.add_row(f"[cyan]{i+1}.[/]", k)
-        console.print(table)
+        
+        all_keys = []
+        # 1. 官方预设
+        if official_options:
+            console.print(f"\n[bold yellow]{i18n.get('label_api_official')}[/bold yellow]")
+            console.print(f"[dim]{i18n.get('tip_api_official')}[/dim]")
+            sorted_off = sorted(list(official_options.keys()))
+            table_off = Table(show_header=False, box=None)
+            for i, k in enumerate(sorted_off):
+                table_off.add_row(f"[cyan]{len(all_keys) + 1}.[/]", k)
+                all_keys.append(k)
+            console.print(table_off)
+
+        # 2. 自定义/中转
+        if custom_options:
+            console.print(f"\n[bold cyan]{i18n.get('label_api_custom')}[/bold cyan]")
+            console.print(f"[dim]{i18n.get('tip_api_custom')}[/dim]")
+            sorted_cust = sorted(list(custom_options.keys()))
+            table_cust = Table(show_header=False, box=None)
+            for i, k in enumerate(sorted_cust):
+                table_cust.add_row(f"[cyan]{len(all_keys) + 1}.[/]", k)
+                all_keys.append(k)
+            console.print(table_cust)
+
         console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
         
-        choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(sorted_keys)+1)], show_choices=False)
+        choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(all_keys)+1)], show_choices=False)
         if choice == 0: return
         
-        sel = sorted_keys[choice - 1]
-        plat_conf = options[sel]
+        sel = all_keys[choice - 1]
+        plat_conf = target_options[sel]
+        is_custom = plat_conf.get("group") == "custom" or "custom" in sel.lower()
         
-        # 复制预设配置并合并当前已存在的配置
+        # 复制配置
         new_plat_conf = plat_conf.copy()
         if sel in self.config.get("platforms", {}):
             new_plat_conf.update(self.config["platforms"][sel])
             
-        # 根据平台的 key_in_settings 询问配置
-        keys_to_prompt = plat_conf.get("key_in_settings", [])
-        
         console.print(f"\n[bold cyan]--- {i18n.get('menu_api_manual')}: {sel} ---[/bold cyan]")
         
-        for key in keys_to_prompt:
-            if key == "api_key":
-                val = Prompt.ask(i18n.get("prompt_api_key"), password=True, default=new_plat_conf.get("api_key", ""))
-                new_plat_conf["api_key"] = val.strip()
-            elif key == "api_url":
-                val = Prompt.ask(i18n.get("prompt_api_url"), default=new_plat_conf.get("api_url", ""))
-                new_plat_conf["api_url"] = val.strip()
-            elif key == "model":
-                val = Prompt.ask(i18n.get("prompt_model"), default=new_plat_conf.get("model", ""))
-                new_plat_conf["model"] = val.strip()
-            elif key == "access_key":
-                val = Prompt.ask("Access Key", password=True, default=new_plat_conf.get("access_key", ""))
-                new_plat_conf["access_key"] = val.strip()
-            elif key == "secret_key":
-                val = Prompt.ask("Secret Key", password=True, default=new_plat_conf.get("secret_key", ""))
-                new_plat_conf["secret_key"] = val.strip()
-            elif key == "region":
-                val = Prompt.ask("Region", default=new_plat_conf.get("region", "us-east-1"))
-                new_plat_conf["region"] = val.strip()
-            # 其他参数（如线程限制、参数等）建议到“手动编辑”中微调，此处仅询问核心连接参数以保持流程流畅
+        # --- 交互询问逻辑 ---
+        # 1. 询问 URL (仅限自定义平台，官方预设通常使用默认)
+        if is_custom:
+            new_plat_conf["api_url"] = Prompt.ask(i18n.get("prompt_api_url"), default=new_plat_conf.get("api_url", "")).strip()
         
-        # 更新全局配置
+        # 2. 询问 API Key (所有在线平台都需要)
+        if online and plat_conf.get("api_key") != "nokey":
+            new_plat_conf["api_key"] = Prompt.ask(i18n.get("prompt_api_key"), password=True, default=new_plat_conf.get("api_key", "")).strip()
+        
+        # 3. 询问 Model (所有平台都询问，以防预设过时)
+        new_plat_conf["model"] = Prompt.ask(i18n.get("prompt_model"), default=new_plat_conf.get("model", "")).strip()
+
+        # 4. 特殊平台额外参数 (Amazon Bedrock 等)
+        if sel == "amazonbedrock":
+            new_plat_conf["access_key"] = Prompt.ask("Access Key", password=True, default=new_plat_conf.get("access_key", "")).strip()
+            new_plat_conf["secret_key"] = Prompt.ask("Secret Key", password=True, default=new_plat_conf.get("secret_key", "")).strip()
+            new_plat_conf["region"] = Prompt.ask("Region", default=new_plat_conf.get("region", "us-east-1")).strip()
+        
+        # 更新全局状态
         self.config.update({
             "target_platform": sel, 
             "base_url": new_plat_conf.get("api_url", ""), 
@@ -2830,8 +2858,7 @@ class CLIMenu:
             "api_settings": {"translate": sel, "polish": sel}
         })
         
-        if "platforms" not in self.config:
-            self.config["platforms"] = {}
+        if "platforms" not in self.config: self.config["platforms"] = {}
         self.config["platforms"][sel] = new_plat_conf
         
         self.save_config(); console.print(f"\n[green]{i18n.get('msg_active_platform').format(sel)}[/green]"); time.sleep(1)
