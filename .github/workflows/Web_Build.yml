@@ -6,15 +6,14 @@ on:
       - main
       - master
     paths:
-      - 'Tools/WebServer/**' # 只有这个文件夹变动才触发
+      - 'Tools/WebServer/**'
   release:
-    types: [published] # 发布 Release 时触发
+    types: [published]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
-    # 设置全局默认工作目录，这样下面的所有 run 都不用重复写 cd 了
     defaults:
       run:
         working-directory: Tools/WebServer
@@ -36,27 +35,33 @@ jobs:
       - name: Build Project
         run: npm run build
 
-      # --- 逻辑 A: 每次提交代码，生成一个预览包供你测试 ---
-      - name: Upload Artifacts (for commits)
+      # --- 逻辑 A: 每次 Commit 提交 (开发版) ---
+      - name: Zip Dev Build
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist-preview
-          # 这里的路径相对于仓库根目录，所以要加上前缀
-          path: Tools/WebServer/dist/ 
-          retention-days: 7
+        run: zip -r ../../web-dist-dev.zip dist/
 
-      # --- 逻辑 B: 发布 Release 时，自动压缩并上传到 Assets ---
-      - name: Zip Dist Folder
+      - name: Upload Dev Build to Nightly Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-build # 固定标签名，Python端可以写死这个URL下载最新的dev包
+          name: "Development Preview (Auto-Build)"
+          body: "这是最新的开发版 Web 编译产物，文件名：web-dist-dev.zip"
+          prerelease: true
+          files: web-dist-dev.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- 逻辑 B: 发布正式 Release (正式版) ---
+      - name: Zip Release Build
         if: github.event_name == 'release'
-        # 在 Tools/WebServer 目录下压缩 dist 文件夹
         run: zip -r ../../web-dist.zip dist/
 
-      - name: Upload to Release Assets
+      - name: Upload Release Build to Official Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          # 指向根目录下的压缩包
+          # release 触发时不需要指定 tag_name，它会自动识别当前发布的 tag
           files: web-dist.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
