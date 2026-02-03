@@ -193,7 +193,9 @@
     "err_not_file": "Error: Path is not a file or does not exist.",
     "err_not_folder": "Error: Path is not a directory or does not exist.",
     "menu_glossary_rules": "Glossary & Text Rules",
-    "menu_dict_settings": "Dictionary Settings",
+    "menu_system_prompts": "System Prompts",
+    "label_readonly": "Read Only",
+    "menu_dict_settings": "Glossary Settings",
     "menu_exclusion_settings": "Exclusion List Settings",
     "menu_dict_import": "Import Dictionary Data (JSON)",
     "menu_exclusion_import": "Import Exclusion Data (JSON)",
@@ -482,5 +484,12 @@
         "msg_file_exists": "File already exists!",
         "msg_file_created": "File created.",
         "opt_apply": "Apply this Prompt",
-        "opt_edit_in_editor": "Edit in System Editor"
+        "opt_edit_in_editor": "Edit in System Editor",
+        "opt_edit_direct": "Input directly in Terminal",
+        "msg_multi_line_hint": "Enter content (Type 'EOF' on a new line to finish):",
+        "banner_prompts": "Active Prompts",
+        "banner_trans": "Trans",
+        "banner_polish": "Polish",
+        "label_none": "None",
+        "msg_confirm_clear_file": "Content is empty. Confirm clear file?"
     }

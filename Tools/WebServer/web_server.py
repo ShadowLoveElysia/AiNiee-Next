@@ -820,6 +820,56 @@ async def get_rules_profiles():
     profiles = [f.replace(".json", "") for f in os.listdir(RULES_PROFILES_PATH) if f.endswith(".json")]
     return ["None"] + (profiles or ["default"])
 
+# --- Prompt Management Endpoints ---
+
+@app.get("/api/prompts")
+async def list_prompt_categories():
+    base_dir = os.path.join(PROJECT_ROOT, "Resource", "Prompt")
+    if not os.path.exists(base_dir): return []
+    return sorted([d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))])
+
+@app.get("/api/prompts/{category}")
+async def list_prompts(category: str):
+    # category: "Translate", "Polishing", "Local", "Sakura", "System"
+    prompt_dir = os.path.join(PROJECT_ROOT, "Resource", "Prompt", category)
+    if not os.path.exists(prompt_dir):
+        return []
+    # Support both .txt and .json (for error_analysis.json)
+    files = [f for f in os.listdir(prompt_dir) if f.endswith((".txt", ".json"))]
+    return sorted(files)
+
+@app.get("/api/prompts/{category}/{filename}")
+async def get_prompt_content(category: str, filename: str):
+    # Try literal match first, then fallback to .txt
+    file_path = os.path.join(PROJECT_ROOT, "Resource", "Prompt", category, filename)
+    if not os.path.exists(file_path):
+        if not filename.endswith(".txt"):
+            file_path += ".txt"
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Prompt file not found")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read prompt: {e}")
+
+@app.post("/api/prompts/{category}/{filename}")
+async def save_prompt_content(category: str, filename: str, data: Dict[str, str] = Body(...)):
+    file_path = os.path.join(PROJECT_ROOT, "Resource", "Prompt", category, filename)
+    # Check if we should append .txt (only if it doesn't exist and doesn't have an extension)
+    if not os.path.exists(file_path) and "." not in filename:
+        file_path += ".txt"
+        
+    content = data.get("content", "")
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return {"message": "Prompt saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
+
 @app.post("/api/rules_profiles/switch")
 async def switch_rules_profile(request: RulesProfileSwitchRequest):
     global _config_cache

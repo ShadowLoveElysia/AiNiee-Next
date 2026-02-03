@@ -396,6 +396,36 @@ export const DataService = {
         });
     },
 
+    // --- Prompts ---
+
+    async listPromptCategories(): Promise<string[]> {
+        const res = await fetch(`${API_BASE}/prompts`);
+        if (!res.ok) return [];
+        return await res.json();
+    },
+
+    async listPrompts(category: string): Promise<string[]> {
+        const res = await fetch(`${API_BASE}/prompts/${category}`);
+        if (!res.ok) return [];
+        return await res.json();
+    },
+
+    async getPromptContent(category: string, filename: string): Promise<string> {
+        const res = await fetch(`${API_BASE}/prompts/${category}/${filename}`);
+        if (!res.ok) throw new Error('Failed to fetch prompt content');
+        const data = await res.json();
+        return data.content || "";
+    },
+
+    async savePromptContent(category: string, filename: string, content: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/prompts/${category}/${filename}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+        });
+        if (!res.ok) throw new Error('Failed to save prompt content');
+    },
+
     // --- Task Execution ---
 
     /**

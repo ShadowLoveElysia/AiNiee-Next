@@ -1622,6 +1622,13 @@ class CLIMenu:
         settings_line_1 = f"| [bold]{i18n.get('banner_langs')}:[/bold] {src}->{tgt} | [bold]{i18n.get('banner_conv')}:[/bold] {conv_status}{conv_warning} | [bold]{i18n.get('banner_bilingual_file')}:[/bold] {bilingual_file_status} | [bold]{i18n.get('banner_bilingual')}:[/bold] {bilingual_content_status} |"
         settings_line_2 = f"| [bold]{i18n.get('banner_api')}:[/bold] {target_platform} | [bold]{i18n.get('banner_threads')}:[/bold] {threads_display} | [bold]{i18n.get('banner_detailed')}:[/bold] {detailed_status}{think_status} |"
 
+        # 提示词状态
+        trans_p = self.config.get("translation_prompt_selection", {}).get("last_selected_id", "common")
+        polish_p = self.config.get("polishing_prompt_selection", {}).get("last_selected_id", "common")
+        if trans_p == "command": trans_p = i18n.get("label_none") or "None"
+        if polish_p == "command": polish_p = i18n.get("label_none") or "None"
+        settings_line_3 = f"| [bold]{i18n.get('banner_prompts') or 'Prompts'}:[/bold] {i18n.get('banner_trans') or 'Trans'}:[green]{trans_p}[/green] | {i18n.get('banner_polish') or 'Polish'}:[green]{polish_p}[/green] |"
+
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
         
@@ -1629,7 +1636,8 @@ class CLIMenu:
             f"[bold cyan]AiNiee CLI[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
             f"[dim]GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia[/dim]\n"
             f"{settings_line_1}\n"
-            f"{settings_line_2}"
+            f"{settings_line_2}\n"
+            f"{settings_line_3}"
         )
         
         console.print(Panel.fit(banner_content, title="Status", border_style="cyan"))
@@ -3286,10 +3294,11 @@ class CLIMenu:
             
             table.add_section()
             table.add_row("[cyan]9.[/]", f"{i18n.get('menu_switch_profile_short')} ([yellow]{self.active_rules_profile_name}[/yellow])")
+            table.add_row("[cyan]10.[/]", f"{i18n.get('menu_system_prompts') or 'System Prompts'} ([dim]{i18n.get('label_readonly') or 'Read Only'}[/dim])")
 
             console.print(table); console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
             
-            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(10)], show_choices=False)
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(11)], show_choices=False)
             console.print("\n")
             
             if choice == 0: break
@@ -3302,6 +3311,7 @@ class CLIMenu:
             elif choice == 7: self.manage_feature_content("writing_style_switch", "writing_style_content", i18n.get("feature_writing_style_switch"), is_list=False)
             elif choice == 8: self.manage_feature_content("translation_example_switch", "translation_example_data", i18n.get("feature_translation_example_switch"), is_list=True)
             elif choice == 9: self.rules_profiles_menu()
+            elif choice == 10: self.select_prompt_template("System", None)
 
     def plugin_settings_menu(self):
         while True:
@@ -3566,20 +3576,27 @@ class CLIMenu:
     def select_prompt_template(self, folder, key):
         prompt_dir = os.path.join(PROJECT_ROOT, "Resource", "Prompt", folder)
         if not os.path.exists(prompt_dir): return
-        files = [f for f in os.listdir(prompt_dir) if f.endswith(".txt")]
+        files = [f for f in os.listdir(prompt_dir) if f.endswith((".txt", ".json"))]
         if not files: return
+        
+        is_readonly = (folder == "System" or key is None)
+
         for i, f in enumerate(files): console.print(f"{i+1}. {f}")
         
-        # Add "Create New" option
-        console.print(f"[cyan]N.[/] {i18n.get('menu_prompt_create')}")
+        # Add "Create New" option if not readonly
+        if not is_readonly:
+            console.print(f"[cyan]N.[/] {i18n.get('menu_prompt_create')}")
+        
         console.print(f"[dim]0. {i18n.get('menu_cancel')}[/dim]")
 
-        choices = [str(i+1) for i in range(len(files))] + ["0", "N", "n"]
+        choices = [str(i+1) for i in range(len(files))] + ["0"]
+        if not is_readonly: choices += ["N", "n"]
+        
         choice_str = Prompt.ask(f"\n{i18n.get('prompt_template_select')}", choices=choices, show_choices=False)
         
         if choice_str == "0": return
         
-        if choice_str.lower() == "n":
+        if not is_readonly and choice_str.lower() == "n":
             new_name = Prompt.ask(i18n.get('prompt_new_prompt_name')).strip()
             if not new_name: return
             if not new_name.endswith(".txt"): new_name += ".txt"
@@ -3613,25 +3630,57 @@ class CLIMenu:
             with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
             
             # Preview
-            console.print(Panel(content, title=f"Preview: {f_name}", border_style="blue", height=15))
+            console.print(Panel(content, title=f"Preview: {f_name} {'[READ ONLY]' if is_readonly else ''}", border_style="blue", height=15))
             
             # Action Menu
-            console.print(f"[bold cyan]1.[/] {i18n.get('opt_apply')}")
-            console.print(f"[bold cyan]2.[/] {i18n.get('opt_edit_in_editor')}")
-            console.print(f"[dim]0. {i18n.get('menu_cancel')}[/dim]")
+            if not is_readonly:
+                console.print(f"[bold cyan]1.[/] {i18n.get('opt_apply')}")
+                console.print(f"[bold cyan]2.[/] {i18n.get('opt_edit_in_editor')}")
+                console.print(f"[bold cyan]3.[/] {i18n.get('opt_edit_direct')}")
             
-            action = IntPrompt.ask(i18n.get('prompt_select'), choices=["0", "1", "2"], default=1, show_choices=False)
+            console.print(f"[dim]0. {i18n.get('menu_cancel') if not is_readonly else i18n.get('menu_back')}[/dim]")
             
-            if action == 1:
+            action_choices = ["0"] if is_readonly else ["0", "1", "2", "3"]
+            action = IntPrompt.ask(i18n.get('prompt_select'), choices=action_choices, default=0 if is_readonly else 1, show_choices=False)
+            
+            if action == 1 and not is_readonly:
                 self.config[key] = {"last_selected_id": f_name.replace(".txt", ""), "prompt_content": content}
                 self.save_config()
                 console.print(f"[green]{i18n.get('msg_prompt_updated')}[/green]")
-            elif action == 2:
+            elif action == 2 and not is_readonly:
                 if open_in_editor(file_path):
                     Prompt.ask(f"\n{i18n.get('msg_press_enter_after_save')}")
                     self.select_prompt_template(folder, key)
                     return
+            elif action == 3 and not is_readonly:
+                console.print(f"\n[yellow]{i18n.get('msg_multi_line_hint')}[/yellow]")
+                lines = []
+                while True:
+                    try:
+                        line = input()
+                        if line.strip().upper() == "EOF": break
+                        lines.append(line)
+                    except EOFError: break
+                
+                new_content = "\n".join(lines)
+                if not lines:
+                    if not Confirm.ask(i18n.get('msg_confirm_clear_file') or "Content is empty. Clear file?", default=False):
+                        console.print("[yellow]Cancelled save.[/yellow]")
+                        self.select_prompt_template(folder, key)
+                        return
+
+                try:
+                    with open(file_path, 'w', encoding='utf-8') as f: f.write(new_content)
+                    console.print(f"[green]{i18n.get('msg_saved')}[/green]")
+                    self.select_prompt_template(folder, key)
+                    return
+                except Exception as e:
+                    console.print(f"[red]Error saving: {e}[/red]"); time.sleep(2)
             else:
+                # Return to list if readonly or cancelled
+                if is_readonly:
+                    self.select_prompt_template(folder, key)
+                    return
                 console.print("[yellow]Cancelled.[/yellow]")
             time.sleep(1)
         except Exception as e:

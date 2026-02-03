@@ -6,6 +6,7 @@ import { Rules } from './pages/Rules';
 import { Plugins } from './pages/Plugins';
 import { TaskQueue } from './pages/TaskQueue';
 import { TaskRunner } from './pages/TaskRunner';
+import { Prompts } from './pages/Prompts';
 import { Monitor } from './pages/Monitor';
 import { CacheEditor } from './pages/CacheEditor';
 import { DataService } from './services/DataService';
@@ -367,6 +368,8 @@ const MainLayout: React.FC = () => {
       content = <TaskRunner />;
     } else if (pathname === '/cache-editor') {
       content = <CacheEditor />;
+    } else if (pathname === '/prompts') {
+      content = <Prompts />;
     } else if (pathname === '/rules') {
       content = <Rules />;
     } else if (pathname === '/plugins') {
@@ -483,6 +486,7 @@ const MainLayout: React.FC = () => {
               <SidebarItem to="/" icon={LayoutDashboard} labelKey="menu_title" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/task" icon={PlayCircle} labelKey="menu_start_translation" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/cache-editor" icon={Database} labelKey="menu_cache_editor" currentPath={pathname} activeTheme={activeTheme} />
+              <SidebarItem to="/prompts" icon={Sparkles} labelKey="menu_prompt_features" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/rules" icon={BookOpen} labelKey="menu_glossary_rules" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/plugins" icon={Puzzle} labelKey="menu_plugin_settings" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/queue" icon={ListPlus} labelKey="menu_task_queue" currentPath={pathname} activeTheme={activeTheme} />
