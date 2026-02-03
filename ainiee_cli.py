@@ -464,8 +464,13 @@ class TaskUI:
             else:
                 hotkeys = i18n.get("label_shortcuts")
             
+            # 获取当前线程数 (优先从 task_executor 获取)
+            current_threads = "Auto"
+            if self.parent_cli and hasattr(self.parent_cli, 'task_executor'):
+                current_threads = self.parent_cli.task_executor.config.actual_thread_counts
+
             stats_markup = (
-                f"File: [bold]{current_file}[/] | Progress: [bold]{completed}/{total}[/] | RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{tokens}[/]\n"
+                f"File: [bold]{current_file}[/] | Progress: [bold]{completed}/{total}[/] | Threads: [bold]{current_threads}[/] | RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/] | Tokens: [bold]{tokens}[/]\n"
                 f"Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}"
             )
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
@@ -4199,11 +4204,15 @@ class CLIMenu:
                                 old_val = self.task_executor.config.actual_thread_counts
                                 new_val = max(1, old_val - 1)
                                 self.task_executor.config.actual_thread_counts = new_val
+                                self.task_executor.config.user_thread_counts = new_val
+                                self.config["user_thread_counts"] = new_val
                                 self.ui.log(f"[yellow]{i18n.get('msg_thread_changed').format(new_val)}[/yellow]")
                             elif key == '+': # 增加线程
                                 old_val = self.task_executor.config.actual_thread_counts
                                 new_val = min(100, old_val + 1)
                                 self.task_executor.config.actual_thread_counts = new_val
+                                self.task_executor.config.user_thread_counts = new_val
+                                self.config["user_thread_counts"] = new_val
                                 self.ui.log(f"[green]{i18n.get('msg_thread_changed').format(new_val)}[/green]")
                             elif key == 'k': # 热切换 API
                                 self.ui.log(f"[cyan]{i18n.get('msg_api_switching_manual')}[/cyan]")
