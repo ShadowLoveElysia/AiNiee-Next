@@ -46,6 +46,7 @@ class ConfigItem:
     validator: Optional[Callable] = None        # 自定义验证函数
     depends_on: Optional[str] = None            # 依赖的配置项
     category: str = "general"                   # 配置分类
+    online_only: bool = False                   # 仅在线API支持
 
 
 # ============================================================
@@ -166,6 +167,18 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="tokens_limit",
+    default=512,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.INT,
+    i18n_key="setting_tokens_limit",
+    min_value=64,
+    max_value=8192,
+    depends_on="tokens_limit_switch",
+    category="translation"
+))
+
+register_config(ConfigItem(
     key="pre_line_counts",
     default=3,
     level=ConfigLevel.USER,
@@ -278,7 +291,7 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="setting_auto_set_output_path",
-    category="feature"
+    category="path"
 ))
 
 register_config(ConfigItem(
@@ -375,7 +388,8 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="feature_characterization_switch",
-    category="prompt_feature"
+    category="prompt_feature",
+    online_only=True
 ))
 
 register_config(ConfigItem(
@@ -384,7 +398,8 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="feature_world_building_switch",
-    category="prompt_feature"
+    category="prompt_feature",
+    online_only=True
 ))
 
 register_config(ConfigItem(
@@ -393,7 +408,8 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="feature_writing_style_switch",
-    category="prompt_feature"
+    category="prompt_feature",
+    online_only=True
 ))
 
 register_config(ConfigItem(
@@ -402,7 +418,8 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="feature_translation_example_switch",
-    category="prompt_feature"
+    category="prompt_feature",
+    online_only=True
 ))
 
 register_config(ConfigItem(
@@ -486,6 +503,17 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="critical_error_threshold",
+    default=5,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.INT,
+    i18n_key="setting_critical_error_threshold",
+    min_value=1,
+    max_value=20,
+    category="api"
+))
+
+register_config(ConfigItem(
     key="backup_apis",
     default=[],
     level=ConfigLevel.SYSTEM,
@@ -493,18 +521,50 @@ register_config(ConfigItem(
     category="api"
 ))
 
-# --- 响应检查 (ADVANCED) ---
+# API池管理入口 (显示为子菜单入口)
 register_config(ConfigItem(
-    key="response_check_switch",
-    default={
-        "newline_character_count_check": False,
-        "return_to_original_text_check": False,
-        "residual_original_text_check": False,
-        "reply_format_check": False,
-    },
-    level=ConfigLevel.ADVANCED,
+    key="api_pool_management",
+    default=None,
+    level=ConfigLevel.USER,
     config_type=ConfigType.DICT,
-    i18n_key="setting_response_check",
+    i18n_key="menu_api_pool_settings",
+    category="api"
+))
+
+# --- 响应检查 (ADVANCED) - 拆分为独立配置项 ---
+register_config(ConfigItem(
+    key="newline_character_count_check",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="check_newline_character_count_check",
+    category="response_check"
+))
+
+register_config(ConfigItem(
+    key="return_to_original_text_check",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="check_return_to_original_text_check",
+    category="response_check"
+))
+
+register_config(ConfigItem(
+    key="residual_original_text_check",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="check_residual_original_text_check",
+    category="response_check"
+))
+
+register_config(ConfigItem(
+    key="reply_format_check",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="check_reply_format_check",
     category="response_check"
 ))
 
@@ -546,6 +606,51 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="enable_auto_update",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_auto_update",
+    category="feature"
+))
+
+# --- Thinking 配置 (ADVANCED) ---
+register_config(ConfigItem(
+    key="think_switch",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="menu_api_think_switch",
+    category="advanced",
+    online_only=True
+))
+
+register_config(ConfigItem(
+    key="think_depth",
+    default="low",
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.CHOICE,
+    i18n_key="menu_api_think_depth",
+    choices=["low", "medium", "high"],
+    depends_on="think_switch",
+    category="advanced",
+    online_only=True
+))
+
+register_config(ConfigItem(
+    key="thinking_budget",
+    default=4096,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.INT,
+    i18n_key="menu_api_think_budget",
+    min_value=1024,
+    max_value=32768,
+    depends_on="think_switch",
+    category="advanced",
+    online_only=True
+))
+
+register_config(ConfigItem(
     key="auto_process_text_code_segment",
     default=False,
     level=ConfigLevel.USER,
@@ -582,15 +687,57 @@ register_config(ConfigItem(
     config_type=ConfigType.BOOL,
     i18n_key="setting_tokens_limit_switch",
     i18n_desc_key="setting_tokens_limit_switch_desc",
-    category="advanced"
+    category="translation"
 ))
 
 # --- 系统级配置 (SYSTEM) - 不对用户显示 ---
 register_config(ConfigItem(
     key="translation_project",
     default="AutoType",
+    level=ConfigLevel.USER,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_project_type",
+    choices=[
+        "AutoType",
+        # 游戏翻译
+        "Mtool", "Renpy", "VNText",
+        # 电子书 (原生支持)
+        "Epub", "Docx", "Txt",
+        # 电子书 (需要Calibre中间件)
+        "Mobi", "Azw3", "Fb2", "Kepub",
+        # 字幕
+        "Srt", "Lrc", "Vtt", "Ass",
+        # 开发者格式
+        "Excel", "Json", "Paratranz", "Po"
+    ],
+    category="translation"
+))
+
+# 中间件转换开关
+register_config(ConfigItem(
+    key="enable_calibre_middleware",
+    default=True,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_enable_calibre_middleware",
+    category="feature"
+))
+
+# Calibre中间件支持的格式列表 (SYSTEM级别，用户不可见)
+register_config(ConfigItem(
+    key="calibre_middleware_exts",
+    default=[".mobi", ".azw3", ".kepub", ".fb2", ".lit", ".lrf", ".pdb", ".pmlz", ".rb", ".rtf", ".tcr", ".txtz", ".htmlz"],
     level=ConfigLevel.SYSTEM,
-    config_type=ConfigType.STRING,
+    config_type=ConfigType.LIST,
+    category="system"
+))
+
+# XLSX中间件支持的格式列表 (SYSTEM级别)
+register_config(ConfigItem(
+    key="xlsx_middleware_exts",
+    default=[".xlsx"],
+    level=ConfigLevel.SYSTEM,
+    config_type=ConfigType.LIST,
     category="system"
 ))
 

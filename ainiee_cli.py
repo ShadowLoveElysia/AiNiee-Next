@@ -55,6 +55,7 @@ from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
 from ModuleFolders.Service.SimpleExecutor.SimpleExecutor import SimpleExecutor
 from ModuleFolders.Service.TaskExecutor.TaskExecutor import TaskExecutor
 from ModuleFolders.Infrastructure.Update.UpdateManager import UpdateManager
+from ModuleFolders.Infrastructure.TaskConfig.SettingsRenderer import SettingsMenuBuilder
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from ModuleFolders.UserInterface.Editor import TUIEditor
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
@@ -1432,82 +1433,6 @@ class CLIMenu:
             with open(self.root_config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.root_config, f, indent=4, ensure_ascii=False)
 
-    def prompt_features_menu(self):
-        while True:
-            self.display_banner()
-            
-            target_platform = str(self.config.get("target_platform", "")).lower()
-            is_local = any(k in target_platform for k in ["local", "sakura"])
-            
-            console.print(Panel(f"[bold]{i18n.get('menu_prompt_features')}[/bold]"))
-            if is_local:
-                console.print(f"[bold yellow]⚠ {i18n.get('msg_online_features_warning')}[/bold yellow]\n")
-
-            table = Table(show_header=True)
-            table.add_column("ID", style="dim")
-            table.add_column("Feature")
-            table.add_column("Status", style="cyan")
-
-            features = [
-                "pre_translation_switch", "post_translation_switch", 
-                "prompt_dictionary_switch", "exclusion_list_switch", 
-                "characterization_switch", "world_building_switch", 
-                "writing_style_switch", "translation_example_switch", 
-                "few_shot_and_example_switch", "auto_process_text_code_segment"
-            ]
-            
-            online_only_features = [
-                "characterization_switch", "world_building_switch", 
-                "writing_style_switch", "translation_example_switch"
-            ]
-
-            for i, feature in enumerate(features, 1):
-                status = "[green]ON[/]" if self.config.get(feature, False) else "[red]OFF[/]"
-                label = i18n.get(f"feature_{feature}")
-                if feature in online_only_features:
-                    label += f" [dim]({i18n.get('label_online_only')})[/dim]"
-                table.add_row(str(i), label, status)
-            
-            console.print(table)
-            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
-            choice = IntPrompt.ask(f"\n{i18n.get('prompt_toggle_feature')}", choices=[str(i) for i in range(len(features) + 1)], show_choices=False)
-
-            if choice == 0:
-                break
-            
-            feature_key = features[choice - 1]
-            self.config[feature_key] = not self.config.get(feature_key, False)
-            self.save_config()
-
-    def response_checks_menu(self):
-        while True:
-            self.display_banner()
-            console.print(Panel(f"[bold]{i18n.get('menu_response_checks')}[/bold]"))
-            
-            response_checks = self.config.get("response_check_switch", {})
-            checks = list(response_checks.keys())
-
-            table = Table(show_header=True)
-            table.add_column("ID", style="dim")
-            table.add_column("Check")
-            table.add_column("Status", style="cyan")
-
-            for i, check in enumerate(checks, 1):
-                status = "[green]ON[/]" if response_checks.get(check, False) else "[red]OFF[/]"
-                table.add_row(str(i), i18n.get(f"check_{check}"), status)
-            
-            console.print(table)
-            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
-            choice = IntPrompt.ask(f"\n{i18n.get('prompt_toggle_check')}", choices=[str(i) for i in range(len(checks) + 1)], show_choices=False)
-
-            if choice == 0:
-                break
-                
-            check_key = checks[choice - 1]
-            self.config["response_check_switch"][check_key] = not self.config["response_check_switch"].get(check_key, False)
-            self.save_config()
-
-
     def _update_recent_projects(self, project_path):
         recent = self.root_config.get("recent_projects", [])
         
@@ -1921,7 +1846,10 @@ class CLIMenu:
         current_p = temp_config["target_platform"] if temp_config else self.config.get("target_platform", "None")
         current_m = temp_config["model"] if temp_config else self.config.get("model", "None")
         is_temp = " [yellow](Temporary API)[/]" if temp_config else ""
-        console.print(f"[dim]Environment: {current_p} - {current_m}{is_temp}[/dim]\n")
+        console.print(f"[dim]Environment: {current_p} - {current_m}{is_temp}[/dim]")
+
+        # 显示报错内容
+        console.print(f"[dim]{i18n.get('label_error_content')}: {error_msg}[/dim]\n")
 
         # 4. 功能选项
         table = Table(show_header=False, box=None)
@@ -2569,152 +2497,45 @@ class CLIMenu:
             pass  # 静默处理错误，不影响主要功能
 
     def settings_menu(self):
+        """设置菜单 - 基于 ConfigRegistry 动态生成"""
+        builder = SettingsMenuBuilder(self.config, i18n)
+
         while True:
-            self.display_banner(); console.print(Panel(f"[bold]{i18n.get('menu_settings')}[/bold]"))
-            table = Table(show_header=True); table.add_column("ID", style="dim"); table.add_column("Setting"); table.add_column("Value", style="cyan")
-            
-            limit_switch = self.config.get("tokens_limit_switch", False)
-            limit_mode_str = "Token" if limit_switch else "Line"; limit_val_key = "tokens_limit" if limit_switch else "lines_limit"
+            self.display_banner()
+            console.print(Panel(f"[bold]{i18n.get('menu_settings')}[/bold]"))
 
-            # Check platform type for warning display
-            current_platform = self.config.get("target_platform", "").lower()
-            is_local_model = current_platform in ["sakura", "localllm"]
-            platform_config = self.config.get("platforms", {}).get(self.config.get("target_platform", ""), {})
-            api_format = platform_config.get("api_format", "")
-
-            # --- Section 1: Core & Numerical Settings ---
-            table.add_row("1", i18n.get("setting_input_path"), self.config.get("label_input_path", ""))
-            table.add_row("2", i18n.get("setting_output_path"), self.config.get("label_output_path", ""))
-            table.add_row("3", i18n.get("setting_src_lang"), self.config.get("source_language", ""))
-            table.add_row("4", i18n.get("setting_tgt_lang"), self.config.get("target_language", ""))
-            thread_count_value = self.config.get("user_thread_counts", 0)
-            thread_display = str(thread_count_value)
-            if thread_count_value == 0:
-                thread_display = f"Auto{i18n.get('tip_thread_count_auto_remark')}"
-            table.add_row("5", i18n.get("setting_thread_count"), thread_display)
-            table.add_row("6", i18n.get("setting_request_timeout"), str(self.config.get("request_timeout", 60)))
-            table.add_row("7", i18n.get("setting_pre_line_counts"), str(self.config.get("pre_line_counts", 3)))
-            table.add_row("8", i18n.get("setting_retry_count"), str(self.config.get("retry_count", 3)))
-            table.add_row("9", i18n.get("setting_round_limit"), str(self.config.get("round_limit", 3)))
-            table.add_row("10", i18n.get("setting_cache_backup_limit"), str(self.config.get("cache_backup_limit", 10)))
-            table.add_row("11", i18n.get("setting_failover_threshold"), str(self.config.get("critical_error_threshold", 5)))
-            table.add_row("12", i18n.get("setting_auto_set_output_path"), "[green]ON[/]" if self.config.get("auto_set_output_path", False) else "[red]OFF[/]")
-
-            table.add_section()
-            # --- Section 2: Feature Toggles ---
-            table.add_row("13", i18n.get("setting_detailed_logs"), "[green]ON[/]" if self.config.get("show_detailed_logs", False) else "[red]OFF[/]")
-            table.add_row("14", i18n.get("setting_cache_backup"), "[green]ON[/]" if self.config.get("enable_cache_backup", True) else "[red]OFF[/]")
-            table.add_row("15", i18n.get("setting_auto_restore_ebook"), "[green]ON[/]" if self.config.get("enable_auto_restore_ebook", True) else "[red]OFF[/]")
-            table.add_row("16", i18n.get("setting_dry_run"), "[green]ON[/]" if self.config.get("enable_dry_run", True) else "[red]OFF[/]")
-            table.add_row("17", i18n.get("setting_retry_backoff"), "[green]ON[/]" if self.config.get("enable_retry_backoff", True) else "[red]OFF[/]")
-            table.add_row("18", i18n.get("setting_session_logging"), "[green]ON[/]" if self.config.get("enable_session_logging", True) else "[red]OFF[/]")
-            table.add_row("19", i18n.get("setting_enable_retry"), "[green]ON[/]" if self.config.get("enable_retry", True) else "[red]OFF[/]")
-            table.add_row("20", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
-            table.add_row("21", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
-            table.add_row("22", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
-            table.add_row("23", i18n.get("setting_enable_bilingual_output"), "[green]ON[/]" if self.config.get("enable_bilingual_output", False) else "[red]OFF[/]")
-
-            # Thinking features (always show)
-            think_switch = self.config.get("think_switch", False)
-            table.add_row("24", i18n.get("menu_api_think_switch"), "[green]ON[/]" if think_switch else "[red]OFF[/]")
-
-            table.add_section()
-            # --- Section 3: Thinking & Advanced Settings ---
-            next_id = 25
-            # Always show thinking settings
-            think_depth = self.config.get("think_depth", "low")
-            think_budget = self.config.get("thinking_budget", 4096)
-            table.add_row(str(next_id), i18n.get("menu_api_think_depth"), str(think_depth))
-            next_id += 1
-            table.add_row(str(next_id), i18n.get("menu_api_think_budget"), str(think_budget))
-            next_id += 1
-
-            table.add_row(str(next_id), i18n.get("setting_project_type"), self.config.get("translation_project", "AutoType"))
-            next_id += 1
-            table.add_row(str(next_id), i18n.get("setting_trans_mode"), f"{limit_mode_str} ({self.config.get(limit_val_key, 20)})")
-            next_id += 1
-            table.add_row(str(next_id), i18n.get("menu_api_pool_settings"), f"[cyan]{len(self.config.get('backup_apis', []))} APIs[/]")
-            next_id += 1
-            table.add_row(str(next_id), i18n.get("menu_prompt_features"), "...")
-            next_id += 1
-            table.add_row(str(next_id), i18n.get("menu_response_checks"), "...")
-
-            max_choice = next_id
-
+            # 构建并渲染菜单
+            builder.build_menu_items()
+            table = builder.render_table()
             console.print(table)
 
-            # Show thinking mode warning if enabled
-            if self.config.get("think_switch", False):
-                if is_local_model:
-                    console.print(f"\n[red]⚠️ {i18n.get('warning_thinking_online_only')}[/red]")
-                else:
-                    console.print(f"\n[red]⚠️ {i18n.get('warning_thinking_compatibility')}[/red]")
+            # 显示图例
+            console.print(f"\n[dim][yellow]*[/yellow] = {i18n.get('label_advanced_setting')}[/dim]")
+            console.print(f"[dim]0. {i18n.get('menu_exit')}[/dim]")
 
-            console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-            choice = IntPrompt.ask(f"\n{i18n.get('prompt_select')}", choices=[str(i) for i in range(max_choice + 1)], show_choices=False)
-            console.print("\n")
+            # 获取用户选择
+            max_choice = len(builder.menu_items)
+            choice = IntPrompt.ask(
+                f"\n{i18n.get('prompt_select')}",
+                choices=[str(i) for i in range(max_choice + 1)],
+                show_choices=False
+            )
 
-            if choice == 0: break
+            if choice == 0:
+                break
 
-            # Section 1
-            elif choice == 1: self.config["label_input_path"] = Prompt.ask(i18n.get('prompt_input_path'), default=self.config.get("label_input_path", "")).strip().strip('"').strip("'")
-            elif choice == 2: self.config["label_output_path"] = Prompt.ask(i18n.get('prompt_output_path'), default=self.config.get("label_output_path", "")).strip().strip('"').strip("'")
-            elif choice == 3: self.config["source_language"] = Prompt.ask(i18n.get('prompt_source_lang'), default=self.config.get("source_language"))
-            elif choice == 4: self.config["target_language"] = Prompt.ask(i18n.get('prompt_target_lang'), default=self.config.get("target_language"))
-            elif choice == 5: self.config["user_thread_counts"] = IntPrompt.ask(i18n.get('setting_thread_count'), default=self.config.get("user_thread_counts", 0))
-            elif choice == 6: self.config["request_timeout"] = IntPrompt.ask(i18n.get('setting_request_timeout'), default=self.config.get("request_timeout", 60))
-            elif choice == 7: self.config["pre_line_counts"] = IntPrompt.ask(i18n.get('setting_pre_line_counts'), default=self.config.get("pre_line_counts", 3))
-            
-            # Section 2
-            elif choice == 8: self.config["retry_count"] = IntPrompt.ask(i18n.get('setting_retry_count'), default=self.config.get("retry_count", 3))
-            elif choice == 9: self.config["round_limit"] = IntPrompt.ask(i18n.get('setting_round_limit'), default=self.config.get("round_limit", 3))
-            elif choice == 10: self.config["cache_backup_limit"] = IntPrompt.ask(i18n.get('setting_cache_backup_limit'), default=self.config.get("cache_backup_limit", 10))
-            elif choice == 11: self.config["critical_error_threshold"] = IntPrompt.ask(i18n.get('setting_failover_threshold'), default=self.config.get("critical_error_threshold", 5))
-            elif choice == 12: self.config["auto_set_output_path"] = not self.config.get("auto_set_output_path", False)
-            elif choice == 13: self.config["show_detailed_logs"] = not self.config.get("show_detailed_logs", False)
-            elif choice == 14: self.config["enable_cache_backup"] = not self.config.get("enable_cache_backup", True)
-            elif choice == 15: self.config["enable_auto_restore_ebook"] = not self.config.get("enable_auto_restore_ebook", True)
-            elif choice == 16: self.config["enable_dry_run"] = not self.config.get("enable_dry_run", True)
-            elif choice == 17: self.config["enable_retry_backoff"] = not self.config.get("enable_retry_backoff", True)
-            elif choice == 18: self.config["enable_session_logging"] = not self.config.get("enable_session_logging", True)
-            elif choice == 19: self.config["enable_retry"] = not self.config.get("enable_retry", True)
-            elif choice == 20: self.config["enable_smart_round_limit"] = not self.config.get("enable_smart_round_limit", False)
-            elif choice == 21: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
-            elif choice == 22: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
-            elif choice == 23: self.config["enable_bilingual_output"] = not self.config.get("enable_bilingual_output", False)
+            # 处理用户选择
+            key, item = builder.get_item_by_id(choice)
+            if key and item:
+                # 特殊处理：API池管理入口
+                if key == "api_pool_management":
+                    self.api_pool_menu()
+                    continue
 
-            # Thinking features (always enabled)
-            elif choice == 24:
-                new_state = not self.config.get("think_switch", False)
-                self.config["think_switch"] = new_state
-                # Sync to platform config
-                if self.config.get("target_platform") in self.config.get("platforms", {}):
-                    self.config["platforms"][self.config.get("target_platform")]["think_switch"] = new_state
-
-            elif choice == 25:  # Think Depth
-                if api_format == "Anthropic":
-                    val = Prompt.ask(i18n.get("prompt_think_depth_claude"), choices=["low", "medium", "high"], default=str(self.config.get("think_depth", "low")))
-                else:
-                    val = IntPrompt.ask(i18n.get("prompt_think_depth"), default=int(self.config.get("think_depth", 0)) if str(self.config.get("think_depth", "0")).isdigit() else 0)
-                self.config["think_depth"] = val
-                # Sync to platform config
-                if self.config.get("target_platform") in self.config.get("platforms", {}):
-                    self.config["platforms"][self.config.get("target_platform")]["think_depth"] = val
-
-            elif choice == 26:  # Think Budget
-                val = IntPrompt.ask(i18n.get("prompt_think_budget"), default=int(self.config.get("thinking_budget", 4096)))
-                self.config["thinking_budget"] = val
-                # Sync to platform config
-                if self.config.get("target_platform") in self.config.get("platforms", {}):
-                    self.config["platforms"][self.config.get("target_platform")]["thinking_budget"] = val
-
-            elif choice == 27: self.project_type_menu()
-            elif choice == 28: self.trans_mode_menu()
-            elif choice == 29: self.api_pool_menu()
-            elif choice == 30: self.prompt_features_menu()
-            elif choice == 31: self.response_checks_menu()
-
-            self.save_config()
+                new_value = builder.handle_input(key, item, console)
+                if new_value is not None:
+                    self.config[key] = new_value
+                    self.save_config()
 
     def api_pool_menu(self):
         while True:
@@ -2772,61 +2593,6 @@ class CLIMenu:
                     self.config["backup_apis"] = pool
             self.save_config()
 
-    def trans_mode_menu(self):
-        console.clear(); console.print(Panel(f"[bold]{i18n.get('menu_trans_mode_select')}[/bold]"))
-        console.print(f"1. {i18n.get('mode_line')}")
-        console.print(f"2. {i18n.get('mode_token')}")
-        console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-        
-        c = IntPrompt.ask(i18n.get('prompt_select'), choices=["0", "1", "2"], show_choices=False)
-        console.print()
-        if c == 0: return
-        elif c == 1: # Line Mode
-            console.print(f"[cyan]{i18n.get('tip_line_mode')}[/cyan]")
-            val = IntPrompt.ask(i18n.get('prompt_new_value'), default=20)
-            self.config["tokens_limit_switch"] = False
-            self.config["lines_limit"] = val
-        elif c == 2: # Token Mode
-            console.print(f"[bold red]{i18n.get('warn_token_mode_severe')}[/bold red]")
-            confirm_phrase = i18n.get('phrase_confirm_risk')
-            
-            user_input = Prompt.ask(i18n.get('prompt_confirm_risk').format(confirm_phrase))
-
-            # Final Validation
-            if user_input != confirm_phrase:
-                console.print(f"[red]{i18n.get('msg_risk_abort')}[/red]"); time.sleep(2); return
-            
-            val = IntPrompt.ask(i18n.get('prompt_new_value'), default=1500)
-            self.config["tokens_limit_switch"] = True
-            self.config["tokens_limit"] = val
-            self.config["tokens_limit_switch"] = True
-            self.config["tokens_limit"] = val
-    def project_type_menu(self):
-        while True:
-            self.display_banner(); console.print(Panel(f"[bold]{i18n.get('menu_project_type')}[/bold]"))
-            table = Table(show_header=False, box=None)
-            cats = ["auto", "game", "doc", "sub", "dev"]
-            for i, cat in enumerate(cats): table.add_row(f"[cyan]{i+1}.[/]", i18n.get(f"cat_{cat}"))
-            console.print(table); console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
-            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(cats)+1)], show_choices=False)
-            console.print()
-            if choice == 0: return
-            elif choice == 1: self.config["translation_project"] = "AutoType"
-            else:
-                types = [["MTool", "RenPy", "TPP"], ["Txt", "Epub", "Docx"], ["Srt", "Ass"], ["Po", "I18next"]][choice-2]
-                
-                console.print(Panel(i18n.get("menu_sub_type_select")))
-                t_table = Table(show_header=False, box=None)
-                for i, t in enumerate(types):
-                    t_table.add_row(f"[cyan]{i+1}.[/]", t)
-                console.print(t_table)
-                console.print(f"\n[dim]0. {i18n.get('menu_cancel')}[/dim]")
-                
-                sub_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(types)+1)], show_choices=False)
-                if sub_choice == 0: continue
-                
-                self.config["translation_project"] = types[sub_choice - 1]
-            self.save_config(); return
     def api_settings_menu(self):
         while True:
             self.display_banner(); current_p, current_m = self.config.get("target_platform", "None"), self.config.get("model", "None")
@@ -4043,17 +3809,18 @@ class CLIMenu:
                 nonlocal is_xlsx_converted
                 self.ui.log(f"{i18n.get('msg_task_started')}")
 
-                # --- Middleware Conversion Logic (Moved Inside Live) ---
-                middleware_exts = ['.mobi', '.azw3', '.kepub', '.fb2', '.lit', '.lrf', '.pdb', '.pmlz', '.rb', '.rtf', '.tcr', '.txtz', '.htmlz']
-                xlsx_middleware_exts = ['.xlsx']
-                
-                # We need to access target_path from outer scope. 
-                # Since we modify it, we should be careful. 
+                # --- Middleware Conversion Logic (从配置读取) ---
+                calibre_enabled = self.config.get("enable_calibre_middleware", True)
+                middleware_exts = self.config.get("calibre_middleware_exts", ['.mobi', '.azw3', '.kepub', '.fb2', '.lit', '.lrf', '.pdb', '.pmlz', '.rb', '.rtf', '.tcr', '.txtz', '.htmlz']) if calibre_enabled else []
+                xlsx_middleware_exts = self.config.get("xlsx_middleware_exts", ['.xlsx'])
+
+                # We need to access target_path from outer scope.
+                # Since we modify it, we should be careful.
                 # In python 3, we can use nonlocal for rebind, but target_path is local variable.
                 # Let's use a mutable container or just refer to it.
                 # Actually, the previous code structure had this logic inside 'with Live'.
                 # We will just copy-paste the logic here.
-                
+
                 current_target_path = target_path
                 is_middleware_converted_local = False
 
