@@ -1582,7 +1582,7 @@ class CLIMenu:
         bilingual_content_status = f"[green]{i18n.get('banner_on')}[/green]" if is_plugin_bilingual else f"[red]{i18n.get('banner_off')}[/red]"
         
         # 2. 对照文件 (Bilingual File Generation)
-        bilingual_file_on = self.config.get("enable_bilingual_output", True)
+        bilingual_file_on = self.config.get("enable_bilingual_output", False)
         proj_type = self.config.get("translation_project", "AutoType")
         # 只有特定格式支持双语输出
         is_type_support_bilingual = proj_type in ["Txt", "Epub", "Srt"]
@@ -2612,7 +2612,7 @@ class CLIMenu:
             table.add_row("20", i18n.get("setting_enable_smart_round_limit"), "[green]ON[/]" if self.config.get("enable_smart_round_limit", False) else "[red]OFF[/]")
             table.add_row("21", i18n.get("setting_response_conversion_toggle"), "[green]ON[/]" if self.config.get("response_conversion_toggle", False) else "[red]OFF[/]")
             table.add_row("22", i18n.get("setting_auto_update"), "[green]ON[/]" if self.config.get("enable_auto_update", False) else "[red]OFF[/]")
-            table.add_row("23", i18n.get("setting_enable_bilingual_output"), "[green]ON[/]" if self.config.get("enable_bilingual_output", True) else "[red]OFF[/]")
+            table.add_row("23", i18n.get("setting_enable_bilingual_output"), "[green]ON[/]" if self.config.get("enable_bilingual_output", False) else "[red]OFF[/]")
 
             # Thinking features (always show)
             think_switch = self.config.get("think_switch", False)
@@ -2681,7 +2681,7 @@ class CLIMenu:
             elif choice == 20: self.config["enable_smart_round_limit"] = not self.config.get("enable_smart_round_limit", False)
             elif choice == 21: self.config["response_conversion_toggle"] = not self.config.get("response_conversion_toggle", False)
             elif choice == 22: self.config["enable_auto_update"] = not self.config.get("enable_auto_update", False)
-            elif choice == 23: self.config["enable_bilingual_output"] = not self.config.get("enable_bilingual_output", True)
+            elif choice == 23: self.config["enable_bilingual_output"] = not self.config.get("enable_bilingual_output", False)
 
             # Thinking features (always enabled)
             elif choice == 24:

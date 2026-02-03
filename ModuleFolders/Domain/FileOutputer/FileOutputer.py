@@ -142,7 +142,7 @@ class FileOutputer:
             bilingual_order = BilingualOrder.SOURCE_FIRST
 
         # 从配置中读取是否启用双语输出
-        enable_bilingual = config.get("enable_bilingual_output", True)
+        enable_bilingual = config.get("enable_bilingual_output", False)
 
         default_translated_config = TranslationOutputConfig(True, translated_suffix, output_path)
 

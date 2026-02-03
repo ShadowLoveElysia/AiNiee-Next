@@ -52,7 +52,7 @@ DEFAULT_CONFIG = {
     "lines_limit": 20,
     "pre_line_counts": 3,
     "output_filename_suffix": "",
-    "enable_bilingual_output": True,
+    "enable_bilingual_output": False,
     "bilingual_text_order": "translation_first",
     "polishing_mode_selection": "translated_text_polish",
     "polishing_pre_line_counts": 2,

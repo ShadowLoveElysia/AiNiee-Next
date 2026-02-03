@@ -105,6 +105,7 @@ class TaskConfig(Base):
         self.pre_line_counts = 3 # NEW: 每次翻译获取上文的行数
         self.actual_thread_counts = 3 # NEW: 实际线程数
         self.output_filename_suffix = "" # NEW: 输出文件名后缀
+        self.enable_bilingual_output = False # NEW: 是否启用双语输出
         self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
         self.polishing_mode_selection = "translated_text_polish" # NEW: 润色模式选择
         self.polishing_pre_line_counts = 2 # NEW: 润色时获取上文的行数

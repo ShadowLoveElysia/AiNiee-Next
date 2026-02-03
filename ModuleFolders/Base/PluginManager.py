@@ -37,8 +37,8 @@ class PluginManager:
                 reverse=True
             )
 
-            # 根据启用状态进行过滤，默认为启用
-            sorted_plugins = [plugin for plugin in sorted_plugins if self.plugins_enable.get(plugin.name, True)]
+            # 根据启用状态进行过滤，使用插件的 default_enable 作为默认值
+            sorted_plugins = [plugin for plugin in sorted_plugins if self.plugins_enable.get(plugin.name, plugin.default_enable)]
 
             #print(sorted_plugins) #bug用
             for plugin in sorted_plugins:

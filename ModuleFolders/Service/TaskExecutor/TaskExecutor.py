@@ -215,7 +215,8 @@ class TaskExecutor(Base):
         output_config = {
             "translated_suffix": config.get('output_filename_suffix'),
             "bilingual_suffix": "_bilingual",
-            "bilingual_order": config.get('bilingual_text_order','translation_first') 
+            "bilingual_order": config.get('bilingual_text_order','translation_first'),
+            "enable_bilingual_output": config.get('enable_bilingual_output', False)
         }
 
         # 写入文件
@@ -514,7 +515,8 @@ class TaskExecutor(Base):
             output_config = {
                 "translated_suffix": self.config.output_filename_suffix,
                 "bilingual_suffix": "_bilingual",
-                "bilingual_order": self.config.bilingual_text_order 
+                "bilingual_order": self.config.bilingual_text_order,
+                "enable_bilingual_output": self.config.enable_bilingual_output
             }
 
             # 写入文件
@@ -733,7 +735,8 @@ class TaskExecutor(Base):
             output_config = {
                 "translated_suffix": self.config.output_filename_suffix,
                 "bilingual_suffix": "_bilingual",
-                "bilingual_order": self.config.bilingual_text_order 
+                "bilingual_order": self.config.bilingual_text_order,
+                "enable_bilingual_output": self.config.enable_bilingual_output
             }
 
             # 写入文件
