@@ -109,8 +109,8 @@ class PolisherTask(Base):
                 self.error(f"[{self.task_id}] Queue wait timeout. Skipping.")
                 return {}
 
-            # 如果以上条件都不符合，则间隔 1 秒再次检查
-            time.sleep(1)
+            # 如果以上条件都不符合，则间隔 0.1 秒再次检查
+            time.sleep(0.1)
 
         # 任务开始的时间 (真正开始处理，通过限流后)
         task_start_time = time.time()

@@ -110,7 +110,7 @@ class TaskExecutor(Base):
                 if self._current_active < self.config.actual_thread_counts:
                     self._current_active += 1
                     break
-            time.sleep(0.5)
+            time.sleep(0.01)
         
         if Base.work_status == Base.STATUS.STOPING:
             with self._concurrency_lock: self._current_active -= 1

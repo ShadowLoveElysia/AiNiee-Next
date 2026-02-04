@@ -11,9 +11,12 @@ class RequestLimiter:
         self.tokens_rate = 0  # 令牌每秒的恢复速率
         self.last_time = time.time()  # 上次记录时间
 
-        # RPM相关参数
-        self.last_request_time = 0  # 上次记录时间
-        self.request_interval = 0  # 请求的最小时间间隔（s）
+        # RPM相关参数 (Token Bucket)
+        self.rpm_max_tokens = 0
+        self.rpm_remaining_tokens = 0
+        self.rpm_fill_rate = 0
+        self.last_rpm_time = time.time()
+        
         self.lock = threading.Lock()
 
     # 设置限制器的参数
@@ -24,17 +27,27 @@ class RequestLimiter:
         self.remaining_tokens = 32000  # 令牌桶剩余容量
 
         # 设置限制器的RPM参数
-        self.request_interval = 60 / rpm_limit  # 请求的最小时间间隔（s）
+        self.rpm_fill_rate = rpm_limit / 60
+        # 允许一定的突发请求 (例如允许 10 秒量的突发，最小 5 个)
+        self.rpm_max_tokens = max(5, int(rpm_limit / 6))
+        self.rpm_remaining_tokens = self.rpm_max_tokens
+        self.last_rpm_time = time.time()
 
     def rpm_limiter(self) -> bool:
-        current_time = time.time()  # 获取现在的时间
-        time_since_last_request = current_time - self.last_request_time  # 计算当前时间与上次记录时间的间隔
-        if time_since_last_request < self.request_interval:
-            # print("[DEBUG] Request limit exceeded. Please try again later.")
-            return False
-        else:
-            self.last_request_time = current_time
+        now = time.time()
+        # 计算恢复的令牌
+        delta = now - self.last_rpm_time
+        tokens_to_add = delta * self.rpm_fill_rate
+        
+        # 更新令牌桶
+        self.rpm_remaining_tokens = min(self.rpm_max_tokens, self.rpm_remaining_tokens + tokens_to_add)
+        self.last_rpm_time = now
+
+        if self.rpm_remaining_tokens >= 1.0:
+            self.rpm_remaining_tokens -= 1.0
             return True
+        else:
+            return False
 
     def tpm_limiter(self, tokens: int) -> bool:
         now = time.time()  # 获取现在的时间
