@@ -140,6 +140,8 @@
     "setting_auto_heal": "Enable Auto Cache Corruption Recovery",
     "setting_retry_backoff": "Enable Intelligent Slowdown Retry",
     "setting_task_notification": "Enable Task Notifications (Sound+Toast)",
+    "setting_github_status_bar": "Show GitHub Repository Status",
+    "setting_github_status_bar_desc": "Display latest Commit and Release info in status bar",
     "setting_session_logging": "Enable Auto Session Logging",
     "prompt_limit_val": "Set Limit Value",
     "msg_task_report_title": "Task Summary Report",
@@ -551,5 +553,17 @@
         "banner_op_log": "Op Log",
         "banner_op_log_hint_on": "Sensitive info redacted, better LLM analysis on errors",
         "banner_op_log_hint_off": "Enable for more accurate LLM analysis",
-        "label_operation_flow": "Operation Flow"
+        "label_operation_flow": "Operation Flow",
+        "msg_api_error_hint": "[Y] Multiple API errors detected, press Y for self-diagnosis",
+        "msg_entering_diagnostic": "Entering self-diagnosis system...",
+        "menu_diagnostic_title": "Smart Self-Diagnosis",
+        "menu_diagnostic_auto": "Auto-diagnose current error",
+        "menu_diagnostic_browse": "Browse common issues",
+        "menu_diagnostic_search": "Search issues",
+        "prompt_search_keyword": "Enter search keyword",
+        "msg_no_match_found": "No matching issues found",
+        "msg_diagnostic_result": "Diagnosis Result",
+        "msg_no_error_detected": "No error detected. Please run a task first or search issues manually",
+        "label_confidence": "Confidence",
+        "label_matched_rule": "Matched Rule"
     }
