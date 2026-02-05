@@ -58,6 +58,7 @@ from ModuleFolders.Infrastructure.Update.UpdateManager import UpdateManager
 from ModuleFolders.Infrastructure.TaskConfig.SettingsRenderer import SettingsMenuBuilder
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from ModuleFolders.UserInterface.Editor import TUIEditor
+from ModuleFolders.Diagnostic import SmartDiagnostic, DiagnosticFormatter
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Service.HttpService.HttpService import HttpService
 from ModuleFolders.UserInterface.FileSelector import FileSelector
@@ -529,13 +530,23 @@ class TaskUI:
                     if self.current_status_color != 'red':
                         self.current_status_color = 'red'
                         self.current_border_color = 'red'
-                
+
                 # 2. 标记任务为潜在失败，确保退出时触发 LLM 分析菜单
                 if "traceback" in lower_msg or "panic" in lower_msg:
                     self.parent_cli._is_critical_failure = True
                     # 如果还没有更严重的错误信息，记录这条 Traceback 供 LLM 分析
                     if not getattr(self.parent_cli, "_last_crash_msg", None):
                         self.parent_cli._last_crash_msg = clean_msg
+
+                # 3. API错误计数 - 检测到多次API错误时提示用户按Y进入诊断
+                api_error_keywords = ['401', '403', '429', '500', '502', '503', 'timeout', 'connection', 'ssl', 'rate_limit']
+                if any(k in lower_msg for k in api_error_keywords):
+                    self.parent_cli._api_error_count += 1
+                    # 存储错误信息（最多保留10条）
+                    if len(self.parent_cli._api_error_messages) < 10:
+                        self.parent_cli._api_error_messages.append(clean_msg)
+                    if self.parent_cli._api_error_count >= 3 and not self.parent_cli._show_diagnostic_hint:
+                        self.parent_cli._show_diagnostic_hint = True
 
             self.refresh_layout()
 
@@ -629,7 +640,12 @@ class TaskUI:
                 hotkeys = i18n.get("label_shortcuts_queue")
             else:
                 hotkeys = i18n.get("label_shortcuts")
-            
+
+            # 当检测到多次API错误时，显示Y键提示
+            diagnostic_hint = ""
+            if self.parent_cli and getattr(self.parent_cli, '_show_diagnostic_hint', False):
+                diagnostic_hint = f"\n[bold yellow]{i18n.get('msg_api_error_hint')}[/bold yellow]"
+
             # 获取当前线程数 (优先从 task_executor 获取)
             current_threads = "Auto"
             if self.parent_cli and hasattr(self.parent_cli, 'task_executor'):
@@ -637,7 +653,7 @@ class TaskUI:
 
             stats_markup = (
                 f"File: [bold]{current_file}[/] | Progress: [bold]{completed}/{total}[/] | Threads: [bold]{current_threads}[/] | RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/]\n"
-                f"S-Rate: [bold green]{s_rate:.1f}%[/] | E-Rate: [bold red]{e_rate:.1f}%[/] | Tokens: [bold]{tokens}[/] | Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}"
+                f"S-Rate: [bold green]{s_rate:.1f}%[/] | E-Rate: [bold red]{e_rate:.1f}%[/] | Tokens: [bold]{tokens}[/] | Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}{diagnostic_hint}"
             )
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
 
@@ -800,6 +816,12 @@ class CLIMenu:
         self.operation_logger = OperationLogger()
         if self.config.get("enable_operation_logging", False):
             self.operation_logger.enable()
+
+        # 智能诊断模块
+        self.smart_diagnostic = SmartDiagnostic(lang=current_lang)
+        self._api_error_count = 0  # API错误计数
+        self._api_error_messages = []  # 存储最近的API错误信息
+        self._show_diagnostic_hint = False  # 是否显示诊断提示
 
     def _check_web_server_dist(self):
         """检查 WebServer 编译产物是否存在"""
@@ -1663,6 +1685,20 @@ class CLIMenu:
             EventManager.get_singleton().emit(Base.EVENT.TASK_STOP, {})
         else:
             sys.exit(0)
+
+    def _fetch_github_status_async(self):
+        """后台异步获取 GitHub 状态信息"""
+        def fetch():
+            try:
+                lang = getattr(i18n, 'lang', 'en')
+                info = self.update_manager.get_status_bar_info(lang)
+                self._cached_github_info = info
+            except:
+                self._cached_github_info = None
+
+        thread = threading.Thread(target=fetch, daemon=True)
+        thread.start()
+
     def display_banner(self):
         # 获取版本号
         v_str = "V0.0.0"
@@ -1753,6 +1789,19 @@ class CLIMenu:
             op_log_hint = f" [dim]({i18n.get('banner_op_log_hint_off') or '建议开启以获得更准确的LLM分析'})[/dim]"
         settings_line_4 = f"| [bold]{i18n.get('banner_op_log') or '操作记录'}:[/bold] {op_log_status}{op_log_hint} |"
 
+        # GitHub 状态栏
+        github_status_line = ""
+        if self.config.get("enable_github_status_bar", True):
+            github_info = getattr(self, '_cached_github_info', None)
+            if github_info:
+                parts = []
+                if github_info.get("commit_text"):
+                    parts.append(f"[dim]{github_info['commit_text']}[/dim]")
+                if github_info.get("release_text"):
+                    parts.append(f"[dim]{github_info['release_text']}[/dim]")
+                if parts:
+                    github_status_line = "\n" + " | ".join(parts)
+
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
         
@@ -1763,6 +1812,7 @@ class CLIMenu:
             f"{settings_line_2}\n"
             f"{settings_line_3}\n"
             f"{settings_line_4}"
+            f"{github_status_line}"
         )
         
         console.print(Panel.fit(banner_content, title="Status", border_style="cyan"))
@@ -1804,6 +1854,10 @@ class CLIMenu:
         # 启动时自动检查更新
         if self.config.get("enable_auto_update", False):
             self.update_manager.check_update(silent=True)
+
+        # 启动时获取 GitHub 状态信息 (后台异步)
+        if self.config.get("enable_github_status_bar", True):
+            self._fetch_github_status_async()
 
         while True:
             self.display_banner()
@@ -1985,38 +2039,143 @@ class CLIMenu:
                 time.sleep(1)
 
     def qa_menu(self):
-        qa_path = os.path.join(PROJECT_ROOT, "Resource", "common_issues.json")
-        if not os.path.exists(qa_path): return
-        with open(qa_path, 'r', encoding='utf-8') as f: qa_data = json.load(f)
-        
+        """智能自查诊断菜单 - 使用新的诊断模块"""
         while True:
             self.display_banner()
-            console.print(Panel(f"[bold]{i18n.get('menu_qa')}[/bold]"))
-            categories = list(qa_data.keys())
+            console.print(Panel(f"[bold]{i18n.get('menu_diagnostic_title')}[/bold]"))
+
             table = Table(show_header=False, box=None)
-            for i, cat in enumerate(categories):
-                table.add_row(f"[cyan]{i+1}.[/]", cat.replace("_", " ").title())
+            table.add_row("[cyan]1.[/]", i18n.get("menu_diagnostic_auto"))
+            table.add_row("[cyan]2.[/]", i18n.get("menu_diagnostic_browse"))
+            table.add_row("[cyan]3.[/]", i18n.get("menu_diagnostic_search"))
             console.print(table)
             console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
-            
-            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(categories)+1)], show_choices=False)
+
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["0", "1", "2", "3"], show_choices=False)
             if choice == 0: break
-            
-            cat_key = categories[choice - 1]
-            issues = qa_data[cat_key]
+
+            if choice == 1:  # 自动诊断
+                self._diagnostic_auto_menu()
+            elif choice == 2:  # 浏览常见问题
+                self._diagnostic_browse_menu()
+            elif choice == 3:  # 搜索问题
+                self._diagnostic_search_menu()
+
+    def _diagnostic_auto_menu(self):
+        """自动诊断 - 自动获取最近的错误信息进行诊断"""
+        self.display_banner()
+        console.print(Panel(f"[bold]{i18n.get('menu_diagnostic_auto')}[/bold]"))
+
+        # 自动获取错误信息
+        error_text = ""
+
+        # 优先使用 crash 信息
+        if getattr(self, "_last_crash_msg", None):
+            error_text = self._last_crash_msg
+        # 其次使用 API 错误信息
+        elif getattr(self, "_api_error_messages", None) and len(self._api_error_messages) > 0:
+            error_text = "\n".join(self._api_error_messages)
+
+        if not error_text.strip():
+            console.print(f"[yellow]{i18n.get('msg_no_error_detected')}[/yellow]")
+            Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+            return
+
+        # 显示检测到的错误
+        console.print(Panel(error_text[:500] + ("..." if len(error_text) > 500 else ""),
+                           title=f"[bold yellow]{i18n.get('label_error_content')}[/bold yellow]"))
+
+        # 使用诊断模块进行诊断
+        result = self.smart_diagnostic.diagnose(error_text)
+        formatted = DiagnosticFormatter.format_result(result, current_lang)
+
+        console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('msg_diagnostic_result')}[/bold cyan]"))
+        Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+
+    def _diagnostic_browse_menu(self):
+        """浏览知识库中的常见问题"""
+        kb = self.smart_diagnostic.knowledge_base
+        items = list(kb.knowledge_items.values())
+
+        if not items:
+            console.print(f"[yellow]{i18n.get('msg_no_match_found')}[/yellow]")
+            time.sleep(1)
+            return
+
+        # 按分类分组
+        categories = {}
+        for item in items:
+            cat = item.category
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(item)
+
+        while True:
+            self.display_banner()
+            console.print(Panel(f"[bold]{i18n.get('menu_diagnostic_browse')}[/bold]"))
+
+            cat_list = list(categories.keys())
+            table = Table(show_header=False, box=None)
+            for i, cat in enumerate(cat_list):
+                table.add_row(f"[cyan]{i+1}.[/]", cat)
+            console.print(table)
+            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(cat_list)+1)], show_choices=False)
+            if choice == 0: break
+
+            # 显示该分类下的问题
+            sel_cat = cat_list[choice - 1]
+            cat_items = categories[sel_cat]
+
             while True:
                 self.display_banner()
-                console.print(Panel(f"[bold]{cat_key.replace('_', ' ').title()}[/bold]"))
-                for i, issue in enumerate(issues):
-                    console.print(f"[cyan]{i+1}.[/] {issue['title'].get(current_lang, issue['title'].get('en'))}")
+                console.print(Panel(f"[bold]{sel_cat}[/bold]"))
+
+                for i, item in enumerate(cat_items):
+                    console.print(f"[cyan]{i+1}.[/] {item.question}")
                 console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
-                
-                i_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(issues)+1)], show_choices=False)
+
+                i_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(len(cat_items)+1)], show_choices=False)
                 if i_choice == 0: break
-                
-                sel_issue = issues[i_choice - 1]
-                console.print(Panel(sel_issue['solution'].get(current_lang, sel_issue['solution'].get('en')), title=sel_issue['title'].get(current_lang, sel_issue['title'].get('en'))))
+
+                sel_item = cat_items[i_choice - 1]
+                console.print(Panel(sel_item.answer, title=f"[bold green]{sel_item.question}[/bold green]"))
                 Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
+
+    def _diagnostic_search_menu(self):
+        """搜索问题"""
+        self.display_banner()
+        console.print(Panel(f"[bold]{i18n.get('menu_diagnostic_search')}[/bold]"))
+
+        keyword = Prompt.ask(i18n.get('prompt_search_keyword'))
+        if not keyword.strip():
+            return
+
+        found_any = False
+        self.display_banner()
+        console.print(Panel(f"[bold]{i18n.get('msg_diagnostic_result')}[/bold]"))
+
+        # 1. 先尝试规则匹配（用户可能直接输入错误码如 502）
+        rule_result = self.smart_diagnostic.rule_matcher.match(keyword)
+        if rule_result.is_matched:
+            found_any = True
+            formatted = DiagnosticFormatter.format_result(rule_result, current_lang)
+            console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('label_matched_rule')}: {rule_result.matched_rule}[/bold cyan]"))
+
+        # 2. 使用知识库搜索
+        kb = self.smart_diagnostic.knowledge_base
+        results = kb.search_by_keywords(keyword, top_k=5)
+
+        if results:
+            found_any = True
+            for item, score in results:
+                console.print(Panel(item.answer, title=f"[bold green]{item.question}[/bold green] [dim](score: {score:.2f})[/dim]"))
+
+        if not found_any:
+            console.print(f"[yellow]{i18n.get('msg_no_match_found')}[/yellow]")
+
+        Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
 
     def handle_crash(self, error_msg, temp_config=None):
         """Elegant error handling menu for crashes."""
@@ -2028,28 +2187,19 @@ class CLIMenu:
         console.print("\n")
         console.print(Panel(f"[bold yellow]{i18n.get('msg_program_error')}[/bold yellow]", border_style="yellow"))
 
-        # 1. 针对性引导 (API/网络)
-        transient_keywords = ["401", "403", "429", "500", "Timeout", "Connection", "SSL", "rate_limit", "bad request"]
-        if any(k.lower() in error_msg.lower() for k in transient_keywords):
-            console.print(f"[bold yellow]![/] [yellow]{i18n.get('msg_api_transient_error')}[/yellow]\n")
+        # 1. 使用智能诊断模块进行自动诊断
+        diag_result = self.smart_diagnostic.diagnose(error_msg)
 
-        # 2. 自动匹配本地 QA
-        qa_path = os.path.join(PROJECT_ROOT, "Resource", "common_issues.json")
-        if os.path.exists(qa_path):
-            with open(qa_path, 'r', encoding='utf-8') as f: qa_data = json.load(f)
-            matched_solutions = []
-            for cat in qa_data.values():
-                for issue in cat:
-                    if any(p.lower() in error_msg.lower() for p in issue['pattern']):
-                        matched_solutions.append(issue)
-            
-            if matched_solutions:
-                console.print(f"[bold cyan]{i18n.get('msg_qa_title')}:[/bold cyan]")
-                for sol in matched_solutions:
-                    title = sol['title'].get(current_lang, sol['title'].get('en'))
-                    content = sol['solution'].get(current_lang, sol['solution'].get('en'))
-                    console.print(Panel(content, title=f"[bold green]{title}[/bold green]", border_style="green"))
-                console.print("\n")
+        # 2. 如果匹配到规则，显示诊断结果
+        if diag_result.is_matched:
+            formatted = DiagnosticFormatter.format_result(diag_result, current_lang)
+            console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('msg_diagnostic_result')}[/bold cyan]", border_style="cyan"))
+            console.print("")
+        else:
+            # 未匹配到规则时，显示通用提示
+            transient_keywords = ["401", "403", "429", "500", "Timeout", "Connection", "SSL", "rate_limit", "bad request"]
+            if any(k.lower() in error_msg.lower() for k in transient_keywords):
+                console.print(f"[bold yellow]![/] [yellow]{i18n.get('msg_api_transient_error')}[/yellow]\n")
 
         # 3. 环境信息 (灰字显示)
         current_p = temp_config["target_platform"] if temp_config else self.config.get("target_platform", "None")
@@ -4084,6 +4234,10 @@ class CLIMenu:
         # --- 任务追踪状态 ---
         self._is_critical_failure = False
         self._last_crash_msg = None
+        self._api_error_count = 0  # 重置API错误计数
+        self._api_error_messages = []  # 重置API错误信息
+        self._show_diagnostic_hint = False  # 重置诊断提示
+        self._enter_diagnostic_on_exit = False  # 是否在退出后进入诊断菜单
 
         def on_complete(e, d): 
             self.ui.log(f"[bold green]✓ {i18n.get('msg_task_completed')}[/bold green]")
@@ -4359,6 +4513,16 @@ class CLIMenu:
                                     self.handle_web_queue_shortcut()
                                 else:
                                     self.ui.log(f"[yellow]{i18n.get('msg_web_queue_not_available')}[/yellow]")
+                            elif key == 'y': # 进入诊断模式 (当检测到多次API错误时)
+                                if self._show_diagnostic_hint or self._api_error_count >= 3:
+                                    self.ui.log(f"[bold cyan]{i18n.get('msg_entering_diagnostic')}[/bold cyan]")
+                                    # 停止当前任务
+                                    EventManager.get_singleton().emit(Base.EVENT.TASK_STOP, {})
+                                    time.sleep(1)
+                                    # 设置标志，退出后进入诊断菜单
+                                    self._enter_diagnostic_on_exit = True
+                                    self._is_critical_failure = True
+                                    break
 
                     time.sleep(0.1)
                 
@@ -4410,12 +4574,17 @@ class CLIMenu:
             
             # --- 报错处理逻辑 (仅在致命失败时触发) ---
             if self._is_critical_failure and not success.is_set():
-                # 只有发生了崩溃异常，或触发了 critical_error 熔断，且任务最终未完成时才弹出
-                crash_msg = self._last_crash_msg or "Task was terminated due to exceeding critical error threshold."
-                if not non_interactive:
-                    self.handle_crash(crash_msg)
+                # 检查是否是用户主动按Y进入诊断模式
+                if getattr(self, '_enter_diagnostic_on_exit', False) and not non_interactive:
+                    # 用户按Y主动进入诊断，显示诊断菜单
+                    self.qa_menu()
                 else:
-                    console.print(f"[bold red]Task failed fatally. Check logs.[/bold red]")
+                    # 只有发生了崩溃异常，或触发了 critical_error 熔断，且任务最终未完成时才弹出
+                    crash_msg = self._last_crash_msg or "Task was terminated due to exceeding critical error threshold."
+                    if not non_interactive:
+                        self.handle_crash(crash_msg)
+                    else:
+                        console.print(f"[bold red]Task failed fatally. Check logs.[/bold red]")
             
             if success.is_set():
                 if self.config.get("enable_task_notification", True):

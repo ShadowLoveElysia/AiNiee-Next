@@ -5,6 +5,7 @@ import zipfile
 import requests
 import time
 import subprocess
+from datetime import datetime, timezone
 import rapidjson as json
 from ModuleFolders.Base.Base import Base
 from rich.table import Table
@@ -146,7 +147,7 @@ class UpdateManager(Base):
         headers = {"User-Agent": "AiNiee-CLI-Updater"}
         commit_info = None
         release_info = None
-        
+
         # 1. Fetch Latest Commit
         try:
             response = requests.get(self.COMMITS_URL, headers=headers, timeout=5)
@@ -158,6 +159,7 @@ class UpdateManager(Base):
                         "sha": latest.get("sha"),
                         "message": latest.get("commit", {}).get("message", "").split('\n')[0],
                         "date": latest.get("commit", {}).get("author", {}).get("date", "")[:10],
+                        "datetime": latest.get("commit", {}).get("author", {}).get("date", ""),
                         "author": latest.get("commit", {}).get("author", {}).get("name", "Unknown")
                     }
         except: pass
@@ -171,16 +173,105 @@ class UpdateManager(Base):
                     "tag": data.get("tag_name"),
                     "name": data.get("name"),
                     "body": data.get("body", ""),
-                    "date": data.get("published_at", "")[:10]
+                    "date": data.get("published_at", "")[:10],
+                    "datetime": data.get("published_at", "")
                 }
         except: pass
-        
+
         return commit_info, release_info
 
     def get_local_version(self):
         """获取纯版本号 (例如 2.0.1)"""
         v_full = self.get_local_version_full()
         return v_full.split('V')[-1].strip() if 'V' in v_full else v_full.replace('v', '').strip()
+
+    def _format_time_ago(self, iso_datetime: str, lang: str = "zh_CN") -> str:
+        """将ISO时间转换为相对时间（如'7小时前'）"""
+        if not iso_datetime:
+            return ""
+        try:
+            dt = datetime.fromisoformat(iso_datetime.replace('Z', '+00:00'))
+            now = datetime.now(timezone.utc)
+            diff = now - dt
+
+            seconds = diff.total_seconds()
+            minutes = seconds / 60
+            hours = minutes / 60
+            days = hours / 24
+
+            if lang == "zh_CN":
+                if days >= 1:
+                    return f"{int(days)}天前"
+                elif hours >= 1:
+                    return f"{int(hours)}小时前"
+                elif minutes >= 1:
+                    return f"{int(minutes)}分钟前"
+                else:
+                    return "刚刚"
+            elif lang == "ja":
+                if days >= 1:
+                    return f"{int(days)}日前"
+                elif hours >= 1:
+                    return f"{int(hours)}時間前"
+                elif minutes >= 1:
+                    return f"{int(minutes)}分前"
+                else:
+                    return "たった今"
+            else:
+                if days >= 1:
+                    return f"{int(days)}d ago"
+                elif hours >= 1:
+                    return f"{int(hours)}h ago"
+                elif minutes >= 1:
+                    return f"{int(minutes)}m ago"
+                else:
+                    return "just now"
+        except:
+            return ""
+
+    def get_status_bar_info(self, lang: str = "zh_CN") -> dict:
+        """
+        获取状态栏显示信息
+
+        Returns:
+            dict: {
+                "commit_text": "最新commit: xxx 7小时前",
+                "release_text": "最新release: v2.0.1 3天前",
+                "commit_info": {...},
+                "release_info": {...}
+            }
+        """
+        commit_info, release_info = self.fetch_update_info()
+        result = {
+            "commit_text": "",
+            "release_text": "",
+            "commit_info": commit_info,
+            "release_info": release_info
+        }
+
+        if commit_info:
+            time_ago = self._format_time_ago(commit_info.get("datetime", ""), lang)
+            msg = commit_info.get("message", "")[:30]
+            if len(commit_info.get("message", "")) > 30:
+                msg += "..."
+            if lang == "zh_CN":
+                result["commit_text"] = f"最新Commit: {msg} {time_ago}"
+            elif lang == "ja":
+                result["commit_text"] = f"最新Commit: {msg} {time_ago}"
+            else:
+                result["commit_text"] = f"Latest Commit: {msg} {time_ago}"
+
+        if release_info:
+            time_ago = self._format_time_ago(release_info.get("datetime", ""), lang)
+            tag = release_info.get("tag", "")
+            if lang == "zh_CN":
+                result["release_text"] = f"最新Release: {tag} {time_ago}"
+            elif lang == "ja":
+                result["release_text"] = f"最新Release: {tag} {time_ago}"
+            else:
+                result["release_text"] = f"Latest Release: {tag} {time_ago}"
+
+        return result
 
     def check_update(self, silent=False):
         """检查更新 (用于启动时的静默检查)"""

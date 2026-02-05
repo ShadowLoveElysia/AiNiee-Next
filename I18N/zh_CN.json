@@ -186,6 +186,8 @@
     "setting_auto_heal": "开启缓存损坏自动恢复",
     "setting_retry_backoff": "开启智能降速重试 (指数退避)",
     "setting_task_notification": "开启任务完成通知 (音效+弹窗)",
+    "setting_github_status_bar": "显示 GitHub 仓库状态",
+    "setting_github_status_bar_desc": "在状态栏显示最新 Commit 和 Release 信息",
     "setting_session_logging": "开启运行日志自动归档",
     "prompt_limit_val": "设置限制值",
     "msg_task_report_title": "任务执行总结报告",
@@ -573,5 +575,17 @@
         "banner_op_log": "操作记录",
         "banner_op_log_hint_on": "敏感信息已抹除，报错时LLM可更准确分析",
         "banner_op_log_hint_off": "建议开启以获得更准确的LLM分析",
-        "label_operation_flow": "操作流程"
+        "label_operation_flow": "操作流程",
+        "msg_api_error_hint": "[Y] 检测到多次API错误，按Y进入自查诊断",
+        "msg_entering_diagnostic": "正在进入自查诊断系统...",
+        "menu_diagnostic_title": "智能自查诊断",
+        "menu_diagnostic_auto": "自动诊断当前错误",
+        "menu_diagnostic_browse": "浏览常见问题",
+        "menu_diagnostic_search": "搜索问题",
+        "prompt_search_keyword": "请输入搜索关键词",
+        "msg_no_match_found": "未找到匹配的问题",
+        "msg_diagnostic_result": "诊断结果",
+        "msg_no_error_detected": "未检测到错误信息，请先运行任务或手动搜索问题",
+        "label_confidence": "置信度",
+        "label_matched_rule": "匹配规则"
     }

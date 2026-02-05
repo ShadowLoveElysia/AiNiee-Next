@@ -597,6 +597,16 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="enable_github_status_bar",
+    default=True,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_github_status_bar",
+    i18n_desc_key="setting_github_status_bar_desc",
+    category="feature"
+))
+
+register_config(ConfigItem(
     key="show_detailed_logs",
     default=False,
     level=ConfigLevel.USER,

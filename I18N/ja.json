@@ -139,6 +139,8 @@
     "setting_auto_heal": "キャッシュ破損の自動回復を有効にする",
     "setting_retry_backoff": "インテリジェントな减速リトライを有効にする",
     "setting_task_notification": "タスク完了通知を有効にする (音+トースト)",
+    "setting_github_status_bar": "GitHubリポジトリのステータスを表示",
+    "setting_github_status_bar_desc": "ステータスバーに最新のCommitとRelease情報を表示",
     "setting_session_logging": "セッションログの自動保存を有効にする",
     "prompt_limit_val": "制限値を設定",
     "msg_task_report_title": "タスク実行サマリーレポート",
@@ -530,5 +532,17 @@
         "banner_op_log": "操作記録",
         "banner_op_log_hint_on": "機密情報は削除済み、エラー時のLLM分析がより正確に",
         "banner_op_log_hint_off": "より正確なLLM分析のために有効にすることをお勧めします",
-        "label_operation_flow": "操作フロー"
+        "label_operation_flow": "操作フロー",
+        "msg_api_error_hint": "[Y] 複数のAPIエラーを検出、Yを押して自己診断へ",
+        "msg_entering_diagnostic": "自己診断システムに入っています...",
+        "menu_diagnostic_title": "スマート自己診断",
+        "menu_diagnostic_auto": "現在のエラーを自動診断",
+        "menu_diagnostic_browse": "よくある問題を閲覧",
+        "menu_diagnostic_search": "問題を検索",
+        "prompt_search_keyword": "検索キーワードを入力",
+        "msg_no_match_found": "一致する問題が見つかりません",
+        "msg_diagnostic_result": "診断結果",
+        "msg_no_error_detected": "エラーが検出されませんでした。タスクを実行するか、手動で問題を検索してください",
+        "label_confidence": "信頼度",
+        "label_matched_rule": "マッチしたルール"
     }
