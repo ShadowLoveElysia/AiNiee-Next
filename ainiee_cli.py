@@ -588,7 +588,7 @@ class TaskUI:
                 src = cfg.get("source_language", "Unknown")
                 tgt = cfg.get("target_language", "Unknown")
                 tp = cfg.get("target_platform", "Unknown")
-                status_line = f"[bold cyan]AiNiee CLI[/bold cyan] | {src} -> {tgt} | API: {tp} | Progress: {completed}/{total}"
+                status_line = f"[bold cyan]AiNiee-Next[/bold cyan] | {src} -> {tgt} | API: {tp} | Progress: {completed}/{total}"
                 self.layout["header"].update(Panel(status_line, title="Status", border_style="cyan"))
 
             if self.taken_over:
@@ -1806,7 +1806,7 @@ class CLIMenu:
         console.clear()
         
         banner_content = (
-            f"[bold cyan]AiNiee CLI[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
+            f"[bold cyan]AiNiee-Next[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
             f"[dim]GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia[/dim]\n"
             f"{settings_line_1}\n"
             f"{settings_line_2}\n"
@@ -1819,7 +1819,7 @@ class CLIMenu:
 
     def run_wizard(self):
         self.display_banner()
-        console.print(Panel("[bold cyan]Welcome to AiNiee CLI! Let's run a quick setup wizard.[/bold cyan]"))
+        console.print(Panel("[bold cyan]Welcome to AiNiee-Next! Let's run a quick setup wizard.[/bold cyan]"))
         
         # 1. UI Language
         self.first_time_lang_setup()
@@ -2438,28 +2438,28 @@ class CLIMenu:
                 user_content += (
                     f"错误堆栈:\n{error_msg}\n\n"
                     f"分析要求:\n"
-                    f"请分析此崩溃是由外部因素（网络、API Key、环境、SSL）还是内部软件缺陷（AiNiee-CLI代码Bug）导致的。\n"
+                    f"请分析此崩溃是由外部因素（网络、API Key、环境、SSL）还是内部软件缺陷（AiNiee-Next代码Bug）导致的。\n"
                     f"注意: 网络/SSL/429/401错误通常不是代码Bug，除非代码从根本上误用了库。\n"
                     f"如果错误发生在第三方库（如requests、urllib3、ssl）中且由网络条件引起，则不是代码Bug。\n\n"
-                    f"【重要】如果你确定这是AiNiee-CLI的代码Bug，必须在回复中包含这句话：「此为代码问题」"
+                    f"【重要】如果你确定这是AiNiee-Next的代码Bug，必须在回复中包含这句话：「此为代码问题」"
                 )
             elif current_lang == "ja":
                 user_content += (
                     f"トレースバック:\n{error_msg}\n\n"
                     f"分析要求:\n"
-                    f"このクラッシュが外部要因（ネットワーク、APIキー、環境、SSL）によるものか、内部ソフトウェアの欠陥（AiNiee-CLIコードのバグ）によるものかを分析してください。\n"
+                    f"このクラッシュが外部要因（ネットワーク、APIキー、環境、SSL）によるものか、内部ソフトウェアの欠陥（AiNiee-Nextコードのバグ）によるものかを分析してください。\n"
                     f"注意: ネットワーク/SSL/429/401エラーは、コードがライブラリを根本的に誤用していない限り、コードのバグではありません。\n"
                     f"サードパーティライブラリ（requests、urllib3、sslなど）でネットワーク条件によりエラーが発生した場合、コードのバグではありません。\n\n"
-                    f"【重要】これがAiNiee-CLIのコードバグであると確信した場合、回答に必ずこの文を含めてください：「これはコードの問題です」"
+                    f"【重要】これがAiNiee-Nextのコードバグであると確信した場合、回答に必ずこの文を含めてください：「これはコードの問題です」"
                 )
             else:
                 user_content += (
                     f"Traceback:\n{error_msg}\n\n"
                     f"Strict Analysis Request:\n"
-                    f"Analyze if the crash is due to external factors (Network, API Key, Environment, SSL) or internal software defects (Bugs in AiNiee-CLI code).\n"
+                    f"Analyze if the crash is due to external factors (Network, API Key, Environment, SSL) or internal software defects (Bugs in AiNiee-Next code).\n"
                     f"Note: Network/SSL/429/401 errors are NEVER code bugs unless the code is fundamentally misusing the library.\n"
                     f"If the error occurs in a third-party library (like requests, urllib3, ssl) due to network conditions, it is NOT a code bug.\n\n"
-                    f"[IMPORTANT] If you are certain this is a code bug in AiNiee-CLI, you MUST include this exact phrase in your response: \"This is a code issue\""
+                    f"[IMPORTANT] If you are certain this is a code bug in AiNiee-Next, you MUST include this exact phrase in your response: \"This is a code issue\""
                 )
             
             console.print(f"[cyan]{i18n.get('msg_llm_analyzing')}[/cyan]")
@@ -2499,7 +2499,7 @@ class CLIMenu:
         console.print(f"[bold cyan]{i18n.get('msg_github_issue_template')}[/bold cyan]")
         
         import webbrowser
-        webbrowser.open("https://github.com/ShadowLoveElysia/AiNiee-CLI/issues/new")
+        webbrowser.open("https://github.com/ShadowLoveElysia/AiNiee-Next/issues/new")
         Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
 
     def _save_error_log(self, error_msg):
@@ -5246,7 +5246,7 @@ class CLIMenu:
                 self._is_queue_mode = False  # 清除队列模式标记
 
 def main():
-    parser = argparse.ArgumentParser(description="AiNiee CLI - A powerful tool for AI-driven translation and polishing.", add_help=False)
+    parser = argparse.ArgumentParser(description="AiNiee-Next - A powerful tool for AI-driven translation and polishing.", add_help=False)
     
     # 将 --help 参数单独处理，以便自定义帮助信息
     parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')

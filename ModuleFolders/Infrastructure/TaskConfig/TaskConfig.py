@@ -426,6 +426,7 @@ class TaskConfig(Base):
         structured_output_mode = self.platforms.get(target_platform).get("structured_output_mode", 0)
         auto_complete = self.platforms.get(target_platform).get("auto_complete", False)
         enable_stream_api = getattr(self, "enable_stream_api", True)
+        enable_prompt_caching = getattr(self, "enable_prompt_caching", False)
 
         params = {
             "target_platform": target_platform,
@@ -447,7 +448,8 @@ class TaskConfig(Base):
             "thinking_budget": thinking_budget,
             "structured_output_mode": structured_output_mode,
             "auto_complete": auto_complete,
-            "enable_stream_api": enable_stream_api
+            "enable_stream_api": enable_stream_api,
+            "enable_prompt_caching": enable_prompt_caching
         }
 
         return params

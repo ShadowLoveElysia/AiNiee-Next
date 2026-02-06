@@ -13,13 +13,13 @@ from rich.panel import Panel
 from rich.prompt import IntPrompt
 
 class UpdateManager(Base):
-    GITHUB_REPO = "ShadowLoveElysia/AiNiee-CLI"
+    GITHUB_REPO = "ShadowLoveElysia/AiNiee-Next"
     UPDATE_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-    DOWNLOAD_MAIN_URL = f"https://github.com/ShadowLoveElysia/AiNiee-CLI/archive/refs/heads/main.zip"
-    DOWNLOAD_TAG_URL = f"https://github.com/ShadowLoveElysia/AiNiee-CLI/archive/refs/tags/{{tag}}.zip"
+    DOWNLOAD_MAIN_URL = f"https://github.com/ShadowLoveElysia/AiNiee-Next/archive/refs/heads/main.zip"
+    DOWNLOAD_TAG_URL = f"https://github.com/ShadowLoveElysia/AiNiee-Next/archive/refs/tags/{{tag}}.zip"
     # Web Dist 专门下载地址 (假设项目有特定的分发机制或 branch)
-    DOWNLOAD_WEB_STABLE_URL = f"https://github.com/ShadowLoveElysia/AiNiee-CLI/releases/latest/download/web-dist.zip"
-    DOWNLOAD_WEB_PREVIEW_URL = f"https://github.com/ShadowLoveElysia/AiNiee-CLI/archive/refs/heads/web-dist-dev.zip"
+    DOWNLOAD_WEB_STABLE_URL = f"https://github.com/ShadowLoveElysia/AiNiee-Next/releases/latest/download/web-dist.zip"
+    DOWNLOAD_WEB_PREVIEW_URL = f"https://github.com/ShadowLoveElysia/AiNiee-Next/archive/refs/heads/web-dist-dev.zip"
     RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/Resource/Version/version.json"
     COMMITS_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits"
     RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
@@ -144,7 +144,7 @@ class UpdateManager(Base):
 
     def fetch_update_info(self):
         """获取 Commit 和 Release 信息"""
-        headers = {"User-Agent": "AiNiee-CLI-Updater"}
+        headers = {"User-Agent": "AiNiee-Next-Updater"}
         commit_info = None
         release_info = None
 

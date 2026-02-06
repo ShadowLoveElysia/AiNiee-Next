@@ -83,5 +83,5 @@ build-backend = "hatchling.build"
 packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18N"]
 
 [tool.hatch.build.targets.sdist]
-include = ["AiNiee-CLI.py", "pyproject.toml", "README.md", "LICENSE"]
+include = ["ainiee_cli.py", "pyproject.toml", "README.md", "LICENSE"]
 

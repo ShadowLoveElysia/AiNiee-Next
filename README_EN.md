@@ -1,253 +1,211 @@
-# AiNiee CLI (Optimized Edition)
+# AiNiee-Next
 
 <div align="center">
   <img src="https://img.shields.io/badge/Interface-CLI%20%2F%20TUI-0078D4?style=for-the-badge&logo=windows-terminal&logoColor=white" alt="CLI">
   <img src="https://img.shields.io/badge/Runtime-uv-purple?style=for-the-badge&logo=python&logoColor=white" alt="uv">
-  <img src="https://img.shields.io/badge/Status-Optimized-success?style=for-the-badge" alt="Status">
+  <img src="https://img.shields.io/badge/Status-Stable-success?style=for-the-badge" alt="Status">
 </div>
 
 <br/>
 
 [English](README_EN.md) | [简体中文](README.md)
 
-**AiNiee CLI** is an engineering-focused refactor of the [AiNiee](https://github.com/NEKOparapa/AiNiee) core logic, designed for command-line environments.
+**AiNiee-Next** is an engineering-focused refactor of the [AiNiee](https://github.com/NEKOparapa/AiNiee) core logic, designed for command-line environments.
 
-This project introduces **`uv`**, a modern Python package manager, and implements significant stability optimizations for the underlying runtime. By taking control of IO streams and exception handling, we have built a robust TUI environment perfect for long-running tasks, headless server deployments, and automated workflows.
-
-> **🚧 Note**: To minimize environment configuration issues, this project is deeply integrated with `uv`. One-click launch scripts (`Launch.bat` and `Launch.sh`) will be available in future updates.
+This project introduces **uv**, a modern Python package manager, and implements significant stability optimizations for the underlying runtime. By taking control of IO streams and exception handling, we have built a robust TUI environment perfect for long-running tasks, headless server deployments, and automated workflows.
 
 ---
 
-## ✨ Key Optimizations
+## Key Features
 
-### 🛡️ Runtime Stability
-*   **IO Stream Cleaning & Hijacking**: Refactored the capture logic for Standard Output/Error (Stdout/Stderr). This effectively blocks redundant noise from underlying dependencies (like TensorFlow or C++ bindings), preventing TUI tearing or crashes and ensuring log readability in headless environments.
+### Runtime Stability
+- **IO Stream Cleaning**: Refactored Stdout/Stderr capture logic, blocking redundant noise from dependencies, preventing TUI tearing or crashes
+- **Smart Error Recovery**: Built-in exception interception and auto-retry mechanism with checkpoint resume, ideal for long-running tasks
+- **Cross-Platform Compatible**: Supports Windows / Linux / macOS / Android (Termux), headless server friendly
 
-### ⚙️ Workflow & Configuration
-*   **Intelligent Format Input/Conversion**: An optimized input processing pipeline. Supports a fully automated closed-loop operation ("Identify -> Convert -> Translate -> Restore") for non-standard formats (e.g., .mobi/.azw3), significantly simplifying pre-processing steps.
-*   **Multi-Profile System (Profiles)**: Introduces a profile management system. You can create, clone, and switch between multiple configuration sets (e.g., separating settings for "Fast Translation" vs. "High-Quality Polishing"). All profiles are stored in isolation.\n*   **Live Mission Control**: **[New]** Introduces a new TUI task status and control center, supporting:
-    *   **Dynamic Concurrency Adjustment**: Real-time increase or decrease of concurrent threads using `+` and `-` keys during task execution.
-    *   **API Key Hot-Swap**: Force API key rotation using the `K` key to handle specific API call limits.
-    *   **Web Monitoring Panel [New]**: Press the `M` key to instantly launch a background WebServer and open your browser to monitor the current task. The TUI panel will enter a "takeover mode," synchronizing all logs and status to the web interface in real-time.
-    *   **System Status Monitoring**: A bottom status bar that displays real-time system operational status (Normal/Fixing/Warning/Error) and dynamically changes the panel border color.
-    *   **Cost and Time Estimation**: Before task startup, automatically estimates total Token consumption, approximate cost for online APIs, and Estimated Time of Arrival (ETA), prominently displayed in the log pane (for reference only).
-*   **Visual Interactive Experience**: A modern TUI built on `Rich`, featuring real-time performance monitoring (RPM/TPM), split-screen logging, and a BIOS-like interactive settings menu.
-*   **[New] Plugin Architecture**:
-    *   Introduces a brand-new plugin system, allowing for safe and modular feature extensions without altering the core codebase.
-    *   **Built-in RAG Plugin**: Comes with an out-of-the-box RAG (Retrieval-Augmented Generation) Context Plugin. When enabled, it automatically retrieves historical translations to provide crucial context for long-form content, significantly improving terminological and stylistic consistency.
-    *   **Centralized Management**: Both the main CLI menu and the Web UI feature a dedicated "Plugin Management" page, allowing you to discover and toggle all available plugins with a single click.
-*   **[New] Intelligent Task Queue System**:
-    *   **Multi-Modal Queue Management**: Create, edit, and delete translation task queues in both TUI interactive menus and WebServer visual interfaces.
-    *   **Flexible Queue Scheduling**: Dynamic queue ordering support - WebServer interface offers mouse drag-and-drop sorting, while TUI interface provides keyboard-driven interactive reordering.
-    *   **Hot Task Modification**: During queue execution, modify pending task parameters in real-time via WebServer without stopping the current running task. All queue changes are displayed with operation logs in the TUI console.
-    *   **Batch Processing Optimization**: Pre-configure multiple tasks with different files or translation strategies, the system will execute them sequentially, perfect for large-scale translation workflows.
-*   **[New] Thinking Mode Enhancement**:
-    *   **Universal Platform Compatibility**: Fixed thinking mode compatibility issues across multiple AI platforms, now supporting all mainstream online API platforms and third-party gateways.
-    *   **Smart Parameter Configuration**: Thinking mode settings are now permanently displayed in all interfaces regardless of platform constraints, with different compatibility warnings for online APIs vs local models.
-    *   **Unified Interface Experience**: Fixed inconsistent display of thinking mode parameters between CLI menus and Web dashboard, ensuring a unified user experience.
+### Intelligent Format Processing
+- **Fully Automated Conversion**: Supports "Identify - Convert - Translate - Restore" workflow for .mobi / .azw3 / .kepub / .fb2 formats
+- **Native Multi-Format Support**: Epub, Docx, Txt, Srt, Ass, Vtt, Lrc, Json, Po, Paratranz and 20+ formats
+- **Calibre Middleware Integration**: Automatically invokes Calibre for complex ebook formats
+
+### Live Mission Control Center
+- **Dynamic Concurrency**: Adjust concurrent threads in real-time via `+` / `-` keys
+- **API Key Hot-Swap**: Force API Key rotation via `K` key to handle rate limits
+- **Mid-Task Monitoring**: Launch WebServer and auto-open browser via `M` key
+- **System Status Monitoring**: Real-time status bar with color-coded border indicators
+- **Cost & Time Estimation**: Auto-estimate token consumption, API costs, and completion time before task start
+
+### Multi-Profile System
+- **Profile Isolation**: Create, clone, and switch between multiple configuration sets
+- **Scenario-Based Configs**: Separate "Quick Translation" and "Fine Polish" workflows
+- **Hot Reload**: Configuration changes take effect without restart
+
+### Plugin Architecture
+- **Modular Extensions**: Safely extend functionality without modifying core code
+- **Built-in RAG Plugin**: Auto-retrieve historical translations for context reference, improving terminology and style consistency
+- **Translation Checker Plugin**: Auto-detect missing translations, errors, and format anomalies
+- **Centralized Management**: Plugin management available in both CLI menu and Web UI
+
+### Intelligent Task Queue
+- **Batch Task Configuration**: Pre-configure multiple tasks with different files or translation strategies
+- **Dynamic Queue Scheduling**: Drag-and-drop ordering (Web) and keyboard reordering (TUI)
+- **Hot Task Modification**: Edit pending task parameters while queue is running
+- **Auto Sequential Execution**: Optimized for large-scale translation workflows
+
+### Context Caching
+- **Multi-Platform Support**: Anthropic / Google / Amazon Bedrock context caching
+- **Cost Optimization**: Cache system prompts and glossaries to significantly reduce API costs
+- **Smart Fallback**: Auto-detect API compatibility, disable and notify when unsupported
+
+### Thinking Mode Enhancement
+- **Full Platform Compatibility**: Supports all major online API platforms and third-party proxies
+- **Smart Parameter Configuration**: Different compatibility hints for online APIs and local models
+- **Deep Reasoning Support**: Supports deep thinking mode for DeepSeek R1, Claude 3.5, and similar models
+
+### API Failover
+- **Multi-API Pool Management**: Configure multiple backup APIs
+- **Auto Switching**: Automatically switch to backup API when primary fails
+- **Threshold Control**: Configurable failover trigger threshold
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-This project provides multiple startup methods. Choose the one that best suits your use case.
+### Method 1: One-Click Launch (Recommended)
 
-## 🚀 Method 1: One-Click Launch (Recommended)
-
-### 1. Get the Code
+**1. Get the Code**
 ```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-CLI.git
-cd AiNiee-CLI
+git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
+cd AiNiee-Next
 ```
 
-### 2. Environment Setup (First Run)
+**2. Environment Setup (First Run)**
 
-**Windows:**
+Windows:
 ```batch
 Double-click prepare.bat
 ```
 
-**Linux / macOS:**
+Linux / macOS:
 ```bash
-chmod +x prepare.sh
-./prepare.sh
+chmod +x prepare.sh && ./prepare.sh
 ```
 
-The prepare script automatically:
-- Detects and installs `uv` (if not installed)
-- Creates virtual environment
-- Installs all project dependencies
+**3. Launch Application**
 
-### 3. Launch Application
-
-After environment setup, simply run:
-
-**Windows:**
+Windows:
 ```batch
 Double-click Launch.bat
 ```
 
-**Linux / macOS:**
+Linux / macOS:
 ```bash
 ./Launch.sh
 ```
 
 ---
 
-## 🛠️ Method 2: Manual Configuration (Advanced Users)
+### Method 2: Manual Configuration
 
-If you prefer to configure the environment manually:
+**1. Install uv**
 
-### 1. Install uv
-
-**Windows (PowerShell):**
+Windows (PowerShell):
 ```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Linux / macOS:**
+Linux / macOS:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Android (Termux) - Method 1 (Direct Installation):**
+Android (Termux):
 ```bash
-# Update package sources
 pkg update && pkg upgrade
-# Install Python if not already installed
 pkg install python
-# Install uv via pip
 pip install uv
 ```
 
-**Android (Termux) - Method 2 (Proot-Distro Ubuntu):**
+**2. Get the Code and Launch**
 ```bash
-# Install proot-distro
-pkg install proot-distro
-# Install Ubuntu environment
-proot-distro install ubuntu
-# Login to Ubuntu environment
-proot-distro login ubuntu
-# Install uv in Ubuntu
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-> **📱 Termux Users**: For mobile devices, we recommend using the **WebServer mode with online API** for the best experience. The web interface is optimized for touch interactions and remote monitoring.
-
-### 2. Get the Code
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-CLI.git
-cd AiNiee-CLI
-```
-
-### 3. Instant Launch
-No need to manually create virtual environments or install pip dependencies. Simply run `uv run` to handle the environment automatically:
-
-```bash
-# Automatically sync dependencies and start the CLI (Interactive Menu)
+git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
+cd AiNiee-Next
 uv run ainiee_cli.py
 ```
 
 ---
 
-## 💻 Command-Line Arguments (Non-Interactive Mode)
-**[New]** This project supports launching translation or export tasks directly via command-line arguments, suitable for script integration and automation.
+## Command-Line Arguments
+
+Supports launching tasks directly via command-line arguments for script integration and automation.
 
 **Translation Task Example:**
 ```bash
-uv run ainiee_cli.py translate "H:\\Novels\\MyBook.txt" -o "H:\\Novels\\MyBook_Output" -p MyProfile -s Japanese -t Chinese --resume --yes
+uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese -t Chinese --resume --yes
 ```
 
 **Queue Task Example:**
 ```bash
-uv run ainiee_cli.py queue --queue-file "H:\\Novels\\my_queue.json" --yes
+uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 ```
 
-**Argument Description:**
-*   `translate` / `polish` / `export` / `queue`: Specifies the task type.
-*   `H:\\Novels\\MyBook.txt`: (Positional argument) Input file or folder path.
-*   `-o, --output`: Specifies the output path.
-*   `-p, --profile`: Specifies the configuration profile name.
-*   `-s, --source`: Specifies the source language.
-*   `-t, --target`: Specifies the target language.
-*   `--type`: Specifies the project type (e.g., `Txt`, `Epub`, `MTool`).
-*   `--resume`: Automatically resumes the task if a cache is detected.
-*   `--yes`: Non-interactive mode; automatically answers `yes`.
-*   **[New] Advanced Overrides:**
-    *   `--threads`: Concurrent thread counts.
-    *   `--rounds`: Max execution rounds.
-    *   `--retry`: Max retry counts.
-    *   `--timeout`: API timeout in seconds.
-    *   `--platform`: Override target platform.
-    *   `--model`: Override model name.
-    *   `--api-url`: Override API URL.
-    *   `--api-key`: Override API Key.
-    *   `--lines` / `--tokens`: Override batch size.
-    *   `--pre-lines`: Context lines to include.
-    *   `--failover`: `on/off` toggle for API failover.
-    *   `--think-depth`: Thinking mode depth level (0-10000, 0 to disable).
-    *   `--thinking-budget`: Thinking mode token budget limit.
-    *   `--queue-file`: Specifies the task queue JSON file path (only for `queue` task type).
+**Main Arguments:**
+- `translate` / `polish` / `export` / `queue`: Task type
+- `-o, --output`: Output path
+- `-p, --profile`: Configuration profile name
+- `-s, --source`: Source language
+- `-t, --target`: Target language
+- `--type`: Project type (Txt, Epub, MTool, RenPy etc.)
+- `--resume`: Auto-resume cached tasks
+- `--yes`: Non-interactive mode
+- `--threads`: Concurrent thread count
+- `--platform`: Target platform
+- `--model`: Model name
+- `--api-url`: API URL
+- `--api-key`: API Key
 
 ---
 
-## 📖 Menu Overview
+## Web Dashboard
 
-Once launched, you can navigate the following features via the interactive menu:
+This project includes a React-based Web Dashboard, now in stable release.
 
-*   **Start Translation / Polishing**: Core translation and polishing tasks (supports automatic resume).
-*   **Export Only**: Quick export mode for existing cache files.
-*   **Task Queue**: **[New]** Intelligent task queue management center for batch task configuration and execution.
-*   **Profiles**: **[New]** Center for switching and managing configuration profiles.
-*   **Settings / API Settings**: Categorized parameter settings with hot-reload support.
-*   **Glossary**: Preview and apply prompt templates.
-*   **Start Web Server**: **[New]** Launch the modern Web Dashboard.
+**How to Start:**
+1. Run `uv run ainiee_cli.py` to enter the main menu
+2. Select **15. Start Web Server**
+3. The program will start the service (default port 8000) and open your browser
 
----
+**Features:**
+- Visual Dashboard: Real-time RPM, TPM, and task progress charts
+- Network Access: Remote monitoring via LAN IP
+- Profile Management: Create and switch profiles from web UI
+- Queue Management: Drag-and-drop task reordering
+- Plugin Center: Enable/disable RAG and other features
 
-## 🌐 Web Dashboard
-
-**[New]** For a more intuitive experience, this project now includes a React-based Web Dashboard.
-
-### How to Start
-1.  Run `uv run ainiee_cli.py` to enter the main menu.
-2.  Select **12. Start Web Server**.
-3.  The program will automatically detect your LAN IP and start the service (default port `8000`), opening the dashboard in your default browser.
-
-### Features
-*   **Visual Dashboard**: Real-time charts showing RPM, TPM, and task progress.
-*   **Network Access**: Monitor your translation tasks remotely via LAN IP. You can also use tunneling tools (e.g., `frp`, `cloudflared`) for external network access.
-*   **Profile Management**: Create, rename, delete, or switch configuration profiles directly from the web UI.
-*   **[New] Queue Management Center**: Intuitive queue management interface with mouse drag-and-drop task reordering, real-time task parameter editing, and queue item addition/deletion. All operations sync with TUI console logs.
-*   **[New] Thinking Mode Configuration**: Complete thinking mode parameter configuration interface with compatibility hints and optimization suggestions for different AI platforms.
-*   **[New] Plugin Center**: A dedicated plugin management page in the Web UI allows users to intuitively enable or disable advanced features like RAG through a card-based interface.
-*   **State Recovery**: Automatically synchronizes task status, logs, and chart history even after a page refresh.
-
-> **⚠️ Important Note**:
-> **The Web Dashboard is currently in Beta and may have compatibility issues with certain devices (e.g., mobile browsers). If you require maximum stability (e.g., for very large batch tasks), please continue to use the native TUI mode.**
+> **Development Note**: The Web Dashboard is now stable, but has fewer features compared to TUI mode. This project focuses on CLI/TUI interaction as the core development direction. Web features will be gradually updated in future releases.
 
 ---
 
-## 🛠️ Architecture
+## Architecture
 
-This project utilizes a **Wrapper / Adapter** pattern:
+This project utilizes a Wrapper / Adapter pattern:
 
-*   **Core**: The original AiNiee core business logic remains unchanged.
-*   **Adapter Layer**: `ainiee_cli.py` acts as an anti-corruption layer, responsible for environment isolation, exception interception, and resource scheduling.
-*   **Runtime**: Managed by `uv` to ensure consistency and startup speed.
+- **Core**: Original AiNiee core business logic unchanged
+- **Adapter Layer**: `ainiee_cli.py` handles environment isolation and exception interception
+- **Runtime**: Managed by uv for dependency consistency
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-*   This project is an unofficial optimized CLI branch of AiNiee, focusing on operational experience and engineering stability.
-*   The core translation algorithms remain consistent with the original version. Please adhere to the original usage license.
-*   This tool is intended for personal learning and legal use only.
+- This project is an unofficial optimized branch of AiNiee
+- Core translation algorithms remain consistent with the original version
+- This tool is intended for personal learning and legal use only
 
 ---
 
 <div align="center">
-  Made with 💻 and ☕ by ShadowLoveElysia
+  Made by ShadowLoveElysia
   <br>
   Based on the original work by NEKOparapa
 </div>

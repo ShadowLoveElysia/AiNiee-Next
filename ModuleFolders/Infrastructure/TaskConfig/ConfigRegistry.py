@@ -645,6 +645,19 @@ register_config(ConfigItem(
     category="api"
 ))
 
+# --- 上下文缓存配置 (ADVANCED) ---
+# 启用后可缓存系统提示词和术语表等内容，显著降低API费用
+register_config(ConfigItem(
+    key="enable_prompt_caching",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_enable_prompt_caching",
+    i18n_desc_key="setting_enable_prompt_caching_desc",
+    category="api",
+    online_only=True
+))
+
 # 流式API支持状态缓存 (SYSTEM级别，用于存储各API的流式支持状态)
 # 格式: {"api_url_hash": True/False}
 register_config(ConfigItem(
