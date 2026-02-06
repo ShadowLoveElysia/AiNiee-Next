@@ -16,6 +16,20 @@ This project introduces **uv**, a modern Python package manager, and implements 
 
 ---
 
+## Performance Showcase
+
+**Built for ultimate performance and stability.**
+
+The screenshot below demonstrates a ~20,000 line file being translated in approximately 4 minutes with 50 concurrent threads:
+
+<div align="center">
+  <img src="README_IMG/50并发deepseek测试.png" alt="50 Concurrency Performance Test" width="90%">
+  <br>
+  <em>50 Threads + DeepSeek API | 20k Lines | ~4 min | 99.6% Success Rate | 397k TPM</em>
+</div>
+
+---
+
 ## Key Features
 
 ### Runtime Stability
@@ -66,6 +80,13 @@ This project introduces **uv**, a modern Python package manager, and implements 
 - **Multi-API Pool Management**: Configure multiple backup APIs
 - **Auto Switching**: Automatically switch to backup API when primary fails
 - **Threshold Control**: Configurable failover trigger threshold
+
+### High Concurrency Performance
+- **Async Request Mode**: aiohttp-based async I/O, breaks thread pool bottleneck, supports 100+ concurrency
+- **Smart Error Classification**: Distinguishes "hard errors" (format/auth issues) from "soft errors" (rate limit/timeout) - hard errors don't retry, soft errors wait smartly
+- **Provider Fingerprinting**: Auto-detects and records API feature support, silent degradation on next startup
+- **Semaphore Protection**: Protects local system resources (file descriptors, ports) under high concurrency
+- **Auto Suggestion**: Automatically suggests enabling async mode when concurrency ≥15 for better performance
 
 ---
 

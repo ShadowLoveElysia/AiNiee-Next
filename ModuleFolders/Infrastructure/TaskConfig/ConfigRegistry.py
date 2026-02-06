@@ -744,6 +744,18 @@ register_config(ConfigItem(
     category="translation"
 ))
 
+# --- 异步执行模式 (ADVANCED) ---
+# 使用 aiohttp 异步请求，适合高并发场景（100+并发）
+register_config(ConfigItem(
+    key="enable_async_mode",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_enable_async_mode",
+    i18n_desc_key="setting_enable_async_mode_desc",
+    category="advanced"
+))
+
 # --- 系统级配置 (SYSTEM) - 不对用户显示 ---
 register_config(ConfigItem(
     key="translation_project",

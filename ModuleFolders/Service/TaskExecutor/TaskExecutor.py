@@ -125,6 +125,140 @@ class TaskExecutor(Base):
             with self._concurrency_lock:
                 self._current_active -= 1
 
+    def _execute_tasks_async(self, tasks_list):
+        """异步执行模式：使用 aiohttp 处理高并发请求"""
+        import asyncio
+        from ModuleFolders.Infrastructure.LLMRequester.AsyncLLMRequester import AsyncLLMRequester
+        from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
+        from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
+
+        # 获取用户设置的并发数
+        max_concurrency = self.config.actual_thread_counts
+        signal_hub = get_signal_hub()
+        signal_hub.reset()  # 重置信号状态
+        signal_hub.set_concurrency(max_concurrency)
+
+        # 引用 self 以便在异步函数中使用
+        executor_self = self
+
+        async def run_single_task(task, semaphore):
+            """执行单个异步任务"""
+            import time as time_module
+            task_start = time_module.time()
+
+            if Base.work_status == Base.STATUS.STOPING:
+                return None
+
+            # 等待暂停恢复
+            await signal_hub.wait_if_paused()
+
+            # 信号量控制：保护本地系统资源
+            async with semaphore:
+                if Base.work_status == Base.STATUS.STOPING:
+                    return None
+
+                # 检查是否跳过
+                with executor_self._skip_lock:
+                    if hasattr(task, 'file_path_full') and task.file_path_full in executor_self.skipped_files:
+                        return None
+
+                # 打印任务开始日志
+                task_id = getattr(task, 'task_id', '???')
+                preview = str(list(task.source_text_dict.values())[:1])[:50] if hasattr(task, 'source_text_dict') else ''
+                executor_self.print(f"[dim][{task_id}] Translating: {preview}...[/dim]")
+
+                # 获取平台配置
+                platform_config = executor_self.config.get_platform_configuration("translationReq")
+
+                # 发起异步请求
+                requester = AsyncLLMRequester()
+                skip, error_type, content, pt, ct = await requester.send_request_async(
+                    task.messages, task.system_prompt, platform_config
+                )
+
+                elapsed = time_module.time() - task_start
+
+                if skip:
+                    # 上报错误状态
+                    executor_self.report_api_status(False)
+                    # 打印错误日志
+                    executor_self.print(f"[red]✗ [{task_id}] Failed ({error_type}) | {elapsed:.2f}s[/red]")
+                    # 检查是否为软伤错误（可重试）
+                    err_type, _ = ErrorClassifier.classify(content)
+                    if err_type == ErrorType.SOFT_ERROR:
+                        if ErrorClassifier.should_reduce_concurrency(content):
+                            signal_hub.broadcast_rate_limit(platform_config.get("api_url", ""))
+                    return {"check_result": False, "row_count": 0, "prompt_tokens": pt, "completion_tokens": ct, "error_type": error_type}
+
+                # 上报成功状态
+                executor_self.report_api_status(True)
+
+                # 结果处理
+                if content:
+                    from ModuleFolders.Domain.ResponseExtractor.ResponseExtractor import ResponseExtractor
+                    response_dict = ResponseExtractor.text_extraction(task, task.source_text_dict, content)
+
+                    if response_dict:
+                        for item, response in zip(task.items, response_dict.values()):
+                            with item.atomic_scope():
+                                item.model = executor_self.config.model
+                                item.translated_text = response
+                                item.translation_status = TranslationStatus.TRANSLATED
+
+                        # 打印成功日志
+                        executor_self.print(f"[green]√ [{task_id}] Done ({len(task.items)} lines) | {elapsed:.2f}s | {pt}+{ct}T[/green]")
+
+                        return {
+                            "check_result": True,
+                            "row_count": len(task.items),
+                            "prompt_tokens": pt,
+                            "completion_tokens": ct,
+                            "extra_info": getattr(task, "extra_info", {})
+                        }
+
+                return {"check_result": False, "row_count": 0, "prompt_tokens": pt, "completion_tokens": ct}
+
+        async def run_all_tasks():
+            """运行所有异步任务"""
+            # 初始化连接池，传入线程数以保护系统资源
+            await AsyncLLMRequester.get_session(max_concurrency)
+
+            # 信号量控制并发数，保护文件描述符和端口资源
+            semaphore = asyncio.Semaphore(max_concurrency)
+            tasks = [run_single_task(task, semaphore) for task in tasks_list]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 处理结果
+            for result in results:
+                if isinstance(result, Exception):
+                    self.error(f"Async task error: {result}")
+                elif result:
+                    self._process_async_result(result)
+
+            # 关闭连接池
+            await AsyncLLMRequester.close_session()
+
+        self.info(f"[bold cyan]使用异步模式执行任务 (并发数: {max_concurrency})...[/bold cyan]")
+        asyncio.run(run_all_tasks())
+
+    def _process_async_result(self, result):
+        """处理异步任务结果"""
+        if not result or not isinstance(result, dict):
+            return
+
+        with self.project_status_data.atomic_scope():
+            self.project_status_data.total_requests += 1
+            is_error = not result.get("check_result")
+            self.project_status_data.error_requests += 1 if is_error else 0
+            self.project_status_data.success_requests += 0 if is_error else 1
+            self.project_status_data.line += result.get("row_count", 0)
+            self.project_status_data.token += result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+            self.project_status_data.total_completion_tokens += result.get("completion_tokens", 0)
+            self.project_status_data.time = time.time() - self.project_status_data.start_time
+
+        self.cache_manager.require_save_to_file(self.session_output_path)
+        self.emit(Base.EVENT.TASK_UPDATE, self.project_status_data.to_dict())
+
     # API 状态上报与轮转逻辑
     def report_api_status(self, is_success: bool) -> None:
         if not self.config.enable_api_failover or not self.api_pipeline:
@@ -470,6 +604,11 @@ class TaskExecutor(Base):
                         system = self.config.translation_prompt_selection["prompt_content"]
                     
                     self.info(f"并发请求 - {self.config.actual_thread_counts} 线程")
+
+                    # 高并发时建议使用异步模式
+                    if self.config.actual_thread_counts >= 15 and not getattr(self.config, 'enable_async_mode', False):
+                        hint_msg = self.tra('msg_high_concurrency_hint').format(self.config.actual_thread_counts)
+                        self.print(f"[bold yellow]{hint_msg}[/bold yellow]")
                 else:
                     # 仅在第一轮显示恢复提示
                     if current_round == 0:
@@ -479,16 +618,23 @@ class TaskExecutor(Base):
                 time.sleep(3)
                 self.print("")
 
-                # 开始执行翻译任务,构建异步线程池 (使用 100 高限额，由 gated_run 实际控制并发)
-                self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = 100, thread_name_prefix = "translator")
-                try:
-                    with self.executor as executor:
-                        for task in tasks_list:
-                            if Base.work_status == Base.STATUS.STOPING: break
-                            future = executor.submit(self._gated_run, task)
-                            future.add_done_callback(self.task_done_callback)  # 为future对象添加一个回调函数，当任务完成时会被调用，更新数据
-                finally:
-                    self.executor = None
+                # 根据配置选择同步或异步执行模式
+                if getattr(self.config, 'enable_async_mode', False):
+                    self._execute_tasks_async(tasks_list)
+                else:
+                    # 重置并发计数器，防止上一轮异常退出后卡死
+                    with self._concurrency_lock:
+                        self._current_active = 0
+                    # 开始执行翻译任务,构建异步线程池 (使用 100 高限额，由 gated_run 实际控制并发)
+                    self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = 100, thread_name_prefix = "translator")
+                    try:
+                        with self.executor as executor:
+                            for task in tasks_list:
+                                if Base.work_status == Base.STATUS.STOPING: break
+                                future = executor.submit(self._gated_run, task)
+                                future.add_done_callback(self.task_done_callback)  # 为future对象添加一个回调函数，当任务完成时会被调用，更新数据
+                    finally:
+                        self.executor = None
 
             # 等待可能存在的缓存文件写入请求处理完毕
             time.sleep(CacheManager.SAVE_INTERVAL)
@@ -717,6 +863,9 @@ class TaskExecutor(Base):
                     time.sleep(3)
                     self.print("")
 
+                # 重置并发计数器，防止上一轮异常退出后卡死
+                with self._concurrency_lock:
+                    self._current_active = 0
                 # 开始执行润色务,构建异步线程池 (使用 100 高限额，由 gated_run 实际控制并发)
                 self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = 100, thread_name_prefix = "translator")
                 try:

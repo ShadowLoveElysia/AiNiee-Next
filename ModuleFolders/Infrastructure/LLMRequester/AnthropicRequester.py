@@ -1,33 +1,27 @@
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 from ModuleFolders.Infrastructure.LLMRequester.ModelConfigHelper import ModelConfigHelper
+from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
+from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint
 
 
 # 接口请求器
 class AnthropicRequester(Base):
-    # 类级别的缓存支持状态标记
-    _cache_disabled_apis: set = set()
 
     def __init__(self) -> None:
         pass
 
-    def _get_api_key(self, platform_config: dict) -> str:
-        """获取API标识用于缓存状态跟踪"""
-        return f"{platform_config.get('api_url', '')}:{platform_config.get('model_name', '')}"
-
     def _is_cache_supported(self, platform_config: dict) -> bool:
-        """检查当前API是否支持缓存"""
-        return self._get_api_key(platform_config) not in self._cache_disabled_apis
+        """检查当前API是否支持缓存（使用 ProviderFingerprint）"""
+        api_url = platform_config.get('api_url', '')
+        fingerprint = ProviderFingerprint()
+        return fingerprint.should_use_cache(api_url)
 
-    def _disable_cache_for_api(self, platform_config: dict) -> None:
-        """禁用当前API的缓存功能"""
-        self._cache_disabled_apis.add(self._get_api_key(platform_config))
-
-    def _is_cache_error(self, error: Exception) -> bool:
-        """检测是否是缓存相关错误"""
-        error_str = str(error).lower()
-        cache_error_keywords = ["cache", "cache_control", "ephemeral", "unsupported", "not supported"]
-        return any(keyword in error_str for keyword in cache_error_keywords)
+    def _disable_cache_for_api(self, platform_config: dict, error_msg: str) -> None:
+        """禁用当前API的缓存功能（使用 ProviderFingerprint）"""
+        api_url = platform_config.get('api_url', '')
+        fingerprint = ProviderFingerprint()
+        fingerprint.mark_cache_unsupported(api_url, error_msg)
 
     def _build_system_with_cache(self, system_prompt: str) -> list[dict]:
         """构建带缓存控制的系统提示词"""
@@ -77,10 +71,11 @@ class AnthropicRequester(Base):
             response_think = ""
             response_content = response.content[0].text
         except Exception as e:
+            error_str = str(e)
             # 如果启用了缓存且是缓存相关错误，尝试禁用缓存重试
-            if use_cache and self._is_cache_error(e):
-                self._disable_cache_for_api(platform_config)
-                self.warning("检测到API不支持上下文缓存功能，已自动关闭，将使用普通模式重试...")
+            if use_cache and ErrorClassifier.is_cache_related_error(error_str):
+                self._disable_cache_for_api(platform_config, error_str)
+                self.warning("Cache not supported by this API, disabled automatically. Retrying...")
 
                 # 使用普通模式重试
                 base_params["system"] = system_prompt
@@ -89,11 +84,13 @@ class AnthropicRequester(Base):
                     response_think = ""
                     response_content = response.content[0].text
                 except Exception as retry_e:
-                    self.error(f"请求任务错误 ... {retry_e}", retry_e if self.is_debug() else None)
-                    return True, None, None, None, None
+                    error_type, _ = ErrorClassifier.classify(str(retry_e))
+                    self.error(f"Request error ({error_type.value}) ... {retry_e}", retry_e if self.is_debug() else None)
+                    return True, error_type.value.upper(), str(retry_e), 0, 0
             else:
-                self.error(f"请求任务错误 ... {e}", e if self.is_debug() else None)
-                return True, None, None, None, None
+                error_type, _ = ErrorClassifier.classify(error_str)
+                self.error(f"Request error ({error_type.value}) ... {e}", e if self.is_debug() else None)
+                return True, error_type.value.upper(), error_str, 0, 0
 
         # 获取指令消耗
         try:
