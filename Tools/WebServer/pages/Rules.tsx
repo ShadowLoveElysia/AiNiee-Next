@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, Plus, Trash2, BookOpen, Ban, AlertTriangle, RefreshCw, Search, ToggleLeft, ToggleRight, Download, Upload, History, Users, Map, PenTool, Languages, FileJson, ChevronDown } from 'lucide-react';
+import { Save, Plus, Trash2, BookOpen, Ban, AlertTriangle, RefreshCw, Search, ToggleLeft, ToggleRight, Download, Upload, History, Users, Map, PenTool, Languages, FileJson, ChevronDown, Sparkles, Play, Square } from 'lucide-react';
 import { GlossaryItem, ExclusionItem, CharacterizationItem, TranslationExampleItem } from '../types';
 import { DataService } from '../services/DataService';
 import { useI18n } from '../contexts/I18nContext';
 import { useGlobal } from '../contexts/GlobalContext';
 
-type TabType = 'glossary' | 'exclusion' | 'characterization' | 'world' | 'style' | 'example';
+type TabType = 'glossary' | 'exclusion' | 'characterization' | 'world' | 'style' | 'example' | 'ai_glossary';
 
 export const Rules: React.FC = () => {
     const { t } = useI18n();
@@ -53,6 +53,21 @@ export const Rules: React.FC = () => {
     // Filter State
     const [filter, setFilter] = useState('');
 
+    // AI Glossary Analysis State
+    const [aiInputPath, setAiInputPath] = useState('');
+    const [aiPercent, setAiPercent] = useState(30);
+    const [aiLines, setAiLines] = useState<number | undefined>(undefined);
+    const [aiStatus, setAiStatus] = useState<any>({ status: 'idle', progress: 0, total: 0, message: '', results: [] });
+    const [aiMinFreq, setAiMinFreq] = useState(2);
+    const [aiFilename, setAiFilename] = useState('auto_glossary');
+    const [aiLogs, setAiLogs] = useState<string[]>([]);
+    const [aiUseTempConfig, setAiUseTempConfig] = useState(false);
+    const [aiTempPlatform, setAiTempPlatform] = useState('');
+    const [aiTempApiKey, setAiTempApiKey] = useState('');
+    const [aiTempApiUrl, setAiTempApiUrl] = useState('');
+    const [aiTempModel, setAiTempModel] = useState('');
+    const [aiTempThreads, setAiTempThreads] = useState<number>(5);
+
     // Refs
     const draftTimerRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -62,6 +77,28 @@ export const Rules: React.FC = () => {
         loadProfiles();
         checkDrafts();
     }, []);
+
+    // 切换到AI术语分析标签页时加载当前状态
+    useEffect(() => {
+        if (activeTab === 'ai_glossary') {
+            const loadAnalysisStatus = async () => {
+                try {
+                    const status = await DataService.getAnalysisStatus();
+                    setAiStatus(status);
+                    if (status.logs && Array.isArray(status.logs)) {
+                        setAiLogs(status.logs);
+                    }
+                    // 如果正在运行，继续轮询
+                    if (status.status === 'running') {
+                        pollAnalysisStatus();
+                    }
+                } catch (e) {
+                    console.error("Failed to load analysis status", e);
+                }
+            };
+            loadAnalysisStatus();
+        }
+    }, [activeTab]);
 
     const loadProfiles = async () => {
         try {
@@ -317,6 +354,62 @@ export const Rules: React.FC = () => {
         triggerDraftSave();
     };
 
+    // --- AI Glossary Analysis Functions ---
+    const startAiAnalysis = async () => {
+        if (!aiInputPath) { alert('请输入文件路径'); return; }
+        try {
+            await DataService.startGlossaryAnalysis(
+                aiInputPath, aiPercent, aiLines,
+                aiUseTempConfig, aiTempPlatform, aiTempApiKey, aiTempApiUrl, aiTempModel, aiTempThreads
+            );
+            pollAnalysisStatus();
+        } catch (e: any) {
+            setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 错误: ${e.message}`]);
+        }
+    };
+
+    const pollAnalysisStatus = () => {
+        const poll = async () => {
+            try {
+                const status = await DataService.getAnalysisStatus();
+                setAiStatus(status);
+                // 从后端获取日志
+                if (status.logs && Array.isArray(status.logs)) {
+                    setAiLogs(status.logs);
+                }
+                if (status.status === 'running') {
+                    setTimeout(poll, 1000);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        poll();
+    };
+
+    const stopAiAnalysis = async () => {
+        try {
+            await DataService.stopGlossaryAnalysis();
+            setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 已停止分析`]);
+        } catch (e: any) {
+            setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 停止失败: ${e.message}`]);
+        }
+    };
+
+    const saveAiResults = async () => {
+        try {
+            const result = await DataService.saveAnalysisResults(aiMinFreq, aiFilename);
+            setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${result.message}`]);
+            alert(result.message);
+            // Reload glossary data
+            const g = await DataService.getGlossary();
+            setGlossary(g);
+        } catch (e: any) {
+            setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 保存失败: ${e.message}`]);
+            alert('保存失败: ' + e.message);
+        }
+    };
+
     // --- Renderers ---
 
     const isLightCityTheme = ['herrscher_of_human', 'elysia', 'pardofelis', 'griseo'].includes(activeTheme);
@@ -416,7 +509,7 @@ export const Rules: React.FC = () => {
                         )}
                     </div>
 
-                    <button 
+                    <button
                         onClick={handleSave}
                         disabled={saving}
                         className="flex items-center gap-2 bg-primary hover:bg-cyan-400 text-slate-900 px-4 py-2 rounded-lg font-bold transition-colors shadow-lg shadow-cyan-500/20 disabled:opacity-50"
@@ -435,6 +528,7 @@ export const Rules: React.FC = () => {
                 <TabButton id="world" icon={Map} label={t('feature_world_building_switch')} />
                 <TabButton id="style" icon={PenTool} label={t('feature_writing_style_switch')} />
                 <TabButton id="example" icon={Languages} label={t('feature_translation_example_switch')} />
+                <TabButton id="ai_glossary" icon={Sparkles} label={t('ui_ai_glossary')} />
             </div>
 
             {/* Content Area */}
@@ -626,6 +720,173 @@ export const Rules: React.FC = () => {
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'ai_glossary' && (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                {/* Warning */}
+                                <div className={`p-3 rounded-lg border ${isLightCityTheme ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-yellow-900/20 border-yellow-700/50 text-yellow-300'}`}>
+                                    <div className="flex items-center gap-2">
+                                        <AlertTriangle size={16} />
+                                        <span className="text-sm">{t('ai_glossary_warning')}</span>
+                                    </div>
+                                </div>
+
+                                {/* Input Controls */}
+                                <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/40 border-pink-200/50' : 'bg-slate-900/50 border-slate-800'}`}>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_input_path')}</label>
+                                            <input type="text" value={aiInputPath} onChange={(e) => setAiInputPath(e.target.value)}
+                                                className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-cyan-500/50 outline-none"
+                                                placeholder="C:/path/to/file.epub" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_percent')}</label>
+                                                <input type="number" value={aiPercent} onChange={(e) => setAiPercent(Number(e.target.value))}
+                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" min={1} max={100} />
+                                            </div>
+                                            <div>
+                                                <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_lines')}</label>
+                                                <input type="number" value={aiLines || ''} onChange={(e) => setAiLines(e.target.value ? Number(e.target.value) : undefined)}
+                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" placeholder="可选" />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* API Config Selection */}
+                                    <div className="mt-4 pt-4 border-t border-slate-700">
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>
+                                                {t('ai_glossary_api_config')}:
+                                            </label>
+                                            <button
+                                                onClick={() => setAiUseTempConfig(false)}
+                                                className={`px-3 py-1 text-sm rounded transition-all ${!aiUseTempConfig
+                                                    ? 'font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                                style={!aiUseTempConfig ? { backgroundColor: `${themeColor}20`, color: themeColor, border: `1px solid ${themeColor}40` } : { border: '1px solid transparent' }}
+                                            >
+                                                {t('ai_glossary_use_current')}
+                                            </button>
+                                            <button
+                                                onClick={() => setAiUseTempConfig(true)}
+                                                className={`px-3 py-1 text-sm rounded transition-all ${aiUseTempConfig
+                                                    ? 'font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                                style={aiUseTempConfig ? { backgroundColor: `${themeColor}20`, color: themeColor, border: `1px solid ${themeColor}40` } : { border: '1px solid transparent' }}
+                                            >
+                                                {t('ai_glossary_use_temp')}
+                                            </button>
+                                        </div>
+
+                                        {aiUseTempConfig && (
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                                                <div>
+                                                    <label className="text-xs text-slate-400">{t('ai_glossary_temp_platform')}</label>
+                                                    <input type="text" value={aiTempPlatform} onChange={(e) => setAiTempPlatform(e.target.value)}
+                                                        className="w-full mt-1 px-2 py-1.5 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none"
+                                                        placeholder="openai / anthropic / google" />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-slate-400">{t('ai_glossary_temp_model')}</label>
+                                                    <input type="text" value={aiTempModel} onChange={(e) => setAiTempModel(e.target.value)}
+                                                        className="w-full mt-1 px-2 py-1.5 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none"
+                                                        placeholder="gpt-4o / claude-3-5-sonnet" />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-slate-400">{t('ai_glossary_temp_threads')}</label>
+                                                    <input type="number" value={aiTempThreads} onChange={(e) => setAiTempThreads(Number(e.target.value))}
+                                                        className="w-full mt-1 px-2 py-1.5 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none"
+                                                        min={1} max={100} placeholder="5" />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-slate-400">{t('ai_glossary_temp_url')}</label>
+                                                    <input type="text" value={aiTempApiUrl} onChange={(e) => setAiTempApiUrl(e.target.value)}
+                                                        className="w-full mt-1 px-2 py-1.5 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none"
+                                                        placeholder="https://api.openai.com" />
+                                                </div>
+                                                <div className="md:col-span-2">
+                                                    <label className="text-xs text-slate-400">{t('ai_glossary_temp_key')}</label>
+                                                    <input type="password" value={aiTempApiKey} onChange={(e) => setAiTempApiKey(e.target.value)}
+                                                        className="w-full mt-1 px-2 py-1.5 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none"
+                                                        placeholder="sk-..." />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex gap-2 mt-4">
+                                        <button onClick={startAiAnalysis} disabled={aiStatus.status === 'running'}
+                                            className="flex items-center gap-2 px-4 py-2 rounded font-bold transition-all hover:scale-105 disabled:opacity-50"
+                                            style={{ backgroundColor: `${themeColor}20`, color: themeColor, border: `1px solid ${themeColor}40` }}>
+                                            <Play size={16} /> {t('ai_glossary_start')}
+                                        </button>
+                                        <button onClick={stopAiAnalysis} disabled={aiStatus.status !== 'running'}
+                                            className="flex items-center gap-2 px-4 py-2 rounded font-bold transition-all hover:scale-105 disabled:opacity-50 bg-red-900/20 text-red-400 border border-red-700/50">
+                                            <Square size={16} /> {t('ai_glossary_stop')}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Status & Logs */}
+                                <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/40 border-pink-200/50' : 'bg-slate-900/50 border-slate-800'}`}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_status')}: {aiStatus.message || t(`ai_glossary_${aiStatus.status}`)}</span>
+                                        {aiStatus.total > 0 && <span className="text-sm text-slate-400">{aiStatus.progress}/{aiStatus.total}</span>}
+                                    </div>
+                                    {aiStatus.total > 0 && (
+                                        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                                            <div className="h-full transition-all" style={{ width: `${(aiStatus.progress / aiStatus.total) * 100}%`, backgroundColor: themeColor }} />
+                                        </div>
+                                    )}
+                                    <div className="mt-3 h-32 overflow-y-auto bg-slate-950 rounded p-2 text-xs font-mono text-slate-400">
+                                        {aiLogs.map((log, i) => <div key={i}>{log}</div>)}
+                                    </div>
+                                </div>
+
+                                {/* Results Table */}
+                                {aiStatus.status === 'completed' && aiStatus.results.length > 0 && (
+                                    <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/40 border-pink-200/50' : 'bg-slate-900/50 border-slate-800'}`}>
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>
+                                                {t('ai_glossary_results')} ({aiStatus.results.length})
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <label className="text-xs text-slate-400">{t('ai_glossary_min_freq')}:</label>
+                                                <input type="number" value={aiMinFreq} onChange={(e) => setAiMinFreq(Number(e.target.value))}
+                                                    className="w-16 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" min={1} />
+                                                <input type="text" value={aiFilename} onChange={(e) => setAiFilename(e.target.value)}
+                                                    className="w-32 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" placeholder="filename" />
+                                                <button onClick={saveAiResults}
+                                                    className="flex items-center gap-1 px-3 py-1 rounded font-bold text-sm transition-all hover:scale-105"
+                                                    style={{ backgroundColor: `${themeColor}20`, color: themeColor, border: `1px solid ${themeColor}40` }}>
+                                                    <Save size={14} /> {t('ai_glossary_save')}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="max-h-64 overflow-y-auto">
+                                            <table className="w-full text-sm">
+                                                <thead className="sticky top-0 bg-slate-900">
+                                                    <tr className="text-slate-400 text-left">
+                                                        <th className="p-2">{t('ai_glossary_term')}</th>
+                                                        <th className="p-2">{t('ai_glossary_type')}</th>
+                                                        <th className="p-2 text-right">{t('ai_glossary_count')}</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {aiStatus.results.filter((r: any) => r.count >= aiMinFreq).map((r: any, i: number) => (
+                                                        <tr key={i} className="border-t border-slate-800 hover:bg-slate-800/50">
+                                                            <td className="p-2 text-cyan-300">{r.src}</td>
+                                                            <td className="p-2 text-slate-400">{r.type}</td>
+                                                            <td className="p-2 text-right text-yellow-400">{r.count}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>

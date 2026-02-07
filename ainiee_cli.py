@@ -3483,10 +3483,11 @@ class CLIMenu:
             table.add_section()
             table.add_row("[cyan]9.[/]", f"{i18n.get('menu_switch_profile_short')} ([yellow]{self.active_rules_profile_name}[/yellow])")
             table.add_row("[cyan]10.[/]", f"{i18n.get('menu_system_prompts') or 'System Prompts'} ([dim]{i18n.get('label_readonly') or 'Read Only'}[/dim])")
+            table.add_row("[cyan]11.[/]", f"{i18n.get('menu_ai_glossary_analysis') or 'AI自动分析术语表'}")
 
             console.print(table); console.print(f"\n[dim]0. {i18n.get('menu_exit')}[/dim]")
-            
-            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(11)], show_choices=False)
+
+            choice = IntPrompt.ask(i18n.get('prompt_select'), choices=[str(i) for i in range(12)], show_choices=False)
             console.print("\n")
             
             if choice == 0: break
@@ -3500,6 +3501,424 @@ class CLIMenu:
             elif choice == 8: self.manage_feature_content("translation_example_switch", "translation_example_data", i18n.get("feature_translation_example_switch"), is_list=True)
             elif choice == 9: self.rules_profiles_menu()
             elif choice == 10: self.select_prompt_template("System", None)
+            elif choice == 11: self.run_glossary_analysis_task()
+
+    def run_glossary_analysis_task(self):
+        """AI自动分析术语表功能"""
+        self.display_banner()
+        console.print(Panel(f"[bold]{i18n.get('menu_ai_glossary_analysis') or 'AI自动分析术语表'}[/bold]"))
+
+        # 显示警告信息
+        console.print(Panel(
+            f"[bold yellow]⚠ {i18n.get('msg_glossary_analysis_warning') or '当前暂不建议使用本地LLM进行分析，可能存在质量问题。'}[/bold yellow]\n"
+            f"[yellow]{i18n.get('msg_glossary_analysis_hint') or '尽可能使用在线API进行分析，但可能会产生相关API费用。'}[/yellow]\n\n"
+            f"[dim]{i18n.get('msg_glossary_accuracy_note') or '注意：分析结果的准确程度取决于您使用的API模型能力，此功能仅提供初步分析结果，建议人工审核后再使用。'}[/dim]",
+            border_style="yellow"
+        ))
+
+        # 选择文件
+        console.print(f"\n[cyan]{i18n.get('prompt_select_file_to_analyze') or '请选择要分析的文件:'}[/cyan]")
+        selected_path = self.file_selector.select_path(select_file=True, select_dir=True)
+
+        if not selected_path or not os.path.exists(selected_path):
+            console.print(f"[red]{i18n.get('err_not_file') or '错误: 路径不存在'}[/red]")
+            Prompt.ask(f"\n{i18n.get('msg_press_enter')}")
+            return
+
+        # 选择分析范围
+        console.print(f"\n[cyan]{i18n.get('prompt_select_analysis_range') or '请选择分析范围:'}[/cyan]")
+        table = Table(show_header=False, box=None)
+        table.add_row("[cyan]1.[/]", i18n.get('option_full_book') or "整本书 (100%)")
+        table.add_row("[cyan]2.[/]", i18n.get('option_half_book') or "一半 (50%)")
+        table.add_row("[cyan]3.[/]", i18n.get('option_custom_percent') or "自定义比例")
+        table.add_row("[cyan]4.[/]", i18n.get('option_custom_lines') or "自定义行数")
+        console.print(table)
+        console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+
+        range_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["0", "1", "2", "3", "4"], show_choices=False)
+
+        if range_choice == 0:
+            return
+
+        analysis_percent = 100
+        analysis_lines = None
+
+        if range_choice == 2:
+            analysis_percent = 50
+        elif range_choice == 3:
+            analysis_percent = IntPrompt.ask(
+                i18n.get('prompt_input_percent') or "请输入百分比 (1-100)",
+                default=30
+            )
+            analysis_percent = max(1, min(100, analysis_percent))
+        elif range_choice == 4:
+            analysis_lines = IntPrompt.ask(
+                i18n.get('prompt_input_lines') or "请输入行数",
+                default=100
+            )
+            analysis_lines = max(1, analysis_lines)
+
+        # 选择API配置
+        console.print(f"\n[cyan]{i18n.get('prompt_select_api_config') or '请选择API配置:'}[/cyan]")
+        table = Table(show_header=False, box=None)
+        table.add_row("[cyan]1.[/]", i18n.get('option_use_current_config') or "使用当前配置")
+        table.add_row("[cyan]2.[/]", i18n.get('option_use_temp_config') or "使用临时配置")
+        console.print(table)
+
+        api_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["1", "2"], show_choices=False, default=1)
+
+        temp_platform_config = None
+        if api_choice == 2:
+            temp_platform_config = self._configure_temp_api_for_analysis()
+            if not temp_platform_config:
+                console.print(f"[yellow]{i18n.get('msg_using_current_config') or '未配置临时API，将使用当前配置'}[/yellow]")
+
+        # 开始分析
+        console.print(f"\n[bold green]{i18n.get('msg_starting_analysis') or '开始分析...'}[/bold green]")
+
+        try:
+            self._execute_glossary_analysis(
+                selected_path,
+                analysis_percent,
+                analysis_lines,
+                temp_platform_config
+            )
+        except Exception as e:
+            console.print(f"[red]{i18n.get('msg_analysis_error') or '分析出错'}: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+
+        Prompt.ask(f"\n{i18n.get('msg_press_enter')}")
+
+    def _configure_temp_api_for_analysis(self):
+        """配置临时API用于术语分析"""
+        try:
+            preset_path = os.path.join(PROJECT_ROOT, "Resource", "platforms", "preset.json")
+            with open(preset_path, 'r', encoding='utf-8') as f:
+                preset = json.load(f)
+
+            platforms = preset.get("platforms", {})
+            online_platforms = {k: v for k, v in platforms.items() if v.get("group") in ["online", "custom"]}
+
+            sorted_keys = sorted(online_platforms.keys())
+            console.print(Panel(i18n.get("prompt_temp_api_platform") or "选择临时API平台"))
+            p_table = Table(show_header=False, box=None)
+            for i, k in enumerate(sorted_keys):
+                p_table.add_row(f"[cyan]{i+1}.[/]", online_platforms[k].get("name", k))
+            console.print(p_table)
+            console.print(f"\n[dim]0. {i18n.get('menu_back')}[/dim]")
+
+            plat_idx = IntPrompt.ask(i18n.get('prompt_select'), default=0)
+            if plat_idx == 0 or plat_idx > len(sorted_keys):
+                return None
+
+            sel_tag = sorted_keys[plat_idx - 1]
+            sel_conf = online_platforms[sel_tag].copy()
+
+            if "api_key" in sel_conf.get("key_in_settings", []) or "api_key" in sel_conf:
+                sel_conf["api_key"] = Prompt.ask(i18n.get("prompt_temp_api_key") or "API Key", password=True).strip()
+
+            if "api_url" in sel_conf.get("key_in_settings", []) or sel_tag == "custom":
+                sel_conf["api_url"] = Prompt.ask(i18n.get("prompt_temp_api_url") or "API URL", default=sel_conf.get("api_url", "")).strip()
+
+            if "model" in sel_conf.get("key_in_settings", []):
+                model_options = sel_conf.get("model_datas", [])
+                if model_options:
+                    console.print(f"\n[cyan]Suggested Models:[/] {', '.join(model_options[:5])}")
+                sel_conf["model"] = Prompt.ask(i18n.get("prompt_temp_model") or "Model", default=sel_conf.get("model", "")).strip()
+
+            # 询问并发数
+            thread_count = IntPrompt.ask(
+                i18n.get("msg_thread_count") or "并发线程数",
+                default=5
+            )
+            sel_conf["thread_counts"] = thread_count
+
+            sel_conf["target_platform"] = sel_tag
+            console.print(f"[green]{i18n.get('msg_temp_api_ok') or '临时配置已生效'}[/green]")
+            return sel_conf
+
+        except Exception as e:
+            console.print(f"[red]配置临时API失败: {e}[/red]")
+            return None
+
+    def _execute_glossary_analysis(self, input_path, analysis_percent, analysis_lines, temp_config=None):
+        """执行术语表分析的核心逻辑"""
+        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+
+        # 读取文件内容
+        console.print(f"[cyan]{i18n.get('msg_reading_file') or '正在读取文件...'}[/cyan]")
+
+        project_type = self.config.get("translation_project", "auto")
+        cache_data = self.file_reader.read_files(project_type, input_path, "")
+
+        if not cache_data:
+            console.print(f"[red]{i18n.get('msg_no_content') or '无法读取文件内容'}[/red]")
+            return
+
+        # 获取所有文本行
+        all_items = list(cache_data.items_iter())
+        total_lines = len(all_items)
+
+        if total_lines == 0:
+            console.print(f"[red]{i18n.get('msg_no_text_found') or '未找到可分析的文本'}[/red]")
+            return
+
+        # 计算要分析的行数
+        if analysis_lines:
+            lines_to_analyze = min(analysis_lines, total_lines)
+        else:
+            lines_to_analyze = int(total_lines * analysis_percent / 100)
+
+        lines_to_analyze = max(1, lines_to_analyze)
+
+        console.print(f"[green]{i18n.get('msg_total_lines') or '总行数'}: {total_lines}[/green]")
+        console.print(f"[green]{i18n.get('msg_lines_to_analyze') or '将分析行数'}: {lines_to_analyze}[/green]")
+
+        # 获取要分析的文本
+        items_to_analyze = all_items[:lines_to_analyze]
+
+        # 分批处理
+        batch_size = self.config.get("lines_limit", 20)
+        batches = [items_to_analyze[i:i+batch_size] for i in range(0, len(items_to_analyze), batch_size)]
+
+        console.print(f"[cyan]{i18n.get('msg_batch_count') or '批次数量'}: {len(batches)}[/cyan]")
+
+        # 准备提示词
+        prompt_file = os.path.join(PROJECT_ROOT, "Resource", "Prompt", "System", "glossary_extract_zh.txt")
+        if not os.path.exists(prompt_file):
+            prompt_file = os.path.join(PROJECT_ROOT, "Resource", "Prompt", "System", "glossary_extract_en.txt")
+
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            system_prompt = f.read()
+
+        # 配置请求
+        task_config = TaskConfig()
+        task_config.load_config_from_dict(self.config)
+        task_config.prepare_for_translation(TaskType.TRANSLATION)
+
+        # 使用临时配置或当前配置
+        if temp_config:
+            platform_config = temp_config
+            console.print(f"[cyan]{i18n.get('msg_using_temp_config') or '使用临时API配置'}: {temp_config.get('target_platform')}[/cyan]")
+        else:
+            platform_config = task_config.get_platform_configuration("translationReq")
+            console.print(f"[cyan]{i18n.get('msg_using_current_config') or '使用当前配置'}: {platform_config.get('target_platform')}[/cyan]")
+
+        # 获取用户配置的线程数 (临时配置优先)
+        if temp_config and temp_config.get("thread_counts"):
+            thread_count = temp_config.get("thread_counts")
+        else:
+            thread_count = task_config.actual_thread_counts
+        console.print(f"[cyan]{i18n.get('msg_thread_count') or '并发线程数'}: {thread_count}[/cyan]")
+
+        # 收集所有结果 (线程安全)
+        all_terms = []
+        terms_lock = threading.Lock()
+        completed_count = [0]  # 使用列表以便在闭包中修改
+        error_count = [0]
+
+        def analyze_batch(batch_info):
+            """单个批次的分析任务"""
+            batch_idx, batch = batch_info
+            text_content = "\n".join([item.source_text for item in batch])
+            messages = [{"role": "user", "content": text_content}]
+
+            try:
+                requester = LLMRequester()
+                skip, _, response, prompt_tokens, completion_tokens = requester.sent_request(
+                    messages, system_prompt, platform_config
+                )
+
+                if not skip and response:
+                    terms = self._parse_glossary_response(response)
+                    with terms_lock:
+                        all_terms.extend(terms)
+                        completed_count[0] += 1
+                    console.print(f"[green]√ [{batch_idx+1:03d}] 完成 | 发现 {len(terms)} 个术语 | {prompt_tokens}+{completion_tokens}T[/green]")
+                    return len(terms)
+                else:
+                    with terms_lock:
+                        error_count[0] += 1
+                    console.print(f"[red]✗ [{batch_idx+1:03d}] 失败[/red]")
+                    return 0
+            except Exception as e:
+                with terms_lock:
+                    error_count[0] += 1
+                console.print(f"[red]✗ [{batch_idx+1:03d}] 错误: {e}[/red]")
+                return 0
+
+        # 使用线程池并发执行
+        console.print(f"\n[bold cyan]{i18n.get('msg_starting_concurrent') or '开始并发分析...'}[/bold cyan]\n")
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+            batch_infos = list(enumerate(batches))
+            list(executor.map(analyze_batch, batch_infos))
+
+        console.print(f"\n[cyan]完成: {completed_count[0]}/{len(batches)}, 失败: {error_count[0]}[/cyan]")
+
+        # 统计词频
+        term_freq = self._calculate_term_frequency(all_terms)
+
+        if not term_freq:
+            console.print(f"[yellow]{i18n.get('msg_no_terms_found') or '未找到专有名词'}[/yellow]")
+            return
+
+        # 显示统计结果
+        console.print(f"\n[bold green]{i18n.get('msg_analysis_complete') or '分析完成!'}[/bold green]")
+        console.print(f"[cyan]{i18n.get('msg_found_terms') or '发现专有名词'}: {len(term_freq)}[/cyan]")
+
+        # 显示词频统计表
+        self._display_term_frequency(term_freq)
+
+        # 让用户选择最低词频阈值
+        console.print(f"\n[cyan]{i18n.get('prompt_min_frequency') or '请输入最低词频阈值 (保留出现次数>=该值的词):'}[/cyan]")
+        min_freq = IntPrompt.ask(i18n.get('prompt_threshold') or "阈值", default=2)
+
+        # 过滤低频词
+        filtered_terms = {k: v for k, v in term_freq.items() if v['count'] >= min_freq}
+
+        console.print(f"[green]{i18n.get('msg_before_filter') or '过滤前'}: {len(term_freq)}[/green]")
+        console.print(f"[green]{i18n.get('msg_after_filter') or '过滤后'}: {len(filtered_terms)}[/green]")
+
+        if not filtered_terms:
+            console.print(f"[yellow]{i18n.get('msg_no_terms_after_filter') or '过滤后无剩余词条'}[/yellow]")
+            return
+
+        # 生成术语表文件
+        input_basename = os.path.splitext(os.path.basename(input_path))[0]
+        input_dir = os.path.dirname(input_path) or "."
+
+        glossary_path = os.path.join(input_dir, f"{input_basename}_自动术语.json")
+        log_path = os.path.join(input_dir, f"{input_basename}_分析日志.txt")
+
+        # 保存术语表
+        glossary_data = self._generate_glossary_json(filtered_terms)
+        with open(glossary_path, 'w', encoding='utf-8') as f:
+            json.dump(glossary_data, f, indent=2, ensure_ascii=False)
+
+        console.print(f"[bold green]{i18n.get('msg_glossary_saved') or '术语表已保存'}: {glossary_path}[/bold green]")
+
+        # 保存分析日志
+        self._save_glossary_analysis_log(
+            log_path, input_path, analysis_percent, analysis_lines,
+            term_freq, filtered_terms, min_freq
+        )
+
+        console.print(f"[green]{i18n.get('msg_log_saved') or '分析日志已保存'}: {log_path}[/green]")
+
+        # 询问是否导入到当前术语表
+        if Confirm.ask(i18n.get('prompt_import_glossary') or "是否将术语表导入到当前配置?", default=True):
+            existing_data = self.config.get("prompt_dictionary_data", [])
+            existing_data.extend(glossary_data)
+            self.config["prompt_dictionary_data"] = existing_data
+            self.config["prompt_dictionary_switch"] = True
+            self.save_config()
+            console.print(f"[bold green]{i18n.get('msg_glossary_imported') or '术语表已导入!'}[/bold green]")
+
+    def _parse_glossary_response(self, response):
+        """解析LLM返回的术语表JSON"""
+        import re
+        terms = []
+
+        try:
+            # 尝试提取JSON数组
+            json_match = re.search(r'\[[\s\S]*\]', response)
+            if json_match:
+                json_str = json_match.group()
+                parsed = json.loads(json_str)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        if isinstance(item, dict) and 'src' in item:
+                            terms.append({
+                                'src': item.get('src', ''),
+                                'type': item.get('type', '专有名词')
+                            })
+        except json.JSONDecodeError:
+            pass
+        except Exception:
+            pass
+
+        return terms
+
+    def _calculate_term_frequency(self, terms):
+        """计算词频统计"""
+        freq = {}
+        for term in terms:
+            src = term.get('src', '').strip()
+            if not src:
+                continue
+
+            if src in freq:
+                freq[src]['count'] += 1
+            else:
+                freq[src] = {
+                    'count': 1,
+                    'type': term.get('type', '专有名词')
+                }
+
+        # 按词频排序
+        sorted_freq = dict(sorted(freq.items(), key=lambda x: x[1]['count'], reverse=True))
+        return sorted_freq
+
+    def _display_term_frequency(self, term_freq):
+        """显示词频统计表"""
+        table = Table(title=i18n.get('label_term_frequency') or "词频统计", show_lines=True)
+        table.add_column(i18n.get('label_term') or "专有名词", style="cyan")
+        table.add_column(i18n.get('label_type') or "类型", style="green")
+        table.add_column(i18n.get('label_frequency') or "出现次数", style="yellow", justify="right")
+
+        # 只显示前20个
+        for i, (term, data) in enumerate(term_freq.items()):
+            if i >= 20:
+                table.add_row("...", "...", f"(还有 {len(term_freq) - 20} 项)")
+                break
+            table.add_row(term, data['type'], str(data['count']))
+
+        console.print(table)
+
+    def _generate_glossary_json(self, filtered_terms):
+        """生成标准术语表JSON格式"""
+        glossary = []
+        for term, data in filtered_terms.items():
+            glossary.append({
+                "src": term,
+                "dst": "",
+                "info": data['type']
+            })
+        return glossary
+
+    def _save_glossary_analysis_log(self, log_path, input_path, percent, lines, all_terms, filtered, threshold):
+        """保存分析日志文件"""
+        from datetime import datetime
+
+        range_str = f"前{lines}行" if lines else f"前{percent}%"
+
+        log_content = f"""=== AI术语表分析日志 ===
+分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+分析文件: {os.path.basename(input_path)}
+分析范围: {range_str}
+
+【重要提示】
+分析结果的准确程度取决于您使用的API模型能力，此功能仅提供初步分析结果。
+建议人工审核后再使用，不建议直接作为最终术语表。
+
+=== 词频统计 ===
+"""
+        for term, data in all_terms.items():
+            log_content += f"{term} ({data['type']}): 出现 {data['count']} 次\n"
+
+        log_content += f"""
+=== 过滤设置 ===
+最低词频阈值: {threshold}次
+过滤前总数: {len(all_terms)}
+过滤后总数: {len(filtered)}
+"""
+
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(log_content)
 
     def plugin_settings_menu(self):
         while True:

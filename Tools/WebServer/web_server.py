@@ -7,6 +7,7 @@ import subprocess
 import time
 import collections
 import locale
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 # --- Pre-emptive Import for FastAPI & Pydantic ---
@@ -742,6 +743,317 @@ async def get_translation_example():
 async def save_translation_example(items: List[TranslationExampleItem]):
     save_rule_generic("translation_example_data", [item.dict() for item in items])
     return {"message": "Translation examples saved."}
+
+# --- AI Glossary Analysis Endpoints ---
+
+class GlossaryAnalysisRequest(BaseModel):
+    input_path: str
+    analysis_percent: int = 100
+    analysis_lines: Optional[int] = None
+    use_temp_config: bool = False
+    temp_platform: Optional[str] = None
+    temp_api_key: Optional[str] = None
+    temp_api_url: Optional[str] = None
+    temp_model: Optional[str] = None
+    temp_threads: Optional[int] = None
+
+class GlossaryAnalysisStatus(BaseModel):
+    status: str  # 'idle', 'running', 'completed', 'error'
+    progress: int = 0
+    total: int = 0
+    message: str = ""
+    results: List[dict] = []
+
+# Global state for analysis task
+_analysis_state = {
+    "status": "idle",
+    "progress": 0,
+    "total": 0,
+    "message": "",
+    "results": [],
+    "logs": []
+}
+
+@app.get("/api/glossary/analysis/status")
+async def get_analysis_status():
+    return _analysis_state
+
+@app.post("/api/glossary/analysis/start")
+async def start_glossary_analysis(request: GlossaryAnalysisRequest):
+    global _analysis_state
+
+    if _analysis_state["status"] == "running":
+        raise HTTPException(status_code=400, detail="Analysis already running")
+
+    # Reset state
+    _analysis_state = {
+        "status": "running",
+        "progress": 0,
+        "total": 0,
+        "message": "初始化中...",
+        "results": [],
+        "logs": [f"[{datetime.now().strftime('%H:%M:%S')}] 开始分析: {request.input_path}"]
+    }
+
+    # Start analysis in background thread
+    import threading
+    thread = threading.Thread(
+        target=_run_glossary_analysis,
+        args=(request.input_path, request.analysis_percent, request.analysis_lines,
+              request.use_temp_config, request.temp_platform, request.temp_api_key,
+              request.temp_api_url, request.temp_model, request.temp_threads)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return {"message": "Analysis started"}
+
+def _add_analysis_log(message: str):
+    """添加分析日志"""
+    global _analysis_state
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    _analysis_state["logs"].append(f"[{timestamp}] {message}")
+
+def _run_glossary_analysis(input_path: str, analysis_percent: int, analysis_lines: Optional[int],
+                           use_temp: bool = False, temp_platform: str = None, temp_key: str = None,
+                           temp_url: str = None, temp_model: str = None, temp_threads: int = None):
+    global _analysis_state
+
+    try:
+        from ModuleFolders.Domain.FileReader.FileReader import FileReader
+        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+        import concurrent.futures
+        import threading
+        import re
+
+        # Load config
+        config = {}
+        config_file = get_active_profile_path()
+        if os.path.exists(config_file):
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+        # Read file
+        _analysis_state["message"] = "正在读取文件..."
+        _add_analysis_log("正在读取文件...")
+        file_reader = FileReader()
+        project_type = config.get("translation_project", "auto")
+        cache_data = file_reader.read_files(project_type, input_path, "")
+
+        if not cache_data:
+            _analysis_state["status"] = "error"
+            _analysis_state["message"] = "无法读取文件内容"
+            _add_analysis_log("错误: 无法读取文件内容")
+            return
+
+        all_items = list(cache_data.items_iter())
+        total_lines = len(all_items)
+
+        if total_lines == 0:
+            _analysis_state["status"] = "error"
+            _analysis_state["message"] = "未找到可分析的文本"
+            _add_analysis_log("错误: 未找到可分析的文本")
+            return
+
+        # Calculate lines to analyze
+        if analysis_lines:
+            lines_to_analyze = min(analysis_lines, total_lines)
+        else:
+            lines_to_analyze = int(total_lines * analysis_percent / 100)
+        lines_to_analyze = max(1, lines_to_analyze)
+
+        _add_analysis_log(f"总行数: {total_lines}, 将分析: {lines_to_analyze} 行")
+
+        items_to_analyze = all_items[:lines_to_analyze]
+        batch_size = config.get("lines_limit", 20)
+        batches = [items_to_analyze[i:i+batch_size] for i in range(0, len(items_to_analyze), batch_size)]
+
+        _analysis_state["total"] = len(batches)
+        _analysis_state["message"] = f"准备分析 {lines_to_analyze} 行文本，共 {len(batches)} 批次"
+        _add_analysis_log(f"共 {len(batches)} 批次，每批 {batch_size} 行")
+
+        # Load prompt
+        prompt_file = os.path.join(PROJECT_ROOT, "Resource", "Prompt", "System", "glossary_extract_zh.txt")
+        if not os.path.exists(prompt_file):
+            prompt_file = os.path.join(PROJECT_ROOT, "Resource", "Prompt", "System", "glossary_extract_en.txt")
+
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            system_prompt = f.read()
+
+        # Configure request
+        task_config = TaskConfig()
+        task_config.load_config_from_dict(config)
+        task_config.prepare_for_translation(TaskType.TRANSLATION)
+
+        # Use temp config or current config
+        if use_temp and temp_platform:
+            platform_config = {
+                "target_platform": temp_platform,
+                "api_key": temp_key or "",
+                "api_url": temp_url or "",
+                "model": temp_model or ""
+            }
+            _analysis_state["message"] = f"使用临时配置: {temp_platform}"
+            _add_analysis_log(f"使用临时配置: {temp_platform}, 模型: {temp_model or 'default'}")
+        else:
+            platform_config = task_config.get_platform_configuration("translationReq")
+            _add_analysis_log(f"使用当前配置: {platform_config.get('target_platform', 'unknown')}")
+
+        # Collect results
+        all_terms = []
+        terms_lock = threading.Lock()
+        # 只有在使用临时配置时才使用 temp_threads，否则使用当前配置的线程数
+        if use_temp and temp_threads and temp_threads > 0:
+            thread_count = temp_threads
+        else:
+            thread_count = task_config.actual_thread_counts
+        _add_analysis_log(f"并发线程数: {thread_count}")
+
+        def analyze_batch(batch_info):
+            batch_idx, batch = batch_info
+            text_content = "\n".join([item.source_text for item in batch])
+            messages = [{"role": "user", "content": text_content}]
+
+            try:
+                requester = LLMRequester()
+                skip, _, response, _, _ = requester.sent_request(messages, system_prompt, platform_config)
+
+                if not skip and response:
+                    terms = _parse_glossary_response(response)
+                    with terms_lock:
+                        all_terms.extend(terms)
+                        _analysis_state["progress"] += 1
+                        _analysis_state["message"] = f"已完成 {_analysis_state['progress']}/{_analysis_state['total']} 批次"
+            except Exception as e:
+                with terms_lock:
+                    _analysis_state["progress"] += 1
+
+        # Run analysis
+        _analysis_state["message"] = "开始并发分析..."
+        _add_analysis_log("开始并发分析...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+            batch_infos = list(enumerate(batches))
+            list(executor.map(analyze_batch, batch_infos))
+
+        # Calculate frequency
+        term_freq = _calculate_term_frequency(all_terms)
+
+        # Convert to list format
+        results = []
+        for term, data in term_freq.items():
+            results.append({
+                "src": term,
+                "type": data["type"],
+                "count": data["count"]
+            })
+
+        _analysis_state["status"] = "completed"
+        _analysis_state["message"] = f"分析完成，发现 {len(results)} 个专有名词"
+        _analysis_state["results"] = results
+        _add_analysis_log(f"分析完成! 发现 {len(results)} 个专有名词")
+
+    except Exception as e:
+        _analysis_state["status"] = "error"
+        _analysis_state["message"] = f"分析出错: {str(e)}"
+        _add_analysis_log(f"错误: {str(e)}")
+
+def _parse_glossary_response(response: str) -> list:
+    import re
+    terms = []
+    try:
+        json_match = re.search(r'\[[\s\S]*\]', response)
+        if json_match:
+            json_str = json_match.group()
+            parsed = json.loads(json_str)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and 'src' in item:
+                        terms.append({
+                            'src': item.get('src', ''),
+                            'type': item.get('type', '专有名词')
+                        })
+    except:
+        pass
+    return terms
+
+def _calculate_term_frequency(terms: list) -> dict:
+    freq = {}
+    for term in terms:
+        src = term.get('src', '').strip()
+        if not src:
+            continue
+        if src in freq:
+            freq[src]['count'] += 1
+        else:
+            freq[src] = {'count': 1, 'type': term.get('type', '专有名词')}
+    return dict(sorted(freq.items(), key=lambda x: x[1]['count'], reverse=True))
+
+@app.post("/api/glossary/analysis/stop")
+async def stop_glossary_analysis():
+    global _analysis_state
+    from ModuleFolders.Base.Base import Base
+    Base.work_status = Base.STATUS.STOPING
+    _analysis_state["status"] = "idle"
+    _analysis_state["message"] = "已停止"
+    return {"message": "Analysis stopped"}
+
+class SaveAnalysisRequest(BaseModel):
+    min_frequency: int = 1
+    filename: str = "auto_glossary"
+
+@app.post("/api/glossary/analysis/save")
+async def save_analysis_results(request: SaveAnalysisRequest):
+    """保存分析结果为新的rules_profile并自动切换"""
+    global _analysis_state, _config_cache
+
+    if _analysis_state["status"] != "completed":
+        raise HTTPException(status_code=400, detail="No completed analysis to save")
+
+    # Filter by frequency
+    filtered = [r for r in _analysis_state["results"] if r["count"] >= request.min_frequency]
+
+    if not filtered:
+        raise HTTPException(status_code=400, detail="No terms after filtering")
+
+    # Convert to glossary format
+    glossary_data = [{"src": r["src"], "dst": "", "info": r["type"]} for r in filtered]
+
+    # 新建一个 rules profile 文件
+    new_profile_name = request.filename
+    new_profile_path = os.path.join(RULES_PROFILES_PATH, f"{new_profile_name}.json")
+
+    # 确保目录存在
+    os.makedirs(RULES_PROFILES_PATH, exist_ok=True)
+
+    # 创建新的 rules profile，只包含术语表数据
+    new_rules_config = {
+        "prompt_dictionary_data": glossary_data
+    }
+
+    with open(new_profile_path, 'w', encoding='utf-8') as f:
+        json.dump(new_rules_config, f, indent=4, ensure_ascii=False)
+
+    # 自动切换到新创建的 rules profile
+    root_config = {}
+    if os.path.exists(ROOT_CONFIG_FILE):
+        with open(ROOT_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            root_config = json.load(f)
+
+    root_config["active_rules_profile"] = new_profile_name
+    with open(ROOT_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(root_config, f, indent=4, ensure_ascii=False)
+
+    # 清除缓存以便前端获取最新数据
+    _config_cache.clear()
+
+    return {
+        "message": f"已保存 {len(glossary_data)} 条术语到新配置 '{new_profile_name}'，并已自动切换",
+        "file": new_profile_path,
+        "profile": new_profile_name,
+        "count": len(glossary_data)
+    }
 
 # --- Plugin Management Endpoints ---
 

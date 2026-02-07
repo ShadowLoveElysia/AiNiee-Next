@@ -816,5 +816,58 @@ export const DataService = {
             console.error("API Error: browseDirectory", error);
             throw error;
         }
+    },
+
+    // --- AI Glossary Analysis ---
+    async startGlossaryAnalysis(
+        inputPath: string,
+        percent: number,
+        lines?: number,
+        useTempConfig?: boolean,
+        tempPlatform?: string,
+        tempApiKey?: string,
+        tempApiUrl?: string,
+        tempModel?: string,
+        tempThreads?: number
+    ): Promise<any> {
+        const res = await fetch(`${API_BASE}/glossary/analysis/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input_path: inputPath,
+                analysis_percent: percent,
+                analysis_lines: lines,
+                use_temp_config: useTempConfig,
+                temp_platform: tempPlatform,
+                temp_api_key: tempApiKey,
+                temp_api_url: tempApiUrl,
+                temp_model: tempModel,
+                temp_threads: tempThreads
+            })
+        });
+        if (!res.ok) throw new Error('Failed to start analysis');
+        return await res.json();
+    },
+
+    async getAnalysisStatus(): Promise<any> {
+        const res = await fetch(`${API_BASE}/glossary/analysis/status`);
+        if (!res.ok) throw new Error('Failed to get analysis status');
+        return await res.json();
+    },
+
+    async stopGlossaryAnalysis(): Promise<any> {
+        const res = await fetch(`${API_BASE}/glossary/analysis/stop`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to stop analysis');
+        return await res.json();
+    },
+
+    async saveAnalysisResults(minFrequency: number, filename: string): Promise<any> {
+        const res = await fetch(`${API_BASE}/glossary/analysis/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ min_frequency: minFrequency, filename })
+        });
+        if (!res.ok) throw new Error('Failed to save analysis');
+        return await res.json();
     }
 };

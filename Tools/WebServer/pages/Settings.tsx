@@ -181,8 +181,10 @@ export const Settings: React.FC = () => {
     setSaving(true);
     try {
         await DataService.saveConfig(config);
+        alert(t('msg_saved'));
     } catch (e) {
         console.error("Failed to save", e);
+        alert("Save failed.");
     } finally {
         setSaving(false);
     }
