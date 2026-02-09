@@ -1690,13 +1690,25 @@ class CLIMenu:
 
     def _fetch_github_status_async(self):
         """后台异步获取 GitHub 状态信息"""
+        self._github_fetch_event = threading.Event()
+        self._github_fetch_failed = False
+
         def fetch():
             try:
                 lang = getattr(i18n, 'lang', 'en')
                 info = self.update_manager.get_status_bar_info(lang)
-                self._cached_github_info = info
+                # 检查是否真的获取到了数据
+                if info and (info.get("commit_text") or info.get("release_text")):
+                    self._cached_github_info = info
+                    self._github_fetch_failed = False
+                else:
+                    self._cached_github_info = None
+                    self._github_fetch_failed = True
             except:
                 self._cached_github_info = None
+                self._github_fetch_failed = True
+            finally:
+                self._github_fetch_event.set()
 
         thread = threading.Thread(target=fetch, daemon=True)
         thread.start()
@@ -1789,12 +1801,22 @@ class CLIMenu:
             op_log_hint = f" [dim]({i18n.get('banner_op_log_hint_on') or '敏感信息已抹除'})[/dim]"
         else:
             op_log_hint = f" [dim]({i18n.get('banner_op_log_hint_off') or '建议开启以获得更准确的LLM分析'})[/dim]"
-        settings_line_4 = f"| [bold]{i18n.get('banner_op_log') or '操作记录'}:[/bold] {op_log_status}{op_log_hint} |"
+
+        # 自动AI校对状态 - 只在开启时显示，单独一行
+        auto_proofread_on = self.config.get("enable_auto_proofread", False)
+        auto_proofread_line = ""
+        if auto_proofread_on:
+            auto_proofread_hint = i18n.get('banner_auto_proofread_hint') or '翻译完成后自动调用AI校对，会产生额外的API费用，请注意API费用'
+            auto_proofread_line = f"\n| [bold]{i18n.get('banner_auto_proofread') or '自动校对'}:[/bold] [green]{conv_on_text}[/green] [dim]({auto_proofread_hint})[/dim] |"
+
+        settings_line_4 = f"| [bold]{i18n.get('banner_op_log') or '操作记录'}:[/bold] {op_log_status}{op_log_hint} |{auto_proofread_line}"
 
         # GitHub 状态栏
         github_status_line = ""
         if self.config.get("enable_github_status_bar", True):
             github_info = getattr(self, '_cached_github_info', None)
+            github_fetch_failed = getattr(self, '_github_fetch_failed', False)
+
             if github_info:
                 parts = []
                 if github_info.get("commit_text"):
@@ -1803,6 +1825,10 @@ class CLIMenu:
                     parts.append(f"[dim]{github_info['release_text']}[/dim]")
                 if parts:
                     github_status_line = "\n" + " | ".join(parts)
+            elif github_fetch_failed:
+                # 获取失败时显示错误信息
+                fail_msg = i18n.get('banner_github_fetch_failed') or '无法连接至Github，获取最新Commit和Rls失败'
+                github_status_line = f"\n[dim red]{fail_msg}[/dim red]"
 
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
@@ -1860,6 +1886,9 @@ class CLIMenu:
         # 启动时获取 GitHub 状态信息 (后台异步)
         if self.config.get("enable_github_status_bar", True):
             self._fetch_github_status_async()
+            # 等待异步获取完成（最多等待3秒）
+            if hasattr(self, '_github_fetch_event'):
+                self._github_fetch_event.wait(timeout=3)
 
         while True:
             self.display_banner()
