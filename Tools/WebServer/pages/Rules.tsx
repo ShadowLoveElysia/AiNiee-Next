@@ -136,12 +136,12 @@ export const Rules: React.FC = () => {
                 DataService.getWritingStyle(),
                 DataService.getTranslationExample()
             ]);
-            setGlossary(g);
-            setExclusion(e);
-            setCharacterization(c);
-            setWorldBuilding(w);
-            setWritingStyle(s);
-            setTranslationExample(ex);
+            setGlossary(g || []);
+            setExclusion(e || []);
+            setCharacterization(c || []);
+            setWorldBuilding(w || "");
+            setWritingStyle(s || "");
+            setTranslationExample(ex || []);
         } catch (error) {
             console.error("Failed to load rules", error);
         } finally {
@@ -177,12 +177,12 @@ export const Rules: React.FC = () => {
                 DataService.getTranslationExampleDraft()
             ]);
             
-            if (gd.length > 0) setGlossary(gd);
-            if (ed.length > 0) setExclusion(ed);
-            if (cd.length > 0) setCharacterization(cd);
+            if (gd && gd.length > 0) setGlossary(gd);
+            if (ed && ed.length > 0) setExclusion(ed);
+            if (cd && cd.length > 0) setCharacterization(cd);
             if (wd) setWorldBuilding(wd);
             if (sd) setWritingStyle(sd);
-            if (exd.length > 0) setTranslationExample(exd);
+            if (exd && exd.length > 0) setTranslationExample(exd);
             
             alert(t('msg_draft_recovered'));
         } catch (error) {
@@ -335,9 +335,9 @@ export const Rules: React.FC = () => {
         triggerDraftSave();
     };
 
-    const updateCharacterItem = (idx: number, field: keyof CharacterizationItem, val: string) => {
+    const updateCharacterItem = (originalIdx: number, field: keyof CharacterizationItem, val: string) => {
         const newItems = [...characterization];
-        newItems[idx] = { ...newItems[idx], [field]: val };
+        newItems[originalIdx] = { ...newItems[originalIdx], [field]: val };
         setCharacterization(newItems);
         triggerDraftSave();
     };
@@ -347,9 +347,9 @@ export const Rules: React.FC = () => {
         triggerDraftSave();
     };
 
-    const updateExampleItem = (idx: number, field: keyof TranslationExampleItem, val: string) => {
+    const updateExampleItem = (originalIdx: number, field: keyof TranslationExampleItem, val: string) => {
         const newItems = [...translationExample];
-        newItems[idx] = { ...newItems[idx], [field]: val };
+        newItems[originalIdx] = { ...newItems[originalIdx], [field]: val };
         setTranslationExample(newItems);
         triggerDraftSave();
     };
@@ -403,7 +403,7 @@ export const Rules: React.FC = () => {
             alert(result.message);
             // Reload glossary data
             const g = await DataService.getGlossary();
-            setGlossary(g);
+            setGlossary(g || []);
         } catch (e: any) {
             setAiLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 保存失败: ${e.message}`]);
             alert('保存失败: ' + e.message);
@@ -433,12 +433,12 @@ export const Rules: React.FC = () => {
                 value={value}
                 onChange={(e) => { setter(e.target.value); triggerDraftSave(); }}
                 placeholder={placeholder}
-                className={`w-full h-96 border rounded-lg p-4 outline-none font-mono text-sm leading-relaxed transition-all ${
+                className={`w-full h-96 border rounded-lg p-4 outline-none font-mono text-sm leading-relaxed transition-all bg-slate-950 ${
                     isLightCityTheme 
-                        ? 'bg-white/60 border-pink-200 text-pink-900 focus:border-pink-400 focus:bg-white/80' 
-                        : 'bg-slate-950 border-slate-800 text-slate-300 focus:border-primary'
+                        ? 'border-pink-200 text-pink-400 focus:border-pink-400' 
+                        : 'border-slate-800 text-slate-300 focus:border-primary'
                 }`}
-                style={!isLightCityTheme && activeTheme !== 'default' ? { borderColor: `${themeColor}40`, color: '#fff' } : {}}
+                style={activeTheme !== 'default' ? { borderColor: `${themeColor}40` } : {}}
             />
         </div>
     );
@@ -550,7 +550,7 @@ export const Rules: React.FC = () => {
                             </div>
                         )}
                         
-                        {/* Tab Content: Glossary (Existing) */}
+                        {/* Tab Content: Glossary */}
                         {activeTab === 'glossary' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                 <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-800"
@@ -578,20 +578,23 @@ export const Rules: React.FC = () => {
                                     </button>
                                 </div>
                                 <div className="grid gap-3">
-                                    {glossary.filter(item => !filter || item.src.toLowerCase().includes(filter.toLowerCase())).map((item, idx) => (
-                                        <div key={idx} className={`grid grid-cols-12 gap-3 p-3 border rounded-lg transition-colors group ${isLightCityTheme ? 'bg-white/60 border-pink-100 hover:border-pink-300' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
-                                             style={!isLightCityTheme && activeTheme !== 'default' ? { borderColor: `${themeColor}20` } : {}}>
-                                            <div className="col-span-4"><input type="text" placeholder={t('ui_rules_source')} value={item.src} onChange={(e) => { const n = [...glossary]; n[idx].src = e.target.value; setGlossary(n); triggerDraftSave(); }} className={`w-full border rounded px-3 py-2 outline-none ${isLightCityTheme ? 'bg-white/80 border-pink-50 text-pink-700' : 'bg-slate-950 border-slate-700 text-green-300 focus:border-green-500/50'}`} /></div>
-                                            <div className="col-span-4"><input type="text" placeholder={t('ui_rules_target')} value={item.dst} onChange={(e) => { const n = [...glossary]; n[idx].dst = e.target.value; setGlossary(n); triggerDraftSave(); }} className={`w-full border rounded px-3 py-2 outline-none ${isLightCityTheme ? 'bg-white/80 border-pink-50 text-blue-700' : 'bg-slate-950 border-slate-700 text-blue-300 focus:border-blue-500/50'}`} /></div>
-                                            <div className="col-span-3"><input type="text" placeholder={t('ui_rules_note')} value={item.info || ''} onChange={(e) => { const n = [...glossary]; n[idx].info = e.target.value; setGlossary(n); triggerDraftSave(); }} className={`w-full border rounded px-3 py-2 outline-none text-sm ${isLightCityTheme ? 'bg-white/80 border-pink-50 text-slate-600' : 'bg-slate-950 border-slate-700 text-slate-400 focus:border-slate-500'}`} /></div>
-                                            <div className="col-span-1 flex justify-end"><button onClick={() => setGlossary(glossary.filter((_, i) => i !== idx))} className={`p-2 transition-colors ${isLightCityTheme ? 'text-pink-300 hover:text-red-500' : 'text-slate-600 hover:text-red-400'}`}><Trash2 size={18} /></button></div>
-                                        </div>
-                                    ))}
+                                    {glossary.map((item, originalIdx) => {
+                                        if (filter && !item.src?.toLowerCase().includes(filter.toLowerCase())) return null;
+                                        return (
+                                            <div key={originalIdx} className={`grid grid-cols-12 gap-3 p-3 border rounded-lg transition-colors group ${isLightCityTheme ? 'bg-white/60 border-pink-100 hover:border-pink-300' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                                                 style={!isLightCityTheme && activeTheme !== 'default' ? { borderColor: `${themeColor}20` } : {}}>
+                                                <div className="col-span-4"><input type="text" placeholder={t('ui_rules_source')} value={item.src} onChange={(e) => { const n = [...glossary]; n[originalIdx].src = e.target.value; setGlossary(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none transition-all text-green-300 focus:border-primary" /></div>
+                                                <div className="col-span-4"><input type="text" placeholder={t('ui_rules_target')} value={item.dst} onChange={(e) => { const n = [...glossary]; n[originalIdx].dst = e.target.value; setGlossary(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none transition-all text-blue-300 focus:border-primary" /></div>
+                                                <div className="col-span-3"><input type="text" placeholder={t('ui_rules_note')} value={item.info || ''} onChange={(e) => { const n = [...glossary]; n[originalIdx].info = e.target.value; setGlossary(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none text-sm transition-all text-slate-400 focus:border-primary" /></div>
+                                                <div className="col-span-1 flex justify-end"><button onClick={() => setGlossary(glossary.filter((_, i) => i !== originalIdx))} className={`p-2 transition-colors ${isLightCityTheme ? 'text-pink-300 hover:text-red-500' : 'text-slate-600 hover:text-red-400'}`}><Trash2 size={18} /></button></div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
 
-                        {/* Tab Content: Exclusion (Existing) */}
+                        {/* Tab Content: Exclusion */}
                         {activeTab === 'exclusion' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                 <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-800"
@@ -619,14 +622,17 @@ export const Rules: React.FC = () => {
                                     </button>
                                 </div>
                                 <div className="grid gap-3">
-                                    {exclusion.filter(item => !filter || item.markers.toLowerCase().includes(filter.toLowerCase())).map((item, idx) => (
-                                        <div key={idx} className="grid grid-cols-12 gap-3 p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-600 transition-colors group">
-                                            <div className="col-span-4"><input type="text" placeholder={t('ui_rules_marker')} value={item.markers} onChange={(e) => { const n = [...exclusion]; n[idx].markers = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-orange-300 focus:border-orange-500/50 outline-none font-mono text-sm" /></div>
-                                            <div className="col-span-4"><input type="text" placeholder={t('ui_rules_regex')} value={item.regex || ''} onChange={(e) => { const n = [...exclusion]; n[idx].regex = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-purple-300 focus:border-purple-500/50 outline-none font-mono text-sm" /></div>
-                                            <div className="col-span-3"><input type="text" placeholder={t('ui_rules_note')} value={item.info || ''} onChange={(e) => { const n = [...exclusion]; n[idx].info = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-400 focus:border-slate-500 outline-none text-sm" /></div>
-                                            <div className="col-span-1 flex justify-end"><button onClick={() => setExclusion(exclusion.filter((_, i) => i !== idx))} className="p-2 text-slate-600 hover:text-red-400"><Trash2 size={18} /></button></div>
-                                        </div>
-                                    ))}
+                                    {exclusion.map((item, originalIdx) => {
+                                        if (filter && !item.markers?.toLowerCase().includes(filter.toLowerCase())) return null;
+                                        return (
+                                            <div key={originalIdx} className={`grid grid-cols-12 gap-3 p-3 border rounded-lg transition-colors group ${isLightCityTheme ? 'bg-white/60 border-pink-100 hover:border-pink-300' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}>
+                                                <div className="col-span-4"><input type="text" placeholder={t('ui_rules_marker')} value={item.markers} onChange={(e) => { const n = [...exclusion]; n[originalIdx].markers = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none font-mono text-sm transition-all text-orange-300 focus:border-primary" /></div>
+                                                <div className="col-span-4"><input type="text" placeholder={t('ui_rules_regex')} value={item.regex || ''} onChange={(e) => { const n = [...exclusion]; n[originalIdx].regex = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none font-mono text-sm transition-all text-purple-300 focus:border-primary" /></div>
+                                                <div className="col-span-3"><input type="text" placeholder={t('ui_rules_note')} value={item.info || ''} onChange={(e) => { const n = [...exclusion]; n[originalIdx].info = e.target.value; setExclusion(n); triggerDraftSave(); }} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 outline-none text-sm transition-all text-slate-400 focus:border-primary" /></div>
+                                                <div className="col-span-1 flex justify-end"><button onClick={() => setExclusion(exclusion.filter((_, i) => i !== originalIdx))} className={`p-2 transition-colors ${isLightCityTheme ? 'text-pink-300 hover:text-red-500' : 'text-slate-600 hover:text-red-400'}`}><Trash2 size={18} /></button></div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -657,24 +663,27 @@ export const Rules: React.FC = () => {
                                     </button>
                                 </div>
                                 <div className="grid gap-4">
-                                    {characterization.filter(item => !filter || item.original_name.includes(filter) || item.translated_name.includes(filter)).map((item, idx) => (
-                                        <div key={idx} className="p-4 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-600 transition-all group space-y-3">
-                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                                <input type="text" placeholder={t('ui_rules_character_orig')} value={item.original_name} onChange={(e) => updateCharacterItem(idx, 'original_name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-green-300 focus:border-primary outline-none" />
-                                                <input type="text" placeholder={t('ui_rules_character_trans')} value={item.translated_name} onChange={(e) => updateCharacterItem(idx, 'translated_name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-blue-300 focus:border-primary outline-none" />
-                                                <input type="text" placeholder={t('ui_rules_character_gender')} value={item.gender} onChange={(e) => updateCharacterItem(idx, 'gender', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none" />
-                                                <input type="text" placeholder={t('ui_rules_character_age')} value={item.age} onChange={(e) => updateCharacterItem(idx, 'age', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none" />
+                                    {characterization.map((item, originalIdx) => {
+                                        if (filter && !item.original_name?.includes(filter) && !item.translated_name?.includes(filter)) return null;
+                                        return (
+                                            <div key={originalIdx} className={`p-4 border rounded-lg transition-all group space-y-3 ${isLightCityTheme ? 'bg-white/60 border-pink-100 hover:border-pink-300' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}>
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                    <input type="text" placeholder={t('ui_rules_character_orig')} value={item.original_name} onChange={(e) => updateCharacterItem(originalIdx, 'original_name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-green-300 focus:border-primary outline-none transition-all" />
+                                                    <input type="text" placeholder={t('ui_rules_character_trans')} value={item.translated_name} onChange={(e) => updateCharacterItem(originalIdx, 'translated_name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-blue-300 focus:border-primary outline-none transition-all" />
+                                                    <input type="text" placeholder={t('ui_rules_character_gender')} value={item.gender} onChange={(e) => updateCharacterItem(originalIdx, 'gender', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                    <input type="text" placeholder={t('ui_rules_character_age')} value={item.age} onChange={(e) => updateCharacterItem(originalIdx, 'age', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <input type="text" placeholder={t('ui_rules_character_personality')} value={item.personality} onChange={(e) => updateCharacterItem(originalIdx, 'personality', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                    <input type="text" placeholder={t('ui_rules_character_speech')} value={item.speech_style} onChange={(e) => updateCharacterItem(originalIdx, 'speech_style', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <input type="text" placeholder={t('ui_rules_character_info')} value={item.additional_info} onChange={(e) => updateCharacterItem(originalIdx, 'additional_info', e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-400 focus:border-primary outline-none transition-all" />
+                                                    <button onClick={() => setCharacterization(characterization.filter((_, i) => i !== originalIdx))} className={`p-2 transition-colors rounded border ${isLightCityTheme ? 'text-pink-300 hover:text-red-500 bg-white/80 border-pink-100' : 'text-slate-600 hover:text-red-400 bg-slate-950 border-slate-800'}`}><Trash2 size={18} /></button>
+                                                </div>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <input type="text" placeholder={t('ui_rules_character_personality')} value={item.personality} onChange={(e) => updateCharacterItem(idx, 'personality', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none" />
-                                                <input type="text" placeholder={t('ui_rules_character_speech')} value={item.speech_style} onChange={(e) => updateCharacterItem(idx, 'speech_style', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none" />
-                                            </div>
-                                            <div className="flex gap-3">
-                                                <input type="text" placeholder={t('ui_rules_character_info')} value={item.additional_info} onChange={(e) => updateCharacterItem(idx, 'additional_info', e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-400 focus:border-primary outline-none" />
-                                                <button onClick={() => setCharacterization(characterization.filter((_, i) => i !== idx))} className="p-2 text-slate-600 hover:text-red-400 bg-slate-950 rounded border border-slate-800"><Trash2 size={18} /></button>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -711,14 +720,17 @@ export const Rules: React.FC = () => {
                                     </button>
                                 </div>
                                 <div className="grid gap-3">
-                                    {translationExample.filter(item => !filter || item.src.includes(filter) || item.dst.includes(filter)).map((item, idx) => (
-                                        <div key={idx} className="grid grid-cols-12 gap-3 p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-600 transition-colors group">
-                                            <div className="col-span-5"><textarea placeholder={t('ui_rules_example_src')} value={item.src} onChange={(e) => updateExampleItem(idx, 'src', e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-2 text-green-300 focus:border-green-500/50 outline-none text-sm resize-none" /></div>
-                                            <div className="col-span-1 flex items-center justify-center text-slate-600">→</div>
-                                            <div className="col-span-5"><textarea placeholder={t('ui_rules_example_dst')} value={item.dst} onChange={(e) => updateExampleItem(idx, 'dst', e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-2 text-blue-300 focus:border-blue-500/50 outline-none text-sm resize-none" /></div>
-                                            <div className="col-span-1 flex items-center justify-end"><button onClick={() => setTranslationExample(translationExample.filter((_, i) => i !== idx))} className="p-2 text-slate-600 hover:text-red-400"><Trash2 size={18} /></button></div>
-                                        </div>
-                                    ))}
+                                    {translationExample.map((item, originalIdx) => {
+                                        if (filter && !item.src?.includes(filter) && !item.dst?.includes(filter)) return null;
+                                        return (
+                                            <div key={originalIdx} className={`grid grid-cols-12 gap-3 p-3 border rounded-lg transition-colors group ${isLightCityTheme ? 'bg-white/60 border-pink-100 hover:border-pink-300' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}>
+                                                <div className="col-span-5"><textarea placeholder={t('ui_rules_example_src')} value={item.src} onChange={(e) => updateExampleItem(originalIdx, 'src', e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-2 text-green-300 focus:border-primary outline-none text-sm resize-none transition-all" /></div>
+                                                <div className="col-span-1 flex items-center justify-center text-slate-600">→</div>
+                                                <div className="col-span-5"><textarea placeholder={t('ui_rules_example_dst')} value={item.dst} onChange={(e) => updateExampleItem(originalIdx, 'dst', e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-2 text-blue-300 focus:border-primary outline-none text-sm resize-none transition-all" /></div>
+                                                <div className="col-span-1 flex items-center justify-end"><button onClick={() => setTranslationExample(translationExample.filter((_, i) => i !== originalIdx))} className={`p-2 transition-colors rounded border ${isLightCityTheme ? 'text-pink-300 hover:text-red-500 bg-white/80 border-pink-100' : 'text-slate-600 hover:text-red-400 bg-slate-950 border-slate-800'}`}><Trash2 size={18} /></button></div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -739,19 +751,19 @@ export const Rules: React.FC = () => {
                                         <div>
                                             <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_input_path')}</label>
                                             <input type="text" value={aiInputPath} onChange={(e) => setAiInputPath(e.target.value)}
-                                                className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-cyan-500/50 outline-none"
+                                                className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all"
                                                 placeholder="C:/path/to/file.epub" />
                                         </div>
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>
                                                 <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_percent')}</label>
                                                 <input type="number" value={aiPercent} onChange={(e) => setAiPercent(Number(e.target.value))}
-                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" min={1} max={100} />
+                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all" min={1} max={100} />
                                             </div>
                                             <div>
                                                 <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_lines')}</label>
                                                 <input type="number" value={aiLines || ''} onChange={(e) => setAiLines(e.target.value ? Number(e.target.value) : undefined)}
-                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 outline-none" placeholder="可选" />
+                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all" placeholder="可选" />
                                             </div>
                                         </div>
                                     </div>

@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 
 # --- Pre-emptive Import for FastAPI & Pydantic ---
 try:
-    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response
+    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
@@ -1717,6 +1717,9 @@ class CacheUpdateRequest(BaseModel):
 class CacheLoadRequest(BaseModel):
     project_path: str
 
+class ProofreadStartRequest(BaseModel):
+    project_path: str
+
 # Global cache manager instance
 _cache_manager_instance = None
 
@@ -2023,6 +2026,409 @@ async def search_cache_items(query: str, scope: str = "all", is_regex: bool = Fa
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to search cache: {e}")
+
+# --- AI Proofread API ---
+
+# Global state for proofread task
+_proofread_state = {
+    "running": False,
+    "progress": 0,
+    "total": 0,
+    "issues": [],
+    "tokens_used": 0,
+    "error": None,
+    "completed": False
+}
+
+@app.get("/api/proofread/status")
+async def get_proofread_status():
+    """Get AI proofread task status"""
+    return _proofread_state
+
+@app.post("/api/proofread/start")
+async def start_proofread(request: ProofreadStartRequest, background_tasks: BackgroundTasks):
+    """Start AI proofread task"""
+    global _proofread_state
+
+    if _proofread_state["running"]:
+        raise HTTPException(status_code=400, detail="Proofread task already running")
+
+    cache_manager = get_cache_manager()
+
+    # Smart path handling - same as cache/load
+    input_path = request.project_path.strip()
+    input_path = os.path.normpath(input_path)
+
+    # Determine the correct output_path
+    if input_path.endswith("AinieeCacheData.json"):
+        output_path = os.path.dirname(os.path.dirname(input_path))
+    elif input_path.endswith("cache"):
+        output_path = os.path.dirname(input_path)
+    elif "AinieeCacheData.json" in input_path:
+        cache_filename_pos = input_path.find("AinieeCacheData.json")
+        if cache_filename_pos != -1:
+            cache_dir = input_path[:cache_filename_pos].rstrip(os.path.sep)
+            output_path = os.path.dirname(cache_dir)
+    else:
+        output_path = input_path
+
+    # Validate cache file exists
+    cache_file_path = os.path.join(output_path, "cache", "AinieeCacheData.json")
+    if not os.path.exists(cache_file_path):
+        raise HTTPException(status_code=404, detail=f"Cache file not found: {cache_file_path}")
+
+    # Load cache if not already loaded or different path
+    try:
+        cache_manager.load_from_file(output_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load cache: {e}")
+
+    if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+        raise HTTPException(status_code=400, detail="No cache data loaded")
+        raise HTTPException(status_code=400, detail="No cache data loaded")
+
+    # Reset state
+    _proofread_state = {
+        "running": True,
+        "progress": 0,
+        "total": 0,
+        "issues": [],
+        "tokens_used": 0,
+        "error": None,
+        "completed": False
+    }
+
+    # Start background task
+    background_tasks.add_task(run_proofread_task)
+
+    return {"status": "started"}
+
+@app.post("/api/proofread/stop")
+async def stop_proofread():
+    """Stop AI proofread task"""
+    global _proofread_state
+    _proofread_state["running"] = False
+    return {"status": "stopped"}
+
+@app.post("/api/proofread/accept")
+async def accept_proofread_issue(issue_id: int):
+    """Accept a proofread issue and apply the correction"""
+    global _proofread_state
+
+    cache_manager = get_cache_manager()
+    if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+        raise HTTPException(status_code=400, detail="No cache data loaded")
+
+    # Find the issue
+    issue = None
+    for i, iss in enumerate(_proofread_state["issues"]):
+        if iss.get("id") == issue_id:
+            issue = iss
+            break
+
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    if not issue.get("corrected_translation"):
+        raise HTTPException(status_code=400, detail="No correction available")
+
+    # Apply correction to cache
+    try:
+        text_index = issue.get("text_index")
+        file_path = issue.get("file_path")
+        corrected_text = issue.get("corrected_translation")
+
+        cache_file = cache_manager.project.get_file(file_path)
+        if cache_file:
+            item = cache_file.get_item(text_index)
+            if item:
+                item.translated_text = corrected_text
+                item.translation_status = 4  # AI_PROOFREAD
+
+                # Mark issue as accepted
+                issue["accepted"] = True
+
+                return {"status": "accepted", "text_index": text_index}
+
+        raise HTTPException(status_code=404, detail="Cache item not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply correction: {e}")
+
+class ProofreadSingleRequest(BaseModel):
+    project_path: str
+    file_path: str
+    text_index: int
+    translation: Optional[str] = None
+
+@app.post("/api/proofread/single_check")
+async def check_single_line(request: ProofreadSingleRequest):
+    """
+    On-demand check for a single line with context.
+    Used when user clicks 'AI Analyze' on a specific line in editor.
+    """
+    try:
+        from ModuleFolders.Service.Proofreader.AIProofreader import AIProofreader
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+
+        cache_manager = get_cache_manager()
+        
+        # Ensure project is loaded
+        if not hasattr(cache_manager, 'project') or not cache_manager.project.files:
+             # Try to load if project is not in memory
+             try:
+                 load_cache_sync(request.project_path)
+             except:
+                 raise HTTPException(status_code=400, detail="Project cache not loaded")
+
+        cache_file = cache_manager.project.get_file(request.file_path)
+        if not cache_file:
+            raise HTTPException(status_code=404, detail="File not found in cache")
+        
+        item = cache_file.get_item(request.text_index)
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+
+        # Determine target translation: prefer the one sent from web UI (editing state)
+        target_translation = request.translation
+        if target_translation is None:
+            target_translation = item.translated_text or item.polished_text
+
+        # Get context (5 lines before and after)
+        list_idx = -1
+        for idx, it in enumerate(cache_file.items):
+            if it.text_index == request.text_index:
+                list_idx = idx
+                break
+        
+        if list_idx == -1:
+             raise HTTPException(status_code=404, detail="Item index error")
+
+        context_lines = 5
+        start = max(0, list_idx - context_lines)
+        end = min(len(cache_file.items), list_idx + context_lines + 1)
+        
+        context_parts = []
+        for i in range(start, end):
+            if i != list_idx:
+                ctx_item = cache_file.items[i]
+                if ctx_item.source_text:
+                    # Provide original translation as context if available
+                    ctx_trans = ctx_item.translated_text or ctx_item.polished_text or ""
+                    context_parts.append(f"[{i}] {ctx_item.source_text[:60]} -> {ctx_trans[:40]}")
+        
+        context_str = "\n".join(context_parts)
+        
+        # Load Config
+        config = load_config_sync()
+        ai_proofreader = AIProofreader(config)
+        
+        # Run Check
+        result = ai_proofreader.proofread_single(
+            source=item.source_text,
+            translation=target_translation,
+            glossary=config.get("prompt_dictionary_data", []),
+            context=context_str,
+            world_building=config.get("world_building_content", ""),
+            writing_style=config.get("writing_style_content", ""),
+            characterization=config.get("characterization_data", [])
+        )
+        
+        if not result.has_issues:
+            return {"has_issues": False, "message": "AI分析后发现此行并无问题"}
+        
+        return {
+            "has_issues": True,
+            "issues": [
+                {
+                    "type": iss.type,
+                    "severity": iss.severity,
+                    "description": iss.description,
+                    "suggestion": iss.suggestion,
+                    "corrected_translation": result.corrected_translation
+                } for iss in result.issues
+            ],
+            "corrected_translation": result.corrected_translation
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+def load_cache_sync(project_path: str):
+    """Helper to load cache synchronously if needed"""
+    cm = get_cache_manager()
+    input_path = os.path.normpath(project_path.strip())
+    if input_path.endswith("AinieeCacheData.json"):
+        output_path = os.path.dirname(os.path.dirname(input_path))
+    elif input_path.endswith("cache"):
+        output_path = os.path.dirname(input_path)
+    else:
+        output_path = input_path
+    cm.load_from_file(output_path)
+
+
+@app.post("/api/proofread/clear")
+async def clear_proofread_issues():
+    """Clear all proofread issues"""
+    global _proofread_state
+    _proofread_state["issues"] = []
+    _proofread_state["completed"] = False
+    return {"status": "cleared"}
+
+def load_config_sync() -> Dict[str, Any]:
+    """Synchronously load the merged configuration."""
+    mode, root_config = get_config_mode()
+    current_profile_name = root_config.get("active_profile", "default")
+    current_rules_name = root_config.get("active_rules_profile", "default")
+
+    # Load Base Config
+    profile_path = os.path.join(PROFILES_PATH, f"{current_profile_name}.json")
+    loaded_config = {}
+    if os.path.exists(profile_path):
+        try:
+            with open(profile_path, 'r', encoding='utf-8-sig') as f:
+                loaded_config = json.load(f)
+        except: pass
+
+    # Load Rules Config
+    rules_config = {}
+    if current_rules_name and current_rules_name != "None":
+        rules_path = os.path.join(RULES_PROFILES_PATH, f"{current_rules_name}.json")
+        if os.path.exists(rules_path):
+            try:
+                with open(rules_path, 'r', encoding='utf-8-sig') as f:
+                    rules_config = json.load(f)
+            except: pass
+
+    # Merge
+    rule_keys = [
+        "prompt_dictionary_data", "exclusion_list_data", "characterization_data",
+        "world_building_content", "writing_style_content", "translation_example_data"
+    ]
+    for k in rule_keys:
+        if k in rules_config:
+            loaded_config[k] = rules_config[k]
+
+    return loaded_config
+
+def run_proofread_task():
+    """Background task to run AI proofread"""
+    global _proofread_state
+
+    try:
+        from ModuleFolders.Service.Proofreader.AIProofreader import AIProofreader
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+
+        cache_manager = get_cache_manager()
+        config = load_config_sync()
+
+        # Collect items to check
+        to_check = []
+        with cache_manager.file_lock:
+            for file_path, cache_file in cache_manager.project.files.items():
+                for item in cache_file.items:
+                    if item.translation_status in [1, 2]:  # TRANSLATED or POLISHED
+                        source = item.source_text
+                        target = item.translated_text or item.polished_text
+                        if source and target:
+                            to_check.append({
+                                "index": len(to_check),
+                                "text_index": item.text_index,
+                                "file_path": file_path,
+                                "source": source,
+                                "translation": target
+                            })
+
+        _proofread_state["total"] = len(to_check)
+
+        if not to_check:
+            _proofread_state["running"] = False
+            _proofread_state["completed"] = True
+            return
+
+        # Initialize proofreader
+        ai_proofreader = AIProofreader(config)
+
+        def progress_callback(current, total, prompt_tokens, completion_tokens):
+            _proofread_state["progress"] = current
+            _proofread_state["tokens_used"] = prompt_tokens + completion_tokens
+
+        # Process using batching and threading to match CLI logic
+        # 1. Determine batch size and threads from config
+        # Default lines_limit is usually 20, threads 5
+        batch_size = config.get("lines_limit", 20)
+        thread_count = config.get("actual_thread_counts", 5) 
+        if thread_count <= 0: thread_count = 5
+
+        # 2. Split items into blocks
+        blocks = [to_check[i:i + batch_size] for i in range(0, len(to_check), batch_size)]
+        
+        # 3. Define worker function
+        import concurrent.futures
+        
+        results_lock = threading.Lock()
+        
+        def process_block(block):
+            if not _proofread_state["running"]: return
+            
+            try:
+                # Call the new batch method with full rules
+                block_results = ai_proofreader.proofread_lines_block(
+                    block,
+                    glossary=config.get("prompt_dictionary_data", []),
+                    world_building=config.get("world_building_content", ""),
+                    writing_style=config.get("writing_style_content", ""),
+                    characterization=config.get("characterization_data", [])
+                )
+                
+                with results_lock:
+                    # Update state with results
+                    for idx, result in block_results.items():
+                        original_item = next((item for item in block if item.get("index") == idx), None)
+                        
+                        if result.has_issues and original_item:
+                            for issue in result.issues:
+                                _proofread_state["issues"].append({
+                                    "id": len(_proofread_state["issues"]) + 1,
+                                    "text_index": original_item["text_index"],
+                                    "file_path": original_item["file_path"],
+                                    "source": original_item["source"],
+                                    "original_translation": original_item["translation"],
+                                    "corrected_translation": result.corrected_translation,
+                                    "issue_type": issue.type,
+                                    "severity": issue.severity,
+                                    "description": issue.description,
+                                    "accepted": False
+                                })
+                    
+                    _proofread_state["progress"] += len(block)
+                    p_tok = sum(r.prompt_tokens for r in block_results.values())
+                    c_tok = sum(r.completion_tokens for r in block_results.values())
+                    _proofread_state["tokens_used"] += (p_tok + c_tok)
+                    
+            except Exception as e:
+                print(f"Error processing block: {e}")
+
+        # 4. Execute with ThreadPool
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+            # We must monitor running state
+            futures = []
+            for block in blocks:
+                if not _proofread_state["running"]: break
+                futures.append(executor.submit(process_block, block))
+            
+            # Wait for completion
+            concurrent.futures.wait(futures)
+
+        _proofread_state["running"] = False
+        _proofread_state["completed"] = True
+
+    except Exception as e:
+        _proofread_state["running"] = False
+        _proofread_state["error"] = str(e)
+        import traceback
+        traceback.print_exc()
 
 # --- Queue Management API ---
 

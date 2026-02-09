@@ -3279,16 +3279,60 @@ class CLIMenu:
                 break
 
     def _apply_high_severity_fixes(self, report, project_path: str):
-        """应用高危修改"""
-        high_count = report.summary.ai_issues.get("high", 0)
-        if high_count == 0:
-            console.print("[yellow]没有高危问题需要修复[/yellow]")
+        """应用高危修改，生成AI校对版本的cache文件"""
+        # 统计有修正译文的条目数量
+        corrections_count = 0
+        for item in report.items:
+            if item.ai_check and item.ai_check.get("corrected_translation"):
+                corrections_count += 1
+
+        if corrections_count == 0:
+            console.print("[yellow]没有AI修正译文可应用[/yellow]")
             return
 
-        if not Confirm.ask(f"确认应用 {high_count} 个高危修改？", default=False):
+        if not Confirm.ask(f"确认应用 {corrections_count} 个AI修正译文？将生成校对版本的cache文件", default=False):
             return
 
-        console.print("[green]已应用高危修改[/green]")
+        # 加载原始cache文件
+        cache_path = os.path.join(project_path, "cache", "AinieeCacheData.json")
+        if not os.path.exists(cache_path):
+            console.print("[red]找不到原始cache文件[/red]")
+            return
+
+        try:
+            project = CacheManager.read_from_file(cache_path)
+
+            # 应用修正
+            applied_count = 0
+            for item in report.items:
+                if not item.ai_check or not item.ai_check.get("corrected_translation"):
+                    continue
+
+                corrected_text = item.ai_check.get("corrected_translation")
+                text_index = item.index
+
+                # 在所有文件中查找并更新对应条目
+                for cache_file in project.files.values():
+                    for cache_item in cache_file.items:
+                        if cache_item.text_index == text_index:
+                            # 更新译文
+                            cache_item.translated_text = corrected_text
+                            cache_item.translation_status = TranslationStatus.AI_PROOFREAD
+                            applied_count += 1
+                            break
+
+            # 保存为AI校对版本的cache文件
+            proofread_cache_path = os.path.join(project_path, "cache", "AinieeCacheData_proofread.json")
+            import msgspec
+            content_bytes = msgspec.json.encode(project)
+            with open(proofread_cache_path, "wb") as f:
+                f.write(content_bytes)
+
+            console.print(f"[green]已应用 {applied_count} 个修正，校对版本已保存: {proofread_cache_path}[/green]")
+            console.print(f"[dim]提示: 导出时可选择使用校对版本[/dim]")
+
+        except Exception as e:
+            console.print(f"[red]应用修正失败: {e}[/red]")
 
     def _export_proofread_file(self, report, project_path: str):
         """导出校对后文件"""
@@ -5625,6 +5669,15 @@ class CLIMenu:
                         else:
                             self.ui.log("[dim]Format conversion skipped.[/dim]")
 
+            # --- Post-Task: Auto AI Proofread ---
+            if task_success and task_mode == TaskType.TRANSLATION and self.config.get("enable_auto_proofread", False):
+                if not web_mode:
+                    console.print(f"\n[cyan]自动AI校对已开启，正在执行校对...[/cyan]")
+                    try:
+                        self._execute_proofread(opath)
+                    except Exception as e:
+                        console.print(f"[yellow]AI校对执行出错: {e}[/yellow]")
+
             # Summary
             if task_success:
                 self.ui.log("[bold green]All Done![/bold green]")
@@ -5733,6 +5786,8 @@ class CLIMenu:
         
         # 3. Load cache
         cache_path = os.path.join(opath, "cache", "AinieeCacheData.json")
+        proofread_cache_path = os.path.join(opath, "cache", "AinieeCacheData_proofread.json")
+
         while not os.path.exists(cache_path):
             console.print(f"\n[yellow]Cache not found at default path: {cache_path}[/yellow]")
             if non_interactive:
@@ -5742,6 +5797,19 @@ class CLIMenu:
             if opath.lower() == 'q':
                 return
             cache_path = os.path.join(opath, "cache", "AinieeCacheData.json")
+            proofread_cache_path = os.path.join(opath, "cache", "AinieeCacheData_proofread.json")
+
+        # 检查是否存在AI校对版本的cache
+        use_proofread_cache = False
+        if os.path.exists(proofread_cache_path) and not non_interactive:
+            console.print(f"\n[cyan]检测到AI校对版本的cache文件[/cyan]")
+            console.print("  [1] 使用原始翻译版本")
+            console.print("  [2] 使用AI校对版本 (推荐)")
+            cache_choice = IntPrompt.ask("请选择", choices=["1", "2"], default="2")
+            if cache_choice == 2:
+                use_proofread_cache = True
+                cache_path = proofread_cache_path
+                console.print("[green]将使用AI校对版本导出[/green]")
 
         try:
             with console.status(f"[cyan]{i18n.get('msg_export_started')}[/cyan]"):

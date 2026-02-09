@@ -805,6 +805,13 @@ export const Settings: React.FC = () => {
                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm" />
                  </div>
                )}
+
+               <div className="space-y-2 mt-4 pt-4 border-t border-slate-700">
+                  <label className="text-xs font-semibold text-slate-400 uppercase">{t('setting_pre_lines') || 'Context Lines (Pre-lines)'}</label>
+                  <p className="text-[10px] text-slate-500 mb-1">{t('desc_pre_lines') || 'Number of previous translated lines to include as context for AI.'}</p>
+                  <input type="number" value={config.pre_line_counts ?? 3} onChange={(e) => handleChange('pre_line_counts', parseInt(e.target.value) || 0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm" />
+               </div>
              </div>
           </div>
         )}
@@ -822,6 +829,14 @@ export const Settings: React.FC = () => {
             <Toggle field="translation_example_switch" label={t('feature_translation_example_switch')} />
             <Toggle field="few_shot_and_example_switch" label={t('feature_few_shot_and_example_switch')} />
             <Toggle field="auto_process_text_code_segment" label={t('feature_auto_process_text_code_segment')} />
+
+            {/* AI Proofread Settings */}
+            <div className="col-span-2 border-t border-slate-700 pt-4 mt-2">
+              <h3 className="text-sm font-semibold text-slate-300 mb-3">{t('feature_proofread_section')}</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Toggle field="enable_auto_proofread" label={t('feature_enable_auto_proofread')} />
+              </div>
+            </div>
           </div>
         )}
 

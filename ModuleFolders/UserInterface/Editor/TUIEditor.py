@@ -99,6 +99,19 @@ class TUIEditor:
         """从缓存文件加载数据"""
         try:
             cache_file = os.path.join(project_path, "cache", "AinieeCacheData.json")
+            proofread_cache_file = os.path.join(project_path, "cache", "AinieeCacheData_proofread.json")
+
+            # 检查是否存在AI校对版本的cache
+            if os.path.exists(proofread_cache_file):
+                self.console.print(f"[cyan]{self.i18n.get('editor_proofread_cache_found') or '检测到AI校对版本的cache文件'}[/cyan]")
+                self.console.print("  [1] " + (self.i18n.get('editor_use_original') or "使用原始翻译版本"))
+                self.console.print("  [2] " + (self.i18n.get('editor_use_proofread') or "使用AI校对版本"))
+                from rich.prompt import IntPrompt
+                cache_choice = IntPrompt.ask(self.i18n.get('prompt_select') or "请选择", choices=["1", "2"], default="2")
+                if cache_choice == 2:
+                    cache_file = proofread_cache_file
+                    self.console.print(f"[green]{self.i18n.get('editor_using_proofread') or '将使用AI校对版本'}[/green]")
+
             if not os.path.exists(cache_file):
                 self.console.print(f"[red]{self.i18n.get('editor_no_cache')}: {cache_file}[/red]")
                 return False
