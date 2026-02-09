@@ -804,21 +804,24 @@ class CLIMenu:
         # 加载 Base 翻译库以供子模块 (Dry Run等) 使用
         Base.current_interface_language = "简中" if current_lang == "zh_CN" else "日语" if current_lang == "ja" else "英语"
         Base.multilingual_interface_dict = Base.load_translations(Base, os.path.join(PROJECT_ROOT, "Resource", "Localization"))
-        
-        # --- WebServer 独立检测 ---
-        self._check_web_server_dist()
 
         signal.signal(signal.SIGINT, self.signal_handler)
         self.task_running, self.original_print = False, Base.print
         self.web_server_thread = None
 
-        # 操作记录器
+        # 操作记录器 (必须在 _check_web_server_dist 之前初始化，因为 display_banner 会使用它)
         self.operation_logger = OperationLogger()
         if self.config.get("enable_operation_logging", False):
             self.operation_logger.enable()
 
         # 智能诊断模块
         self.smart_diagnostic = SmartDiagnostic(lang=current_lang)
+        self._api_error_count = 0  # API错误计数
+        self._api_error_messages = []  # 存储最近的API错误信息
+        self._show_diagnostic_hint = False  # 是否显示诊断提示
+
+        # --- WebServer 独立检测 (必须在 operation_logger 和 smart_diagnostic 之后) ---
+        self._check_web_server_dist()
         self._api_error_count = 0  # API错误计数
         self._api_error_messages = []  # 存储最近的API错误信息
         self._show_diagnostic_hint = False  # 是否显示诊断提示
