@@ -544,6 +544,7 @@
         "banner_auto_proofread": "自動校正",
         "banner_auto_proofread_hint": "翻訳完了後に自動でAI校正を実行、追加API費用が発生します",
         "banner_github_fetch_failed": "Githubに接続できません、最新CommitとReleaseの取得に失敗",
+        "banner_beta_warning": "注意:Beta版をご利用中です。問題が発生した場合は、issueを提出してください",
         "label_operation_flow": "操作フロー",
         "msg_api_error_hint": "[Y] 複数のAPIエラーを検出、Yを押して自己診断へ",
         "msg_entering_diagnostic": "自己診断システムに入っています...",

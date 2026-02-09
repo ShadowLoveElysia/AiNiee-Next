@@ -587,6 +587,7 @@
         "banner_auto_proofread": "自动校对",
         "banner_auto_proofread_hint": "翻译完成后自动调用AI校对，会产生额外的API费用，请注意API费用",
         "banner_github_fetch_failed": "无法连接至Github，获取最新Commit和Release失败",
+        "banner_beta_warning": "注意:您正处于Beta版本，可能存在一些问题，若您遇到了，请提交issue以供修复/优化",
         "label_operation_flow": "操作流程",
         "msg_api_error_hint": "[Y] 检测到多次API错误，按Y进入自查诊断",
         "msg_entering_diagnostic": "正在进入自查诊断系统...",

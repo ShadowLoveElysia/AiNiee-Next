@@ -1827,8 +1827,14 @@ class CLIMenu:
                     github_status_line = "\n" + " | ".join(parts)
             elif github_fetch_failed:
                 # 获取失败时显示错误信息
-                fail_msg = i18n.get('banner_github_fetch_failed') or '无法连接至Github，获取最新Commit和Rls失败'
+                fail_msg = i18n.get('banner_github_fetch_failed') or '无法连接至Github，获取最新Commit和Release失败'
                 github_status_line = f"\n[dim red]{fail_msg}[/dim red]"
+
+        # Beta 版本提示
+        beta_warning_line = ""
+        if 'B' in v_str.upper():
+            beta_msg = i18n.get('banner_beta_warning') or '注意:您正处于Beta版本，可能存在一些问题，若您遇到了，请提交issue以供修复/优化'
+            beta_warning_line = f"\n[yellow]{beta_msg}[/yellow]"
 
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
@@ -1841,6 +1847,7 @@ class CLIMenu:
             f"{settings_line_3}\n"
             f"{settings_line_4}"
             f"{github_status_line}"
+            f"{beta_warning_line}"
         )
         
         console.print(Panel.fit(banner_content, title="Status", border_style="cyan"))

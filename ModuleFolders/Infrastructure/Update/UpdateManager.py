@@ -55,12 +55,15 @@ class UpdateManager(Base):
                 "menu_title": "更新选项",
                 "opt_commit": "最新 Commit (开发版)",
                 "opt_release": "稳定 Release (正式版)",
+                "opt_prerelease": "Pre-release (测试版)",
                 "opt_cancel": "取消更新",
                 "commit_warn": "[bold yellow]提示: 最新 Commit 包含最新功能但可能存在不稳定因素。[/bold yellow]",
                 "release_stable": "[bold green]推荐: 稳定 Release 经过测试，适合日常使用。[/bold green]",
+                "prerelease_warn": "[bold yellow]提示: Pre-release 是测试版本，可能存在未知问题。[/bold yellow]",
                 "current_version": "当前版本: {v}",
                 "latest_commit": "最新 Commit: {msg} ({date})",
-                "latest_release": "最新 Release: {tag} ({name})"
+                "latest_release": "最新 Release: {tag} ({name})",
+                "latest_prerelease": "最新 Pre-release: {tag} ({name})"
             },
             "ja": {
                 "checking": "アップデートを確認中...",
@@ -79,12 +82,15 @@ class UpdateManager(Base):
                 "menu_title": "更新オプション",
                 "opt_commit": "最新 Commit (開発版)",
                 "opt_release": "安定 Release (正式版)",
+                "opt_prerelease": "Pre-release (テスト版)",
                 "opt_cancel": "キャンセル",
                 "commit_warn": "[bold yellow]警告: 最新 Commit は不安定な可能性があります。[/bold yellow]",
                 "release_stable": "[bold green]推奨: 安定 Release はテスト済みです。[/bold green]",
+                "prerelease_warn": "[bold yellow]警告: Pre-release はテスト版で、未知の問題がある可能性があります。[/bold yellow]",
                 "current_version": "現在のバージョン: {v}",
                 "latest_commit": "最新 Commit: {msg} ({date})",
-                "latest_release": "最新 Release: {tag} ({name})"
+                "latest_release": "最新 Release: {tag} ({name})",
+                "latest_prerelease": "最新 Pre-release: {tag} ({name})"
             },
             "en": {
                 "checking": "Checking for updates...",
@@ -103,12 +109,15 @@ class UpdateManager(Base):
                 "menu_title": "Update Options",
                 "opt_commit": "Latest Commit (Dev)",
                 "opt_release": "Stable Release (RLS)",
+                "opt_prerelease": "Pre-release (Beta)",
                 "opt_cancel": "Cancel",
                 "commit_warn": "[bold yellow]Note: Latest commit has new features but might be unstable.[/bold yellow]",
                 "release_stable": "[bold green]Recommended: Stable Release is tested and suitable for daily use.[/bold green]",
+                "prerelease_warn": "[bold yellow]Note: Pre-release is a beta version and may have unknown issues.[/bold yellow]",
                 "current_version": "Current: {v}",
                 "latest_commit": "Latest Commit: {msg} ({date})",
-                "latest_release": "Latest Release: {tag} ({name})"
+                "latest_release": "Latest Release: {tag} ({name})",
+                "latest_prerelease": "Latest Pre-release: {tag} ({name})"
             }
         }
 
@@ -143,10 +152,11 @@ class UpdateManager(Base):
         return "AiNiee-Cli V0.0.0"
 
     def fetch_update_info(self):
-        """获取 Commit 和 Release 信息"""
+        """获取 Commit, Release 和 Pre-release 信息"""
         headers = {"User-Agent": "AiNiee-Next-Updater"}
         commit_info = None
         release_info = None
+        prerelease_info = None
 
         # 1. Fetch Latest Commit
         try:
@@ -163,8 +173,8 @@ class UpdateManager(Base):
                         "author": latest.get("commit", {}).get("author", {}).get("name", "Unknown")
                     }
         except: pass
-        
-        # 2. Fetch Latest Release
+
+        # 2. Fetch Latest Release (stable)
         try:
             response = requests.get(self.UPDATE_URL, headers=headers, timeout=5)
             if response.status_code == 200:
@@ -178,7 +188,24 @@ class UpdateManager(Base):
                 }
         except: pass
 
-        return commit_info, release_info
+        # 3. Fetch Latest Pre-release
+        try:
+            response = requests.get(self.RELEASES_URL, headers=headers, timeout=5)
+            if response.status_code == 200:
+                releases = response.json()
+                for r in releases:
+                    if r.get("prerelease"):
+                        prerelease_info = {
+                            "tag": r.get("tag_name"),
+                            "name": r.get("name"),
+                            "body": r.get("body", ""),
+                            "date": r.get("published_at", "")[:10],
+                            "datetime": r.get("published_at", "")
+                        }
+                        break
+        except: pass
+
+        return commit_info, release_info, prerelease_info
 
     def get_local_version(self):
         """获取纯版本号 (例如 2.0.1)"""
@@ -241,7 +268,7 @@ class UpdateManager(Base):
                 "release_info": {...}
             }
         """
-        commit_info, release_info = self.fetch_update_info()
+        commit_info, release_info, _ = self.fetch_update_info()
         result = {
             "commit_text": "",
             "release_text": "",
@@ -275,7 +302,7 @@ class UpdateManager(Base):
 
     def check_update(self, silent=False):
         """检查更新 (用于启动时的静默检查)"""
-        commit_info, release_info = self.fetch_update_info()
+        commit_info, release_info, _ = self.fetch_update_info()
         local_v = self.get_local_version_full()
         
         # 只要有任何一个比本地新（或者只是为了触发提示）
@@ -295,9 +322,9 @@ class UpdateManager(Base):
         """开始下载并更新 (重构版本)"""
         self.print(f"[cyan]{self.get_msg('checking')}[/cyan]")
         local_v = self.get_local_version_full()
-        commit_info, release_info = self.fetch_update_info()
-        
-        if not commit_info and not release_info:
+        commit_info, release_info, prerelease_info = self.fetch_update_info()
+
+        if not commit_info and not release_info and not prerelease_info:
             self.error("Failed to fetch update info from GitHub.")
             return
 
@@ -305,19 +332,22 @@ class UpdateManager(Base):
         table = Table(show_header=False, box=None)
         table.add_row("[cyan]1.[/]", self.get_msg("opt_commit"))
         table.add_row("[cyan]2.[/]", self.get_msg("opt_release"))
+        table.add_row("[yellow]3.[/]", self.get_msg("opt_prerelease"))
         table.add_row("[red]0.[/]", self.get_msg("opt_cancel"))
-        
+
         self.print("\n")
         info_panel_text = self.get_msg("current_version", v=local_v) + "\n"
         if commit_info:
             info_panel_text += self.get_msg("latest_commit", msg=commit_info['message'], date=commit_info['date']) + "\n"
         if release_info:
-            info_panel_text += self.get_msg("latest_release", tag=release_info['tag'], name=release_info['name'])
-            
+            info_panel_text += self.get_msg("latest_release", tag=release_info['tag'], name=release_info['name']) + "\n"
+        if prerelease_info:
+            info_panel_text += self.get_msg("latest_prerelease", tag=prerelease_info['tag'], name=prerelease_info['name'])
+
         self.print(Panel(info_panel_text, title=f"[bold cyan]{self.get_msg('menu_title')}[/bold cyan]", expand=False))
         self.print(table)
-        
-        choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2"], show_choices=False)
+
+        choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3"], show_choices=False)
         
         download_url = ""
         target_v = ""
@@ -336,10 +366,17 @@ class UpdateManager(Base):
                 self.error("Release info not available.")
                 return
             self.print(f"\n{self.get_msg('release_stable')}")
-            # Use the tag zip for stable release
             download_url = self.DOWNLOAD_TAG_URL.format(tag=release_info['tag'])
             target_v = release_info['tag']
             changelog = f"[bold green]Release: {release_info['name']}[/bold green]\n{release_info['body']}"
+        elif choice == 3:
+            if not prerelease_info:
+                self.error("Pre-release info not available.")
+                return
+            self.print(f"\n{self.get_msg('prerelease_warn')}")
+            download_url = self.DOWNLOAD_TAG_URL.format(tag=prerelease_info['tag'])
+            target_v = prerelease_info['tag']
+            changelog = f"[bold yellow]Pre-release: {prerelease_info['name']}[/bold yellow]\n{prerelease_info['body']}"
         else:
             return
 

@@ -565,6 +565,7 @@
         "banner_auto_proofread": "Auto Proofread",
         "banner_auto_proofread_hint": "Auto AI proofreading after translation, incurs additional API costs",
         "banner_github_fetch_failed": "Unable to connect to Github, failed to fetch latest Commit and Release",
+        "banner_beta_warning": "Note: You are on a Beta version, there may be issues. Please submit an issue for fixes/improvements",
         "label_operation_flow": "Operation Flow",
         "msg_api_error_hint": "[Y] Multiple API errors detected, press Y for self-diagnosis",
         "msg_entering_diagnostic": "Entering self-diagnosis system...",
