@@ -1838,12 +1838,6 @@ class CLIMenu:
             beta_msg = i18n.get('banner_beta_warning') or '注意:您正处于Beta版本，可能存在一些问题，若您遇到了，请提交issue以供修复/优化'
             beta_warning_line = f"\n[yellow]{beta_msg}[/yellow]"
 
-        # Beta 版本提示
-        beta_warning_line = ""
-        if 'B' in v_str.upper():
-            beta_msg = i18n.get('banner_beta_warning') or '注意:您正处于Beta版本，可能存在一些问题，若您遇到了，请提交issue以供修复/优化'
-            beta_warning_line = f"\n[yellow]{beta_msg}[/yellow]"
-
         profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
         
@@ -1855,7 +1849,6 @@ class CLIMenu:
             f"{settings_line_3}\n"
             f"{settings_line_4}"
             f"{github_status_line}"
-            f"{beta_warning_line}"
             f"{beta_warning_line}"
         )
         
