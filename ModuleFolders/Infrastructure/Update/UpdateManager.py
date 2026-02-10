@@ -625,19 +625,26 @@ class UpdateManager(Base):
                 try:
                     # 获取所有 Release
                     releases = requests.get(self.RELEASES_URL, timeout=10).json()
-                    # 找到第一个 Prerelease
-                    target_release = next((r for r in releases if r.get('prerelease')), None)
-                    
-                    if target_release:
-                        # 找到 web-dist-dev.zip 资源
-                        asset = next((a for a in target_release.get('assets', []) if a['name'] == 'web-dist-dev.zip'), None)
-                        if asset:
-                            url = asset['browser_download_url']
-                            self.print(f"[green]Found Pre-release: {target_release['tag_name']}[/green]")
-                        else:
-                            self.error("Found pre-release but 'web-dist-dev.zip' asset is missing.")
+                    # 找到包含 web-dist-dev.zip 的 Prerelease（而不是第一个prerelease）
+                    # 因为可能存在多个prerelease，比如主程序Beta版和WebUI专用版
+                    target_release = None
+                    asset = None
+                    for r in releases:
+                        if r.get('prerelease'):
+                            # 检查这个prerelease是否包含web-dist-dev.zip
+                            found_asset = next((a for a in r.get('assets', []) if a['name'] == 'web-dist-dev.zip'), None)
+                            if found_asset:
+                                target_release = r
+                                asset = found_asset
+                                break
+
+                    if target_release and asset:
+                        url = asset['browser_download_url']
+                        self.print(f"[green]Found Pre-release: {target_release['tag_name']}[/green]")
+                    elif target_release:
+                        self.error("Found pre-release but 'web-dist-dev.zip' asset is missing.")
                     else:
-                        self.error("No pre-release found.")
+                        self.error("No pre-release with 'web-dist-dev.zip' found.")
                 except Exception as e:
                     self.error(f"Failed to fetch pre-release info: {e}")
             
