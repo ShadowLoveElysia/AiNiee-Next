@@ -694,7 +694,7 @@
         "setting_presence_penalty": "存在ペナルティ (Presence Penalty)",
         "setting_frequency_penalty": "頻度ペナルティ (Frequency Penalty)",
         "warn_sampling_params": "警告: サンプリングパラメータを変更すると、モデル出力の品質とスタイルに大きく影響します。不適切な設定は翻訳品質を著しく低下させる可能性があります！",
-        "warn_sampling_params_desc": "これらのパラメータはモデルのランダム性と創造性を制御します。各パラメータの効果を理解していない限り、デフォルト値を維持することをお勧めします。",
+        "warn_sampling_params_desc": "これらのパラメータはモデルのランダム性と創造性を制御します。一部のLLMは特定のパラメータをサポートしていない場合があります（例：Anthropicはペナルティパラメータ非対応、Gemini 2.5+はペナルティパラメータ非対応など）。設定前に使用するモデルのドキュメントをご確認ください。",
         "confirm_sampling_change": "このパラメータを変更してもよろしいですか？確認するには 'YES' と入力してください: ",
         "msg_sampling_change_cancelled": "パラメータの変更がキャンセルされました。",
         "msg_sampling_change_saved": "サンプリングパラメータが保存されました。",

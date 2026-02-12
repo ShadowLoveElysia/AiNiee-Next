@@ -715,7 +715,7 @@
         "setting_presence_penalty": "Presence Penalty",
         "setting_frequency_penalty": "Frequency Penalty",
         "warn_sampling_params": "WARNING: Modifying sampling parameters will significantly affect model output quality and style. Improper settings may severely degrade translation quality!",
-        "warn_sampling_params_desc": "These parameters control the model's randomness and creativity. Unless you understand each parameter's effect, it's recommended to keep default values.",
+        "warn_sampling_params_desc": "These parameters control the model's randomness and creativity. Some LLMs may not support certain parameters (e.g., Anthropic doesn't support penalty params, Gemini 2.5+ doesn't support penalty params). Please check your specific model's documentation before making changes.",
         "confirm_sampling_change": "Are you sure you want to modify this parameter? Type 'YES' to confirm: ",
         "msg_sampling_change_cancelled": "Parameter change cancelled.",
         "msg_sampling_change_saved": "Sampling parameters saved.",

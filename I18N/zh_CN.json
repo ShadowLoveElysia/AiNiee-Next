@@ -737,7 +737,7 @@
         "setting_presence_penalty": "存在惩罚 (Presence Penalty)",
         "setting_frequency_penalty": "频率惩罚 (Frequency Penalty)",
         "warn_sampling_params": "警告: 修改采样参数会显著影响模型输出质量和风格。不当的设置可能导致翻译质量严重下降！",
-        "warn_sampling_params_desc": "这些参数控制模型的随机性和创造性。除非您清楚了解每个参数的作用，否则建议保持默认值。",
+        "warn_sampling_params_desc": "这些参数控制模型的随机性和创造性。部分LLM可能不支持某些参数（如Anthropic不支持惩罚参数，Gemini 2.5+不支持惩罚参数等），请查询您使用的具体模型文档后再进行设定。",
         "confirm_sampling_change": "您确定要修改此参数吗？请输入 'YES' 确认: ",
         "msg_sampling_change_cancelled": "参数修改已取消。",
         "msg_sampling_change_saved": "采样参数已保存。",
