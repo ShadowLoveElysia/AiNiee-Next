@@ -111,6 +111,7 @@ class SettingsMenuBuilder:
             ("prompt_feature", "label_category_prompt_feature"),
             ("api", "label_category_api"),
             ("response_check", "label_category_response_check"),
+            ("automation", "label_category_automation"),
             ("advanced", "label_category_advanced"),
         ]
 

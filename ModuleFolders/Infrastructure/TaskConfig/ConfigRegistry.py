@@ -971,6 +971,16 @@ register_config(ConfigItem(
     category="translation"
 ))
 
+# --- 自动化设置入口 (显示为子菜单入口) ---
+register_config(ConfigItem(
+    key="automation_settings",
+    default=None,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.DICT,
+    i18n_key="menu_automation",
+    category="automation"
+))
+
 
 # ============================================================
 # 辅助函数
