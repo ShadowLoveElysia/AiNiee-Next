@@ -1890,7 +1890,183 @@ class CLIMenu:
         console.print(f"\n[bold green]✓ {i18n.get('msg_saved')} Wizard complete! Entering the main menu...[/bold green]")
         time.sleep(2)
 
+    def _detect_terminal_capability(self):
+        """检测终端能力，返回检测结果字典"""
+        result = {
+            'capable': False,
+            'is_windows': sys.platform == 'win32',
+            'is_ssh': bool(os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY') or os.environ.get('SSH_CONNECTION')),
+            'is_windows_terminal': bool(os.environ.get('WT_SESSION')),
+            'is_windows_cmd': False,
+            'supports_default_terminal': False,  # 是否支持设置默认终端
+            'windows_build': 0,
+            'colorterm': os.environ.get('COLORTERM', ''),
+            'term': os.environ.get('TERM', ''),
+            'term_program': os.environ.get('TERM_PROGRAM', ''),
+        }
+
+        # Windows Terminal 完全支持
+        if result['is_windows_terminal']:
+            result['capable'] = True
+            return result
+
+        # 检查 COLORTERM (truecolor/24bit 表示完整支持)
+        if result['colorterm'].lower() in ('truecolor', '24bit'):
+            result['capable'] = True
+            return result
+
+        # 检查 TERM 变量
+        term = result['term'].lower()
+        # 现代终端标识
+        if any(t in term for t in ['256color', 'xterm', 'screen', 'tmux', 'rxvt', 'kitty', 'alacritty']):
+            result['capable'] = True
+            return result
+
+        # 检查 TERM_PROGRAM (macOS/常见终端)
+        term_program = result['term_program'].lower()
+        if term_program in ('apple_terminal', 'iterm.app', 'vscode', 'hyper', 'tabby', 'wezterm'):
+            result['capable'] = True
+            return result
+
+        # Windows 版本检测
+        if result['is_windows']:
+            try:
+                import platform
+                version = platform.version()  # 例如 '10.0.22631'
+                build = int(version.split('.')[-1])
+                result['windows_build'] = build
+
+                # Windows 11 (build 22000+) 默认就是 Windows Terminal，直接通过
+                if build >= 22000:
+                    result['capable'] = True
+                    return result
+
+                # Windows 10 build 14393+ 支持 ANSI
+                if build >= 14393:
+                    # Windows 10 22H2 (build 19045) 支持设置默认终端，但默认仍是 CMD
+                    if build >= 19045:
+                        result['supports_default_terminal'] = True
+                    result['is_windows_cmd'] = True
+                    # 不设置 capable，让用户选择是否切换到 Windows Terminal
+                    return result
+            except (ValueError, IndexError):
+                pass
+
+            # 如果无法检测版本，且没有其他现代终端标识，标记为可能是旧版 CMD
+            if not result['term'] and not result['colorterm']:
+                result['is_windows_cmd'] = True
+
+        return result
+
+    def _check_terminal_compatibility(self):
+        """检查终端兼容性，如果终端能力不足则提示用户"""
+        # 检查是否已经处理过（避免重复提示）
+        if self.root_config.get("terminal_check_skipped"):
+            return True
+
+        # 检测终端能力
+        term_info = self._detect_terminal_capability()
+
+        # 终端能力足够，直接返回
+        if term_info['capable']:
+            return True
+
+        # 根据不同情况显示不同提示
+        if term_info['is_windows_cmd']:
+            detected_msg = i18n.get('terminal_compat_detected_cmd')
+            hint_msg = i18n.get('terminal_compat_wt_better')
+        elif term_info['is_ssh']:
+            detected_msg = i18n.get('terminal_compat_detected_ssh')
+            hint_msg = i18n.get('terminal_compat_ssh_better')
+        else:
+            detected_msg = i18n.get('terminal_compat_detected_limited')
+            hint_msg = i18n.get('terminal_compat_general_better')
+
+        # 显示终端选择菜单
+        console.print("\n")
+        console.print(Panel(
+            f"[yellow]{detected_msg}[/yellow]\n"
+            f"[dim]{hint_msg}[/dim]",
+            title=f"[bold]{i18n.get('terminal_compat_title')}[/bold]",
+            border_style="yellow"
+        ))
+
+        table = Table(show_header=False, box=None)
+        table.add_row("[cyan]1.[/]", i18n.get('terminal_compat_opt_manual'))
+
+        # Windows CMD 才显示自动重启选项
+        if term_info['is_windows_cmd']:
+            table.add_row("[green]2.[/]", f"{i18n.get('terminal_compat_opt_auto')} [green]{i18n.get('terminal_compat_opt_auto_recommended')}[/green]")
+            # 只有 Windows 10 22H2+ 或 Windows 11 才支持设置默认终端
+            if term_info.get('supports_default_terminal'):
+                table.add_row("[cyan]3.[/]", i18n.get('terminal_compat_opt_auto_default'))
+                table.add_row("[dim]4.[/]", i18n.get('terminal_compat_opt_skip'))
+                choices = ["1", "2", "3", "4"]
+            else:
+                table.add_row("[dim]3.[/]", i18n.get('terminal_compat_opt_skip'))
+                choices = ["1", "2", "3"]
+            default = "2"
+        else:
+            table.add_row("[dim]2.[/]", i18n.get('terminal_compat_opt_skip'))
+            choices = ["1", "2"]
+            default = "2"
+
+        console.print(table)
+
+        choice = Prompt.ask(f"\n{i18n.get('prompt_select')}", choices=choices, default=default)
+
+        if choice == "1":
+            console.print(f"\n[cyan]{i18n.get('terminal_compat_manual_hint')}[/cyan]")
+            console.print(f"[dim]{i18n.get('terminal_compat_manual_search')}[/dim]")
+            console.print(f"[dim]{i18n.get('terminal_compat_manual_store')}[/dim]")
+            console.print(f"[cyan]{i18n.get('terminal_compat_install_url')}[/cyan]")
+            input(f"\n{i18n.get('terminal_compat_press_enter_exit')}")
+            sys.exit(0)
+        elif choice == "2" and term_info['is_windows_cmd']:
+            # 尝试自动使用Windows Terminal重新启动
+            try:
+                script_path = os.path.abspath(sys.argv[0])
+                args = sys.argv[1:] if len(sys.argv) > 1 else []
+                cmd = ['wt', 'uv', 'run', script_path] + args
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                console.print(f"[green]{i18n.get('terminal_compat_auto_restarting')}[/green]")
+                time.sleep(1)
+                sys.exit(0)
+            except FileNotFoundError:
+                console.print(f"\n[red]{i18n.get('terminal_compat_wt_not_found')}[/red]")
+                console.print(f"[dim]{i18n.get('terminal_compat_install_from_store')}[/dim]")
+                console.print(f"[cyan]{i18n.get('terminal_compat_install_url')}[/cyan]")
+                console.print(f"[yellow]{i18n.get('terminal_compat_continue_anyway')}[/yellow]")
+                time.sleep(2)
+        elif choice == "3" and term_info['is_windows_cmd'] and term_info.get('supports_default_terminal'):
+            # 尝试自动使用Windows Terminal重新启动并设置为默认终端
+            try:
+                script_path = os.path.abspath(sys.argv[0])
+                args = sys.argv[1:] if len(sys.argv) > 1 else []
+                cmd = ['wt', 'uv', 'run', script_path] + args
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                # 打开 Windows 设置页面让用户设置默认终端
+                subprocess.Popen(['cmd', '/c', 'start', 'ms-settings:developers'], creationflags=subprocess.CREATE_NO_WINDOW)
+                console.print(f"[green]{i18n.get('terminal_compat_auto_restarting')}[/green]")
+                time.sleep(1)
+                sys.exit(0)
+            except FileNotFoundError:
+                console.print(f"\n[red]{i18n.get('terminal_compat_wt_not_found')}[/red]")
+                console.print(f"[dim]{i18n.get('terminal_compat_install_from_store')}[/dim]")
+                console.print(f"[cyan]{i18n.get('terminal_compat_install_url')}[/cyan]")
+                console.print(f"[yellow]{i18n.get('terminal_compat_continue_anyway')}[/yellow]")
+                time.sleep(2)
+
+        # 标记已处理，避免重复提示
+        self.root_config["terminal_check_skipped"] = True
+        self.save_config(save_root=True)
+
+        return True
+
     def main_menu(self):
+        # 检查终端兼容性
+        self._check_terminal_compatibility()
+
         if not self.root_config.get("wizard_completed"):
             self.run_wizard()
 
