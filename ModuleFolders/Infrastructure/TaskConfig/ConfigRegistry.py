@@ -543,6 +543,30 @@ register_config(ConfigItem(
 
 # --- 响应检查 (ADVANCED) - 拆分为独立配置项 ---
 register_config(ConfigItem(
+    key="untranslated_retry_limit",
+    default=3,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.INT,
+    i18n_key="check_untranslated_retry_limit",
+    i18n_desc_key="check_untranslated_retry_limit_desc",
+    min_value=0,
+    max_value=10,
+    category="response_check"
+))
+
+register_config(ConfigItem(
+    key="untranslated_reduction_rate",
+    default=0.5,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.FLOAT,
+    i18n_key="check_untranslated_reduction_rate",
+    i18n_desc_key="check_untranslated_reduction_rate_desc",
+    min_value=0.1,
+    max_value=0.9,
+    category="response_check"
+))
+
+register_config(ConfigItem(
     key="newline_character_count_check",
     default=False,
     level=ConfigLevel.ADVANCED,

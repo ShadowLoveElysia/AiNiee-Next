@@ -8,18 +8,19 @@ from ModuleFolders.Domain.ResponseChecker.BaseChecks import (
 )
 
 from ModuleFolders.Domain.ResponseChecker.AdvancedChecks import (
-    check_multiline_text, 
-    check_dicts_equal, 
-    detecting_remaining_original_text, 
+    check_multiline_text,
+    check_dicts_equal,
+    detecting_remaining_original_text,
     check_placeholders_exist,
-    check_reply_format
+    check_reply_format,
+    check_untranslated_lines
 )
 
 class ResponseChecker():
     def __init__(self):
         pass
 
-    def check_response_content(self, config, placeholder_order, response_str, response_dict, source_text_dict, source_lang):
+    def check_response_content(self, config, placeholder_order, response_str, response_dict, source_text_dict, source_lang, retry_count=0):
 
         source_language = TranslatorUtil.map_language_code_to_name(source_lang)
         response_check_switch = config.response_check_switch
@@ -70,6 +71,21 @@ class ResponseChecker():
         # 占位符检查
         if not check_placeholders_exist(placeholder_order, response_dict):
             return False, "【自动处理】 - 未正确保留全部的占位符"
+
+        # 漏翻检测
+        untranslated_retry_limit = response_check_switch.get('untranslated_retry_limit', 3)
+        untranslated_reduction_rate = response_check_switch.get('untranslated_reduction_rate', 0.5)
+        target_language = config.target_language
+        if not check_untranslated_lines(
+            source_text_dict,
+            response_dict,
+            source_language,
+            target_language,
+            retry_count,
+            untranslated_retry_limit,
+            untranslated_reduction_rate
+        ):
+            return False, "【漏翻检测】 - 译文疑似未翻译，将重试"
 
         # 全部检查通过
         return True, "检查无误"

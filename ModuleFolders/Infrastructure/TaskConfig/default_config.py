@@ -34,6 +34,8 @@ DEFAULT_CONFIG = {
         "return_to_original_text_check": False,
         "residual_original_text_check": False,
         "reply_format_check": False,
+        "untranslated_retry_limit": 3,
+        "untranslated_reduction_rate": 0.5,
     },
     "keep_original_encoding": True,
     "translated_output_path": "",

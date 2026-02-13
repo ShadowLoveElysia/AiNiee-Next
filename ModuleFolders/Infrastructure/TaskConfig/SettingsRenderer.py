@@ -135,10 +135,10 @@ class SettingsMenuBuilder:
 
     def render_table(self) -> Table:
         """渲染设置表格，按分类分组"""
-        table = Table(show_header=True, show_lines=False)
-        table.add_column("ID", style="dim", width=4)
-        table.add_column(self.i18n.get("label_setting_name"))
-        table.add_column(self.i18n.get("label_value"), style="cyan")
+        table = Table(show_header=True, show_lines=False, expand=True)
+        table.add_column("ID", style="dim", width=4, no_wrap=True)
+        table.add_column(self.i18n.get("label_setting_name"), overflow="fold", ratio=3)
+        table.add_column(self.i18n.get("label_value"), style="cyan", ratio=1)
 
         current_category = None
 
@@ -161,6 +161,12 @@ class SettingsMenuBuilder:
             name = self.i18n.get(item.i18n_key) if item.i18n_key else key
             name += get_level_suffix(item.level)
             name += get_online_only_suffix(item, self.i18n)
+
+            # 获取描述（如果有）
+            if item.i18n_desc_key:
+                desc = self.i18n.get(item.i18n_desc_key)
+                if desc and desc != item.i18n_desc_key:
+                    name += f"\n  [dim]{desc}[/dim]"
 
             # 获取当前值
             value = self.config.get(key, item.default)

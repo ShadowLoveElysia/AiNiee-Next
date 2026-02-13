@@ -332,6 +332,11 @@ class TranslatorTask(Base):
         # 提取回复内容
         response_dict = ResponseExtractor.text_extraction(self, self.source_text_dict, response_content)
 
+        # 获取漏翻检测重试次数（从第一个item的extra中获取）
+        untranslated_retry_count = 0
+        if self.items:
+            untranslated_retry_count = self.items[0].extra.get('untranslated_retry_count', 0)
+
         # 检查回复内容
         check_result, error_content = ResponseChecker.check_response_content(
             self,
@@ -340,7 +345,8 @@ class TranslatorTask(Base):
             response_content,
             response_dict,
             self.source_text_dict,
-            self.source_lang
+            self.source_lang,
+            untranslated_retry_count
         )
 
         # 去除回复内容的数字序号
@@ -391,6 +397,13 @@ class TranslatorTask(Base):
         # 4. 检查译文并决定返回 (完全恢复原始逻辑结构)
         if check_result == False:
             error = f"[{self.task_id}] [ERROR] 译文文本未通过检查，将在下一轮次的翻译中重新翻译 - {error_content}"
+
+            # 如果是漏翻检测失败，增加重试计数
+            if "漏翻检测" in error_content:
+                for item in self.items:
+                    with item.atomic_scope():
+                        current_count = item.extra.get('untranslated_retry_count', 0)
+                        item.extra['untranslated_retry_count'] = current_count + 1
 
             # 打印任务结果
             if self.is_debug() and not self.config.show_detailed_logs:

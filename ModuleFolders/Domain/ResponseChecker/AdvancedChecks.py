@@ -384,7 +384,79 @@ def check_reply_format(source_text_dict: dict, response_dict: dict) -> bool:
                 return False
 
     return True
-        
-    
-    # 所有行的格式检查都通过
+
+
+def check_untranslated_lines(source_text_dict, response_dict, source_lang, target_lang, retry_count=0, retry_limit=3, reduction_threshold=0.5):
+    """
+    检测译文中是否存在未翻译的行
+    通过对比原文和译文的源语言字符变化率来判断
+
+    参数:
+        source_text_dict: 原文字典 {序号: 原文}
+        response_dict: 译文字典 {序号: 译文}
+        source_lang: 源语言代码
+        target_lang: 目标语言代码
+        retry_count: 当前重试次数
+        retry_limit: 最大重试次数阈值
+        reduction_threshold: 源语言字符减少率阈值（低于此值视为未翻译）
+
+    返回:
+        True: 检查通过（已翻译或超过重试次数）
+        False: 检查不通过（疑似未翻译，需要重试）
+    """
+    # 超过重试次数，直接放行
+    if retry_count >= retry_limit:
+        return True
+
+    # 如果重试次数阈值为0，禁用此检测
+    if retry_limit <= 0:
+        return True
+
+    # 语言特有字符正则
+    lang_patterns = {
+        'japanese': r'[\u3041-\u3096\u30A0-\u30FF]',  # 假名
+        'korean': r'[\uAC00-\uD7AF]',  # 韩文
+        'english': r'[a-zA-Z]',  # 英文
+        'russian': r'[\u0400-\u04FF]',  # 俄文
+    }
+
+    source_pattern = lang_patterns.get(source_lang)
+
+    # 不支持的语言组合，跳过检测
+    if not source_pattern:
+        return True
+
+    # 源语言和目标语言相同，跳过
+    if source_lang == target_lang:
+        return True
+
+    for key in source_text_dict:
+        source = source_text_dict[key].strip()
+        response = response_dict.get(key, "").strip()
+
+        # 跳过过短的行（可能是符号、数字等）
+        if len(source) < 2:
+            continue
+
+        # === 检测1：完全相同 ===
+        if source == response:
+            return False
+
+        # === 检测2：去除标点空格后相同 ===
+        source_clean = re.sub(r'[\s\.\,\!\?\。\、\，\！\？\「\」\『\』\(\)\（\）\~\～\-\—\:\：\;\；\'\"\'\'\"\"]', '', source)
+        response_clean = re.sub(r'[\s\.\,\!\?\。\、\，\！\？\「\」\『\』\(\)\（\）\~\～\-\—\:\：\;\；\'\"\'\'\"\"]', '', response)
+        if source_clean == response_clean:
+            return False
+
+        # === 检测3：源语言字符减少率 ===
+        source_chars = len(re.findall(source_pattern, source))
+        response_chars = len(re.findall(source_pattern, response))
+
+        # 原文中源语言字符足够多才检测（避免误判混合语言）
+        if source_chars > 3:
+            reduction_rate = (source_chars - response_chars) / source_chars
+            # 减少率低于阈值，疑似未翻译
+            if reduction_rate < reduction_threshold:
+                return False
+
     return True
