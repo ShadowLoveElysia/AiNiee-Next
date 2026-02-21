@@ -136,7 +136,10 @@ class GlossaryAnalyzer:
         completed_count = [0]  # 使用列表以便在闭包中修改
         error_count = [0]
 
-        def analyze_batch(batch_info):
+        failed_batches = []
+        failed_lock = threading.Lock()
+
+        def analyze_batch(batch_info, is_last_round=False):
             """单个批次的分析任务"""
             batch_idx, batch = batch_info
             text_content = "\n".join([item.source_text for item in batch])
@@ -154,25 +157,38 @@ class GlossaryAnalyzer:
                         all_terms.extend(terms)
                         completed_count[0] += 1
                     console.print(f"[green]√ [{batch_idx+1:03d}] 完成 | 发现 {len(terms)} 个术语 | {prompt_tokens}+{completion_tokens}T[/green]")
-                    return len(terms)
+                    return
                 else:
-                    with terms_lock:
-                        error_count[0] += 1
-                    console.print(f"[red]✗ [{batch_idx+1:03d}] 失败[/red]")
-                    return 0
+                    with failed_lock:
+                        failed_batches.append(batch_info)
+                    hint = "，将在下一轮重试" if not is_last_round else ""
+                    console.print(f"[red]✗ [{batch_idx+1:03d}] 失败{hint}[/red]")
             except Exception as e:
-                with terms_lock:
-                    error_count[0] += 1
-                console.print(f"[red]✗ [{batch_idx+1:03d}] 错误: {e}[/red]")
-                return 0
+                with failed_lock:
+                    failed_batches.append(batch_info)
+                hint = "，将在下一轮重试" if not is_last_round else ""
+                console.print(f"[red]✗ [{batch_idx+1:03d}] 错误: {e}{hint}[/red]")
 
         # 使用线程池并发执行
         console.print(f"\n[bold cyan]{self.i18n.get('msg_starting_concurrent') or '开始并发分析...'}[/bold cyan]\n")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
-            batch_infos = list(enumerate(batches))
-            list(executor.map(analyze_batch, batch_infos))
+        max_rounds = 3
+        batch_infos = list(enumerate(batches))
 
+        for round_num in range(max_rounds):
+            is_last = (round_num == max_rounds - 1)
+            if round_num > 0:
+                batch_infos = failed_batches[:]
+                failed_batches.clear()
+                console.print(f"\n[yellow]⟳ 第{round_num+1}轮重试，剩余 {len(batch_infos)} 个失败批次...[/yellow]\n")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+                list(executor.map(lambda b: analyze_batch(b, is_last), batch_infos))
+
+            if not failed_batches:
+                break
+
+        error_count[0] = len(failed_batches)
         console.print(f"\n[cyan]完成: {completed_count[0]}/{len(batches)}, 失败: {error_count[0]}[/cyan]")
 
         # 统计词频
