@@ -850,7 +850,6 @@ export const Settings: React.FC = () => {
              <Toggle field="enable_auto_restore_ebook" label={t('setting_auto_restore_ebook')} />
              <Toggle field="enable_xlsx_conversion" label={t('setting_enable_xlsx_conversion')} />
              <Toggle field="enable_dry_run" label={t('setting_dry_run')} />
-             <Toggle field="enable_retry" label={t('setting_enable_retry')} />
              <Toggle field="enable_smart_round_limit" label={t('setting_enable_smart_round_limit')} />
              <Toggle field="enable_rate_limit" label={t('setting_enable_rate_limit')} desc={t('setting_enable_rate_limit_desc')} />
              <Toggle field="response_conversion_toggle" label={t('setting_response_conversion_toggle')} />

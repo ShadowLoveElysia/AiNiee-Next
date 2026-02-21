@@ -40,7 +40,6 @@ DEFAULT_CONFIG = {
     "keep_original_encoding": True,
     "translated_output_path": "",
     "translation_project": "AutoType",
-    "enable_retry": True,
     "retry_count": 3,
     "round_limit": 3,
     "enable_smart_round_limit": False,

@@ -89,7 +89,6 @@ class TaskConfig(Base):
         self.tpm_limit = 10000000
         
         # 任务执行相关设置
-        self.enable_retry = True
         self.retry_count = 3
         self.round_limit = 3 # Changed default from 0 to 3 to allow multiple passes
         self.enable_smart_round_limit = False # ADDED: Enable dynamic round limit adjustment

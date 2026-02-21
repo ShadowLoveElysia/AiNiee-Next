@@ -287,15 +287,6 @@ register_config(ConfigItem(
 
 # --- 功能开关 (USER) ---
 register_config(ConfigItem(
-    key="enable_retry",
-    default=True,
-    level=ConfigLevel.USER,
-    config_type=ConfigType.BOOL,
-    i18n_key="setting_enable_retry",
-    category="feature"
-))
-
-register_config(ConfigItem(
     key="auto_set_output_path",
     default=False,
     level=ConfigLevel.USER,

@@ -233,7 +233,6 @@ export interface AppConfig {
   // --- Performance ---
   user_thread_counts: number;
   request_timeout: number;
-  enable_retry: boolean;
   retry_count: number;
   round_limit: number;
   enable_smart_round_limit: boolean;
