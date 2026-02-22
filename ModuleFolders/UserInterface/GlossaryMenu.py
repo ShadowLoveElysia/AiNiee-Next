@@ -128,11 +128,12 @@ class GlossaryMenu:
             table.add_row("[cyan]9.[/]", f"{self.i18n.get('menu_switch_profile_short')} ([yellow]{self.active_rules_profile_name}[/yellow])")
             table.add_row("[cyan]10.[/]", f"{self.i18n.get('menu_system_prompts') or 'System Prompts'} ([dim]{self.i18n.get('label_readonly') or 'Read Only'}[/dim])")
             table.add_row("[cyan]11.[/]", f"{self.i18n.get('menu_ai_glossary_analysis') or 'AI自动分析术语表'}")
+            table.add_row("[cyan]12.[/]", f"{self.i18n.get('menu_prompt_test') or '提示词测试'}")
 
             console.print(table)
             console.print(f"\n[dim]0. {self.i18n.get('menu_exit')}[/dim]")
 
-            choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=[str(i) for i in range(12)], show_choices=False)
+            choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=[str(i) for i in range(13)], show_choices=False)
             console.print("\n")
 
             if choice == 0:
@@ -159,6 +160,8 @@ class GlossaryMenu:
                 self.select_prompt_template("System", None)
             elif choice == 11:
                 self.run_glossary_analysis_task()
+            elif choice == 12:
+                self.run_prompt_test()
 
     def run_glossary_analysis_task(self):
         """AI自动分析术语表功能入口"""
@@ -273,6 +276,227 @@ class GlossaryMenu:
 
         except Exception as e:
             console.print(f"[red]{self.i18n.get('msg_analysis_error') or '分析出错'}: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+
+        Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+
+    def run_prompt_test(self):
+        """提示词测试功能入口"""
+        from ModuleFolders.Domain.FileReader.FileReader import FileReader
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
+        from ModuleFolders.Domain.PromptBuilder.PromptBuilder import PromptBuilder
+        from ModuleFolders.Service.TaskExecutor.TranslatorUtil import get_source_language_for_file
+
+        self.display_banner()
+        console.print(Panel(f"[bold]{self.i18n.get('menu_prompt_test') or '提示词测试'}[/bold]"))
+
+        # 第一步：选择提示词模板
+        console.print(f"\n[cyan]{self.i18n.get('prompt_select_prompt_template') or '请选择要测试的提示词模板:'}[/cyan]")
+        prompt_dir = os.path.join(self.cli.PROJECT_ROOT, "Resource", "Prompt", "Translate")
+        if not os.path.exists(prompt_dir):
+            console.print(f"[red]{self.i18n.get('err_prompt_dir_not_found') or '错误: 提示词目录不存在'}[/red]")
+            Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+            return
+
+        files = [f for f in os.listdir(prompt_dir) if f.endswith(".txt")]
+        if not files:
+            console.print(f"[red]{self.i18n.get('err_no_prompt_files') or '错误: 没有可用的提示词文件'}[/red]")
+            Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+            return
+
+        for i, f in enumerate(files, 1):
+            console.print(f"[cyan]{i}.[/] {f}")
+        console.print(f"[cyan]N.[/] {self.i18n.get('menu_prompt_create') or '新建提示词'}")
+        console.print(f"[dim]0. {self.i18n.get('menu_back')}[/dim]")
+
+        choice_str = Prompt.ask(self.i18n.get('prompt_select')).strip()
+        if choice_str == '0' or choice_str == '':
+            return
+
+        if choice_str.upper() == 'N':
+            # 新建提示词
+            new_name = Prompt.ask(self.i18n.get('prompt_new_prompt_name') or "请输入提示词名称").strip()
+            if not new_name:
+                return
+            if not new_name.endswith(".txt"):
+                new_name += ".txt"
+            new_path = os.path.join(prompt_dir, new_name)
+            if os.path.exists(new_path):
+                console.print(f"[red]{self.i18n.get('msg_file_exists') or '文件已存在'}[/red]")
+                Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+                return
+            # 让用户输入提示词内容
+            console.print(f"\n[yellow]{self.i18n.get('msg_multi_line_hint') or '请输入提示词内容，输入EOF结束:'}[/yellow]")
+            lines = []
+            while True:
+                try:
+                    line = input()
+                    if line.strip().upper() == "EOF":
+                        break
+                    lines.append(line)
+                except EOFError:
+                    break
+            selected_prompt_content = "\n".join(lines)
+            # 保存文件
+            with open(new_path, 'w', encoding='utf-8') as f:
+                f.write(selected_prompt_content)
+            selected_prompt_file = new_name
+            console.print(f"[green]{self.i18n.get('msg_file_created') or '文件已创建'}[/green]")
+        else:
+            try:
+                prompt_choice = int(choice_str)
+                if prompt_choice < 1 or prompt_choice > len(files):
+                    return
+                selected_prompt_file = files[prompt_choice - 1]
+                prompt_file_path = os.path.join(prompt_dir, selected_prompt_file)
+                with open(prompt_file_path, 'r', encoding='utf-8') as f:
+                    selected_prompt_content = f.read()
+            except ValueError:
+                return
+
+        # 第二步：选择文件（可循环重选）
+        selected_path = None
+        while True:
+            console.print(f"\n[cyan]{self.i18n.get('prompt_select_test_file') or '请选择要测试的文件:'}[/cyan]")
+            selected_path = self.file_selector.select_path(select_file=True, select_dir=False)
+
+            if not selected_path or not os.path.exists(selected_path):
+                console.print(f"[red]{self.i18n.get('err_not_file') or '错误: 路径不存在'}[/red]")
+                Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+                return
+
+            # 第三步：显示警告和选择测试模式
+            self.display_banner()
+            console.print(Panel(
+                f"[bold yellow]⚠ {self.i18n.get('msg_prompt_test_warning') or '警告：此功能会将整个文件内容一次性发送给API！'}[/bold yellow]\n"
+                f"[yellow]{self.i18n.get('msg_prompt_test_trim') or '请自行裁剪文件内容，仅保留少量测试文本，避免消耗过多Tokens。'}[/yellow]\n\n"
+                f"[dim]{self.i18n.get('msg_prompt_test_note') or '注意：测试会消耗API Tokens，请谨慎使用。'}[/dim]",
+                border_style="yellow"
+            ))
+
+            console.print(f"\n[green]{self.i18n.get('label_selected_prompt') or '已选提示词'}: {selected_prompt_file}[/green]")
+            console.print(f"[green]{self.i18n.get('label_selected_file') or '已选文件'}: {selected_path}[/green]")
+
+            console.print(f"\n[cyan]{self.i18n.get('prompt_test_mode') or '请选择测试模式:'}[/cyan]")
+            table = Table(show_header=False, box=None)
+            table.add_row("[cyan]1.[/]", self.i18n.get('option_pure_prompt') or "仅测试纯提示词（不启用术语表、角色设定等）")
+            table.add_row("[cyan]2.[/]", self.i18n.get('option_full_config') or "使用完整配置测试（启用所有已开启的功能）")
+            table.add_row("[cyan]3.[/]", self.i18n.get('option_reselect_file') or "重新选择文件")
+            console.print(table)
+            console.print(f"[dim]0. {self.i18n.get('menu_back')}[/dim]")
+
+            mode_choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3"], default=1, show_choices=False)
+            if mode_choice == 0:
+                return
+            if mode_choice == 3:
+                continue  # 重新选择文件
+
+            pure_prompt_mode = (mode_choice == 1)
+            break
+
+        # 准备配置
+        config = TaskConfig()
+        config.initialize(self.config)
+        config.prepare_for_translation(TaskType.TRANSLATION)
+
+        # 设置选中的提示词
+        config.translation_prompt_selection = {
+            "last_selected_id": selected_prompt_file.replace(".txt", ""),
+            "prompt_content": selected_prompt_content
+        }
+
+        platform_config = config.get_platform_configuration("translationReq")
+
+        # 如果是纯提示词模式，禁用所有附加功能
+        if pure_prompt_mode:
+            config.prompt_dictionary_switch = False
+            config.exclusion_list_switch = False
+            config.characterization_switch = False
+            config.world_building_switch = False
+            config.writing_style_switch = False
+            config.translation_example_switch = False
+            config.few_shot_and_example_switch = False
+            config.pre_line_counts = 0
+
+        console.print(f"\n[bold green]{self.i18n.get('msg_reading_file') or '正在读取文件...'}[/bold green]")
+
+        try:
+            # 直接读取文件内容
+            with open(selected_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+
+            if not file_content.strip():
+                console.print(f"[red]{self.i18n.get('err_no_content') or '错误: 无法读取文件内容'}[/red]")
+                Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+                return
+
+            # 按行分割
+            source_texts = [line for line in file_content.split('\n') if line.strip()]
+
+            if not source_texts:
+                console.print(f"[red]{self.i18n.get('err_no_text') or '错误: 文件中没有可翻译的文本'}[/red]")
+                Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+                return
+
+            # 显示文件信息
+            console.print(f"\n[cyan]{self.i18n.get('label_file_info') or '文件信息'}:[/cyan]")
+            console.print(f"  {self.i18n.get('label_total_lines') or '总行数'}: [yellow]{len(source_texts)}[/yellow]")
+
+            # 构建源文本字典
+            source_text_dict = {str(i): text for i, text in enumerate(source_texts)}
+
+            # 使用配置的源语言
+            source_lang = config.source_language
+
+            # 构建提示词
+            messages, system_prompt, extra_log = PromptBuilder.generate_prompt(
+                config, source_text_dict, [], source_lang
+            )
+
+            # 显示提示词预览
+            console.print(f"\n[bold cyan]{'='*50}[/bold cyan]")
+            console.print(f"[bold]{self.i18n.get('label_system_prompt') or '系统提示词'}:[/bold]")
+            console.print(Panel(system_prompt[:500] + ("..." if len(system_prompt) > 500 else ""), border_style="blue"))
+
+            user_msg = messages[0]['content'] if messages else ""
+            console.print(f"\n[bold]{self.i18n.get('label_user_message') or '用户消息'} ({len(user_msg)} chars):[/bold]")
+            console.print(Panel(user_msg[:300] + ("..." if len(user_msg) > 300 else ""), border_style="green"))
+            console.print(f"[bold cyan]{'='*50}[/bold cyan]\n")
+
+            # 确认发送
+            if not Confirm.ask(self.i18n.get('confirm_send_test') or "确认发送测试请求?", default=True):
+                return
+
+            console.print(f"\n[bold green]{self.i18n.get('msg_sending_request') or '正在发送请求...'}[/bold green]")
+
+            # 发送请求
+            requester = LLMRequester()
+            skip, response_think, response_content, prompt_tokens, completion_tokens = requester.sent_request(
+                messages, system_prompt, platform_config
+            )
+
+            # 显示结果
+            console.print(f"\n[bold cyan]{'='*50}[/bold cyan]")
+            if not skip:
+                console.print(f"[bold green]✅ {self.i18n.get('msg_test_success') or '测试成功!'}[/bold green]\n")
+                console.print(f"[bold]{self.i18n.get('label_response') or '响应内容'}:[/bold]")
+                console.print(Panel(response_content[:1000] + ("..." if len(response_content) > 1000 else ""), border_style="green"))
+            else:
+                console.print(f"[bold red]❌ {self.i18n.get('msg_test_failed') or '测试失败!'}[/bold red]\n")
+                console.print(f"[red]{response_content}[/red]")
+
+            # 显示Token消耗
+            console.print(f"\n[bold]{self.i18n.get('label_token_usage') or 'Token消耗'}:[/bold]")
+            console.print(f"  Prompt Tokens: [cyan]{prompt_tokens}[/cyan]")
+            console.print(f"  Completion Tokens: [cyan]{completion_tokens}[/cyan]")
+            console.print(f"  Total Tokens: [yellow]{prompt_tokens + completion_tokens}[/yellow]")
+            console.print(f"[bold cyan]{'='*50}[/bold cyan]")
+
+        except Exception as e:
+            console.print(f"[red]{self.i18n.get('msg_test_error') or '测试出错'}: {e}[/red]")
             import traceback
             traceback.print_exc()
 
