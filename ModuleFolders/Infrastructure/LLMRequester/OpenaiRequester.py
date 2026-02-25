@@ -113,6 +113,31 @@ class OpenaiRequester(Base):
                 think, content, pt, ct = self._parse_json_response(response_json)
                 return False, think, content, pt, ct
 
+    def _do_request_sdk(self, client, request_body: dict,
+                        request_timeout: int) -> tuple[bool, str, str, int, int]:
+        """通过 OpenAI SDK 执行请求"""
+        response = client.chat.completions.create(
+            timeout=request_timeout,
+            **request_body
+        )
+
+        message = response.choices[0].message
+        response_content = message.content or ""
+
+        # 自适应提取推理过程
+        response_think = ""
+        if response_content and "</think>" in response_content:
+            splited = response_content.split("</think>")
+            response_think = splited[0].removeprefix("<think>").replace("\n\n", "\n")
+            response_content = splited[-1]
+        else:
+            response_think = getattr(message, "reasoning_content", "") or ""
+
+        prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+        completion_tokens = response.usage.completion_tokens if response.usage else 0
+
+        return False, response_think, response_content, int(prompt_tokens), int(completion_tokens)
+
     # 发起请求
     def request_openai(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
         try:
@@ -160,49 +185,47 @@ class OpenaiRequester(Base):
             if think_switch:
                 request_body["reasoning_effort"] = think_depth
 
-            # 处理API URL
-            api_url = platform_config.get("api_url").rstrip('/')
-            if platform_config.get("auto_complete", False) and not api_url.endswith('/chat/completions'):
-                api_url = f"{api_url}/chat/completions"
-            api_key = platform_config.get("api_key")
+            # 读取请求模式开关
+            use_sdk = platform_config.get("use_openai_sdk", False)
 
-            # 智能流式判断逻辑
-            if enable_stream:
-                stream_status = self._get_stream_support_status(api_url, model_name)
-
-                if stream_status is True:
-                    # 已知支持流式，直接使用流式
-                    return self._do_request(api_url, api_key, request_body, request_timeout, True)
-                elif stream_status is False:
-                    # 已知不支持流式，直接使用非流式
-                    return self._do_request(api_url, api_key, request_body, request_timeout, False)
-                else:
-                    # 未知状态，尝试流式请求
-                    try:
-                        result = self._do_request(api_url, api_key, request_body.copy(), request_timeout, True)
-                        # 流式请求成功，标记为支持流式
-                        self._set_stream_support_status(api_url, model_name, True)
-                        return result
-                    except Exception as stream_error:
-                        # 流式请求失败，尝试非流式
-                        error_str = str(stream_error).lower()
-                        # 检查是否是流式不支持的错误
-                        stream_error_keywords = ["stream", "unsupported", "not supported", "invalid"]
-                        if any(k in error_str for k in stream_error_keywords):
-                            try:
-                                result = self._do_request(api_url, api_key, request_body.copy(), request_timeout, False)
-                                # 非流式请求成功，标记为不支持流式
-                                self._set_stream_support_status(api_url, model_name, False)
-                                self.debug(f"API不支持流式，已标记并切换到非流式模式: {api_url}")
-                                return result
-                            except Exception as non_stream_error:
-                                raise non_stream_error
-                        else:
-                            # 不是流式相关错误，直接抛出
-                            raise stream_error
+            if use_sdk:
+                # ===== OpenAI SDK 模式 =====
+                return self._do_request_sdk(client, request_body, request_timeout)
             else:
-                # 流式功能关闭，直接使用非流式
-                return self._do_request(api_url, api_key, request_body, request_timeout, False)
+                # ===== 原生 HTTPX 模式 =====
+                api_url = platform_config.get("api_url").rstrip('/')
+                if platform_config.get("auto_complete", False) and not api_url.endswith('/chat/completions'):
+                    api_url = f"{api_url}/chat/completions"
+                api_key = platform_config.get("api_key")
+
+                # 智能流式判断逻辑
+                if enable_stream:
+                    stream_status = self._get_stream_support_status(api_url, model_name)
+
+                    if stream_status is True:
+                        return self._do_request(api_url, api_key, request_body, request_timeout, True)
+                    elif stream_status is False:
+                        return self._do_request(api_url, api_key, request_body, request_timeout, False)
+                    else:
+                        try:
+                            result = self._do_request(api_url, api_key, request_body.copy(), request_timeout, True)
+                            self._set_stream_support_status(api_url, model_name, True)
+                            return result
+                        except Exception as stream_error:
+                            error_str = str(stream_error).lower()
+                            stream_error_keywords = ["stream", "unsupported", "not supported", "invalid"]
+                            if any(k in error_str for k in stream_error_keywords):
+                                try:
+                                    result = self._do_request(api_url, api_key, request_body.copy(), request_timeout, False)
+                                    self._set_stream_support_status(api_url, model_name, False)
+                                    self.debug(f"API不支持流式，已标记并切换到非流式模式: {api_url}")
+                                    return result
+                                except Exception as non_stream_error:
+                                    raise non_stream_error
+                            else:
+                                raise stream_error
+                else:
+                    return self._do_request(api_url, api_key, request_body, request_timeout, False)
 
         except Exception as e:
             error_str = str(e)

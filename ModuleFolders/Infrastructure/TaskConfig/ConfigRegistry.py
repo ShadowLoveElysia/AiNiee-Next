@@ -659,6 +659,18 @@ register_config(ConfigItem(
     category="feature"
 ))
 
+# --- API请求模式 (USER) ---
+# 启用后使用 OpenAI SDK 发起请求，关闭则使用原生 HTTPX
+register_config(ConfigItem(
+    key="use_openai_sdk",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_use_openai_sdk",
+    i18n_desc_key="setting_use_openai_sdk_desc",
+    category="api"
+))
+
 # --- 流式API配置 (USER) ---
 register_config(ConfigItem(
     key="enable_stream_api",

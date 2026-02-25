@@ -100,6 +100,8 @@
     "setting_thread_count": "线程数",
     "setting_cache_backup_limit": "缓存备份上限",
     "setting_enable_api_failover": "开启API自动故障转移",
+    "setting_use_openai_sdk": "使用 OpenAI SDK 请求",
+    "setting_use_openai_sdk_desc": "启用后通过 OpenAI SDK 发起请求，关闭则使用原生 HTTPX 直连（二者互斥）",
     "setting_enable_stream_api": "启用流式API",
     "setting_enable_stream_api_desc": "智能检测API是否支持流式传输，首次请求自动判断并缓存结果",
     "setting_enable_prompt_caching": "启用上下文缓存",

@@ -23,6 +23,7 @@ from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
 from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint, FeatureSupport
 from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
+from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 
 
 class AsyncOpenaiRequester(Base):
@@ -180,6 +181,39 @@ class AsyncOpenaiRequester(Base):
                 think, content, pt, ct = self._parse_json_response(response_json)
                 return False, think, content, pt, ct
 
+    async def _do_request_sdk_async(
+        self, platform_config: dict, request_body: dict, request_timeout: int
+    ) -> Tuple[bool, str, str, int, int]:
+        """通过 OpenAI SDK 执行异步请求（在线程池中运行同步SDK调用）"""
+        import functools
+
+        client = LLMClientFactory().get_openai_client(platform_config)
+
+        def _sync_call():
+            return client.chat.completions.create(
+                timeout=request_timeout,
+                **request_body
+            )
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, _sync_call)
+
+        message = response.choices[0].message
+        response_content = message.content or ""
+
+        response_think = ""
+        if response_content and "</think>" in response_content:
+            splited = response_content.split("</think>")
+            response_think = splited[0].removeprefix("<think>").replace("\n\n", "\n")
+            response_content = splited[-1]
+        else:
+            response_think = getattr(message, "reasoning_content", "") or ""
+
+        prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+        completion_tokens = response.usage.completion_tokens if response.usage else 0
+
+        return False, response_think, response_content, int(prompt_tokens), int(completion_tokens)
+
     async def request_openai_async(
         self,
         messages: list,
@@ -229,44 +263,56 @@ class AsyncOpenaiRequester(Base):
             if think_switch:
                 request_body["reasoning_effort"] = think_depth
 
-            # 处理 API URL
-            api_url = platform_config.get("api_url").rstrip('/')
-            if platform_config.get("auto_complete", False) and not api_url.endswith('/chat/completions'):
-                api_url = f"{api_url}/chat/completions"
-            api_key = platform_config.get("api_key")
+            # 读取请求模式开关
+            use_sdk = platform_config.get("use_openai_sdk", False)
 
-            # 智能流式判断
-            if enable_stream:
-                stream_status = self._get_stream_support_status(api_url, model_name)
-
-                if stream_status is True:
-                    return await self._do_request_async(api_url, api_key, request_body, request_timeout, True)
-                elif stream_status is False:
-                    return await self._do_request_async(api_url, api_key, request_body, request_timeout, False)
-                else:
-                    # 未知状态，尝试流式
-                    try:
-                        result = await self._do_request_async(
-                            api_url, api_key, request_body.copy(), request_timeout, True
-                        )
-                        self._set_stream_support_status(api_url, model_name, True)
-                        return result
-                    except Exception as stream_error:
-                        error_str = str(stream_error).lower()
-                        stream_error_keywords = ["stream", "unsupported", "not supported", "invalid"]
-                        if any(k in error_str for k in stream_error_keywords):
-                            try:
-                                result = await self._do_request_async(
-                                    api_url, api_key, request_body.copy(), request_timeout, False
-                                )
-                                self._set_stream_support_status(api_url, model_name, False)
-                                return result
-                            except Exception as non_stream_error:
-                                raise non_stream_error
-                        else:
-                            raise stream_error
+            if use_sdk:
+                # ===== OpenAI SDK 模式 =====
+                return await self._do_request_sdk_async(platform_config, request_body, request_timeout)
             else:
-                return await self._do_request_async(api_url, api_key, request_body, request_timeout, False)
+                # ===== 原生 HTTPX 模式 =====
+                api_url = platform_config.get("api_url").rstrip('/')
+                if platform_config.get("auto_complete", False) and not api_url.endswith('/chat/completions'):
+                    api_url = f"{api_url}/chat/completions"
+                api_key = platform_config.get("api_key")
+
+                # 智能流式判断
+                if enable_stream:
+                    stream_status = self._get_stream_support_status(api_url, model_name)
+
+                    if stream_status is True:
+                        return await self._do_request_async(
+                            api_url, api_key, request_body, request_timeout, True
+                        )
+                    elif stream_status is False:
+                        return await self._do_request_async(
+                            api_url, api_key, request_body, request_timeout, False
+                        )
+                    else:
+                        try:
+                            result = await self._do_request_async(
+                                api_url, api_key, request_body.copy(), request_timeout, True
+                            )
+                            self._set_stream_support_status(api_url, model_name, True)
+                            return result
+                        except Exception as stream_error:
+                            error_str = str(stream_error).lower()
+                            stream_error_keywords = ["stream", "unsupported", "not supported", "invalid"]
+                            if any(k in error_str for k in stream_error_keywords):
+                                try:
+                                    result = await self._do_request_async(
+                                        api_url, api_key, request_body.copy(), request_timeout, False
+                                    )
+                                    self._set_stream_support_status(api_url, model_name, False)
+                                    return result
+                                except Exception as non_stream_error:
+                                    raise non_stream_error
+                            else:
+                                raise stream_error
+                else:
+                    return await self._do_request_async(
+                        api_url, api_key, request_body, request_timeout, False
+                    )
 
         except Exception as e:
             error_str = str(e)

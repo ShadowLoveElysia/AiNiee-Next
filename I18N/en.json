@@ -84,6 +84,8 @@
     "setting_project_type": "Project Type",
     "setting_cache_backup_limit": "Cache Backup Limit",
     "setting_enable_api_failover": "Enable API Auto-Failover",
+    "setting_use_openai_sdk": "Use OpenAI SDK for Requests",
+    "setting_use_openai_sdk_desc": "Use OpenAI SDK when enabled, raw HTTPX when disabled (mutually exclusive)",
     "setting_enable_stream_api": "Enable Streaming API",
     "setting_enable_stream_api_desc": "Smart detection of API streaming support, auto-detect on first request and cache result",
     "setting_enable_prompt_caching": "Enable Prompt Caching",

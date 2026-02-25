@@ -89,17 +89,34 @@ class APIManager:
             self.display_banner()
             current_p = self.config.get("target_platform", "None")
             current_m = self.config.get("model", "None")
-            console.print(Panel(f"[bold]{self.i18n.get('menu_api_settings')}[/bold] [dim](Current: {current_p} - {current_m})[/dim]"))
-            menus = ["online", "local", "validate", "manual", "edit_in_editor"]
+            use_sdk = self.config.get("use_openai_sdk", False)
+            mode_label = "OpenAI SDK" if use_sdk else "HTTPX"
+            console.print(Panel(
+                f"[bold]{self.i18n.get('menu_api_settings')}[/bold] "
+                f"[dim](Current: {current_p} - {current_m})[/dim]"
+            ))
+            menus = ["online", "local", "validate", "manual"]
             table = Table(show_header=False, box=None)
             for i, m in enumerate(menus):
-                table.add_row(
-                    f"[{'cyan' if i<2 else 'green' if i<3 else 'yellow' if i < 4 else 'magenta'}]{i+1}.[/]",
-                    self.i18n.get(f"menu_api_{m}" if m != "edit_in_editor" else "menu_edit_in_editor")
-                )
+                color = "cyan" if i < 2 else "green" if i < 3 else "yellow"
+                table.add_row(f"[{color}]{i+1}.[/]", self.i18n.get(f"menu_api_{m}"))
+
+            # 请求模式切换
+            sdk_status = "[green]OpenAI SDK[/]" if use_sdk else "[yellow]HTTPX[/]"
+            table.add_row(
+                "[bold blue]5.[/]",
+                f"{self.i18n.get('setting_use_openai_sdk')}: {sdk_status}"
+            )
+            # 编辑器打开
+            table.add_row("[magenta]6.[/]", self.i18n.get("menu_edit_in_editor"))
+
             console.print(table)
             console.print(f"\n[dim]0. {self.i18n.get('menu_exit')}[/dim]")
-            choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=list("012345"), show_choices=False)
+            choice = IntPrompt.ask(
+                self.i18n.get('prompt_select'),
+                choices=list("0123456"),
+                show_choices=False
+            )
             console.print()
             if choice == 0:
                 break
@@ -110,6 +127,14 @@ class APIManager:
             elif choice == 4:
                 self.manual_edit_api_menu()
             elif choice == 5:
+                # 切换请求模式（互斥）
+                new_sdk = not use_sdk
+                self.config["use_openai_sdk"] = new_sdk
+                self.save_config()
+                new_label = "OpenAI SDK" if new_sdk else "HTTPX"
+                console.print(f"[green]{self.i18n.get('setting_use_openai_sdk')} -> {new_label}[/green]")
+                time.sleep(0.5)
+            elif choice == 6:
                 profile_path = os.path.join(self.profiles_dir, f"{self.active_profile_name}.json")
                 if open_in_editor(profile_path):
                     Prompt.ask(f"\n{self.i18n.get('msg_press_enter_after_save')}")
@@ -294,7 +319,29 @@ class APIManager:
                         response = client.post(api_url, json=payload, headers=headers)
                         response.raise_for_status()
                         content = response.json()["choices"][0]["message"]["content"]
+                elif self.config.get("use_openai_sdk", False):
+                    # ===== OpenAI SDK 验证模式 =====
+                    from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
+
+                    api_key = task_config.get_next_apikey()
+                    model_name = task_config.model
+                    plat_conf = task_config.get_platform_configuration("translationReq")
+
+                    sdk_config = {
+                        "api_url": task_config.base_url,
+                        "api_key": api_key,
+                        "auto_complete": plat_conf.get("auto_complete", False),
+                    }
+                    client = LLMClientFactory().get_openai_client(sdk_config)
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": self.i18n.get("msg_test_msg")}],
+                        max_tokens=100,
+                        timeout=20,
+                    )
+                    content = response.choices[0].message.content or ""
                 else:
+                    # ===== 原生 HTTPX 验证模式 =====
                     import httpx
                     api_url = task_config.base_url.rstrip('/')
 
@@ -308,13 +355,6 @@ class APIManager:
                     api_key = task_config.get_next_apikey()
                     model_name = task_config.model
 
-                    headers = {
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Accept": "application/json",
-                        "X-Requested-With": "XMLHttpRequest"
-                    }
                     payload = {
                         "model": model_name,
                         "messages": [{"role": "user", "content": self.i18n.get("msg_test_msg")}],

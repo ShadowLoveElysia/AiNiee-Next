@@ -84,6 +84,8 @@
     "setting_project_type": "プロジェクトタイプ",
     "setting_cache_backup_limit": "キャッシュバックアップ上限",
     "setting_enable_api_failover": "API自動フェイルオーバーを有効にする",
+    "setting_use_openai_sdk": "OpenAI SDKでリクエスト",
+    "setting_use_openai_sdk_desc": "有効時はOpenAI SDKを使用、無効時はネイティブHTTPXで直接接続（排他的）",
     "setting_enable_stream_api": "ストリーミングAPIを有効にする",
     "setting_enable_stream_api_desc": "APIのストリーミングサポートを自動検出し、初回リクエスト時に判定して結果をキャッシュ",
     "setting_enable_prompt_caching": "プロンプトキャッシュを有効にする",

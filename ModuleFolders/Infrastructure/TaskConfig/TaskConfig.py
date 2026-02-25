@@ -121,6 +121,7 @@ class TaskConfig(Base):
         self.thinking_budget = -1
         self.structured_output_mode = 0
         self.enable_stream_api = True  # 流式API开关，默认启用
+        self.use_openai_sdk = False    # 请求模式：True=OpenAI SDK, False=原生HTTPX
         self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
 
     def __repr__(self) -> str:
@@ -429,6 +430,7 @@ class TaskConfig(Base):
         auto_complete = self.platforms.get(target_platform).get("auto_complete", False)
         enable_stream_api = getattr(self, "enable_stream_api", True)
         enable_prompt_caching = getattr(self, "enable_prompt_caching", False)
+        use_openai_sdk = getattr(self, "use_openai_sdk", False)
 
         params = {
             "target_platform": target_platform,
@@ -451,7 +453,8 @@ class TaskConfig(Base):
             "structured_output_mode": structured_output_mode,
             "auto_complete": auto_complete,
             "enable_stream_api": enable_stream_api,
-            "enable_prompt_caching": enable_prompt_caching
+            "enable_prompt_caching": enable_prompt_caching,
+            "use_openai_sdk": use_openai_sdk
         }
 
         return params
