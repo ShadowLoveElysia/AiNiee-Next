@@ -27,6 +27,11 @@ class CacheManager(Base):
 
         # 线程锁
         self.file_lock = threading.Lock()
+        self._save_thread_lock = threading.Lock()
+        self._save_thread = None
+        self.save_to_file_stop_flag = False
+        self.save_to_file_require_flag = False
+        self.save_to_file_require_path = ""
 
         self.project = CacheProject()
         self.project.stats_data = CacheProjectStatistics()
@@ -37,26 +42,42 @@ class CacheManager(Base):
         self.subscribe(Base.EVENT.TASK_MANUAL_SAVE_CACHE, self.on_manual_save_cache_requested)
         
     def start_interval_saving(self, event: int, data: dict):
-                # 如果是继续任务，则在开始前保存并重载缓存
-        if data.get("continue_status") is True:
+        # Prefer runtime path from event to avoid loading stale output directory.
+        output_path = data.get("session_output_path")
+        if not output_path:
             config = self.load_config()
             output_path = config.get("label_output_path", "./output")
-            if output_path and os.path.isdir(output_path):
-                # 强制保存当前内存中的缓存状态到磁盘，以包含编排表的修改
-               if hasattr(self, "project"): #判断内容是否变化                
-                self.save_to_file_require_path = output_path 
-                self.save_to_file() 
-                
-                # 从磁盘重载缓存，确保后续任务基于最新的状态
-                self.load_from_file(output_path)
-        
-        # 定时器
+
+        # Align memory state and disk state before resuming.
+        if data.get("continue_status") is True and output_path and os.path.isdir(output_path):
+            cache_path = os.path.join(output_path, "cache", "AinieeCacheData.json")
+            if hasattr(self, "project") and self.project is not None and self.get_item_count() > 0:
+                try:
+                    self.save_to_file_require_path = output_path
+                    self.save_to_file()
+                except Exception as e:
+                    self.warning(f"Pre-resume cache flush failed: {e}")
+            if os.path.isfile(cache_path):
+                try:
+                    self.load_from_file(output_path)
+                except Exception as e:
+                    self.warning(f"Pre-resume cache reload failed: {e}")
+
+        # Start save thread once.
         self.save_to_file_stop_flag = False
-        threading.Thread(target=self.save_to_file_tick, daemon=True).start()
+        with self._save_thread_lock:
+            if self._save_thread is None or not self._save_thread.is_alive():
+                self._save_thread = threading.Thread(
+                    target=self.save_to_file_tick,
+                    daemon=True,
+                    name="cache-save-tick",
+                )
+                self._save_thread.start()
 
     # 应用关闭事件
     def app_shut_down(self, event: int, data: dict) -> None:
         self.save_to_file_stop_flag = True
+        self.flush_pending_save()
 
     # 手动保存缓存请求事件
     def on_manual_save_cache_requested(self, event: int, data: dict) -> None:
@@ -169,19 +190,28 @@ class CacheManager(Base):
         """定时保存任务"""
         while not self.save_to_file_stop_flag:
             time.sleep(self.SAVE_INTERVAL)
-            if getattr(self, "save_to_file_require_flag", False):
-                self.save_to_file()
-                self.save_to_file_require_flag = False
+            self.flush_pending_save()
 
     # 请求保存缓存到文件
     def require_save_to_file(self, output_path: str) -> None:
         """请求保存缓存"""
+        if not output_path:
+            return
         self.save_to_file_require_path = output_path
         self.save_to_file_require_flag = True
+
+    def flush_pending_save(self) -> None:
+        if not getattr(self, "save_to_file_require_flag", False):
+            return
+        if not getattr(self, "save_to_file_require_path", ""):
+            return
+        self.save_to_file()
+        self.save_to_file_require_flag = False
 
     # 从项目中加载
     def load_from_project(self, data: CacheProject):
         self.project = data
+        self._normalize_project_state()
 
     # 从缓存文件读取数据
     def load_from_file(self, output_path: str) -> None:
@@ -191,6 +221,7 @@ class CacheManager(Base):
             if os.path.isfile(path):
                 try:
                     self.project = self.read_from_file(path)
+                    self._normalize_project_state()
                 except Exception as e:
                     # Auto-Heal logic
                     config = self.load_config()
@@ -204,6 +235,7 @@ class CacheManager(Base):
                             for b_path in backups:
                                 try:
                                     self.project = self.read_from_file(b_path)
+                                    self._normalize_project_state()
                                     self.print(f"[[green]SUCCESS[/]] {self.tra('msg_cache_healed').format(os.path.basename(b_path))}")
                                     # Copy healed backup to main path
                                     import shutil
@@ -213,6 +245,64 @@ class CacheManager(Base):
                                     continue
                         self.print(f"[[red]CRITICAL[/]] {self.tra('msg_cache_heal_fail')}")
                     raise e
+
+    def _normalize_project_state(self) -> None:
+        if not self.project:
+            self.project = CacheProject()
+
+        if self.project.stats_data is None:
+            self.project.stats_data = CacheProjectStatistics()
+
+        valid_statuses = {
+            TranslationStatus.UNTRANSLATED,
+            TranslationStatus.TRANSLATED,
+            TranslationStatus.POLISHED,
+            TranslationStatus.USER_PROOFREAD,
+            TranslationStatus.AI_PROOFREAD,
+            TranslationStatus.EXCLUDED,
+        }
+
+        for item in self.project.items_iter():
+            if item.source_text is None:
+                item.source_text = ""
+            elif not isinstance(item.source_text, str):
+                item.source_text = str(item.source_text)
+            if item.translated_text is None:
+                item.translated_text = ""
+            elif not isinstance(item.translated_text, str):
+                item.translated_text = str(item.translated_text)
+            if item.polished_text is None:
+                item.polished_text = ""
+            elif not isinstance(item.polished_text, str):
+                item.polished_text = str(item.polished_text)
+
+            if item.translation_status not in valid_statuses:
+                item.translation_status = TranslationStatus.UNTRANSLATED
+                continue
+
+            if item.translation_status == TranslationStatus.POLISHED and not item.polished_text.strip():
+                item.translation_status = (
+                    TranslationStatus.TRANSLATED
+                    if item.translated_text.strip()
+                    else TranslationStatus.UNTRANSLATED
+                )
+            elif item.translation_status == TranslationStatus.TRANSLATED and not item.translated_text.strip():
+                item.translation_status = TranslationStatus.UNTRANSLATED
+            elif item.translation_status == TranslationStatus.UNTRANSLATED and item.translated_text.strip():
+                item.translation_status = TranslationStatus.TRANSLATED
+
+        stats = self.project.stats_data
+        total_count = self.get_item_count()
+        stats.total_line = max(total_count, 0)
+        stats.line = min(max(stats.line, 0), stats.total_line)
+        stats.token = max(stats.token, 0)
+        stats.total_completion_tokens = max(stats.total_completion_tokens, 0)
+        stats.success_requests = max(stats.success_requests, 0)
+        stats.error_requests = max(stats.error_requests, 0)
+        stats.total_requests = max(
+            stats.total_requests,
+            stats.success_requests + stats.error_requests,
+        )
 
     @classmethod
     def read_from_file(cls, cache_path) -> CacheProject:
@@ -590,4 +680,3 @@ class CacheManager(Base):
                             "file_path": file_path
                         })
         return all_items_data
-

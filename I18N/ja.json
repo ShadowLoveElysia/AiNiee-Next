@@ -176,6 +176,8 @@
     "msg_cache_corrupted": "警告：メインキャッシュが破損しています！バックアップからの回復を試みています...",
     "msg_cache_healed": "成功：バックアップからデータを回復しました ({})",
     "msg_cache_heal_fail": "エラー：キャッシュを回復できません。バックアップも利用不可能です。",
+    "msg_resume_cache_missing_rebuild": "再開用キャッシュが見つかりません。元ファイルを再スキャンして新規開始します。",
+    "msg_resume_cache_load_failed_rebuild": "再開用キャッシュの読み込みに失敗しました（{}）。元ファイルを再スキャンして新規開始します。",
     "msg_dry_run_title": "--- 最初のタスクのプレビュー (Dry Run) ---",
     "msg_dry_run_confirm": "上記のプロンプトに間違いがないことを確認し、正式なタスクを開始しますか？",
     "msg_dry_run_hint": "(ヒント: 設定メニューでこのプレビュー機能を無効にできます)",

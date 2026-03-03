@@ -378,6 +378,14 @@ class TaskExecutor(Base):
 
         # 设置运行状态为停止中
         Base.work_status = Base.STATUS.STOPING
+
+        # Best-effort checkpoint for resume safety.
+        try:
+            if getattr(self, "session_output_path", None):
+                self.cache_manager.require_save_to_file(self.session_output_path)
+                self.cache_manager.flush_pending_save()
+        except Exception as e:
+            self.warning(f"Failed to flush cache on stop: {e}")
         
         # 如果存在执行器，尝试停止接收新任务
         if self.executor:
@@ -649,8 +657,8 @@ class TaskExecutor(Base):
                     finally:
                         self.executor = None
 
-            # 等待可能存在的缓存文件写入请求处理完毕
-            time.sleep(CacheManager.SAVE_INTERVAL)
+            # Ensure latest progress is persisted before post-processing/output.
+            self.cache_manager.flush_pending_save()
 
             # 触发插件事件
             self.plugin_manager.broadcast_event("postprocess_text", self.config, self.cache_manager.project)
@@ -899,8 +907,8 @@ class TaskExecutor(Base):
                 finally:
                     self.executor = None
 
-            # 等待可能存在的缓存文件写入请求处理完毕
-            time.sleep(CacheManager.SAVE_INTERVAL)
+            # Ensure latest progress is persisted before post-processing/output.
+            self.cache_manager.flush_pending_save()
 
             # 输出配置包
             output_config = {

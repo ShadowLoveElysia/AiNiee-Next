@@ -177,6 +177,8 @@
     "msg_cache_corrupted": "WARNING: Main cache corrupted! Attempting recovery from backup...",
     "msg_cache_healed": "SUCCESS: Data recovered from backup ({})",
     "msg_cache_heal_fail": "ERROR: Cache recovery failed, no usable backups found.",
+    "msg_resume_cache_missing_rebuild": "Resume cache not found. Falling back to a fresh scan from source files.",
+    "msg_resume_cache_load_failed_rebuild": "Resume cache failed to load ({}). Falling back to a fresh scan from source files.",
     "msg_dry_run_title": "--- First Task Preview (Dry Run) ---",
     "msg_dry_run_confirm": "Confirm the Prompt above is correct and start formal tasks?",
     "msg_dry_run_hint": "(Note: You can disable this preview in the Settings menu)",

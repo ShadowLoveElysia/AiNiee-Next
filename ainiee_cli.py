@@ -2903,16 +2903,24 @@ class CLIMenu:
 
                 # --- 1. 文件与缓存加载 ---
                 try:
+                    resume_mode = continue_status
                     # 如果是继续任务，尝试直接加载缓存
                     cache_loaded = False
-                    if continue_status:
+                    if resume_mode:
                         cache_file_path = os.path.join(opath, "cache", "AinieeCacheData.json")
                         if os.path.exists(cache_file_path):
                             self.ui.log(f"[cyan]Resuming from cache: {cache_file_path}[/cyan]")
-                            self.cache_manager.load_from_file(opath)
-                            cache_loaded = True
+                            try:
+                                self.cache_manager.load_from_file(opath)
+                                cache_loaded = True
+                            except Exception as e:
+                                self.ui.log(f"[yellow]{i18n.get('msg_resume_cache_load_failed_rebuild').format(e)}[/yellow]")
+                        else:
+                            self.ui.log(f"[yellow]{i18n.get('msg_resume_cache_missing_rebuild')}[/yellow]")
                     
                     if not cache_loaded:
+                        if resume_mode:
+                            resume_mode = False
                         cache_project = self.file_reader.read_files(self.config.get("translation_project", "AutoType"), current_target_path, self.config.get("exclude_rule_str", ""))
                         if not cache_project:
                             self.ui.log("[red]No files loaded.[/red]")
@@ -2930,7 +2938,7 @@ class CLIMenu:
                 EventManager.get_singleton().emit(
                     Base.EVENT.TASK_START, 
                     {
-                        "continue_status": continue_status, 
+                        "continue_status": resume_mode, 
                         "current_mode": task_mode,
                         "session_input_path": current_target_path,
                         "session_output_path": opath

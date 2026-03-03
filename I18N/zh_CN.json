@@ -222,6 +222,8 @@
     "msg_cache_corrupted": "警告: 主缓存文件损坏! 正在尝试从备份恢复...",
     "msg_cache_healed": "成功: 已从备份恢复数据 ({})",
     "msg_cache_heal_fail": "错误: 无法恢复缓存，备份也不可用。",
+    "msg_resume_cache_missing_rebuild": "未找到可恢复缓存，将改为重新读取原始文件并重新开始。",
+    "msg_resume_cache_load_failed_rebuild": "加载恢复缓存失败（{}），将改为重新读取原始文件并重新开始。",
     "msg_dry_run_title": "--- 首条任务预览 (Dry Run) ---",
     "msg_dry_run_confirm": "确认以上 Prompt 无误并开始正式任务吗?",
     "msg_dry_run_hint": "(提示: 您可以在设置菜单内关闭此预览功能)",
