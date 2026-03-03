@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 # --- Pre-emptive Import for FastAPI & Pydantic ---
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks
+    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
@@ -53,8 +53,11 @@ class TaskManager:
             self.initialized = True
             self.current_source = ""      # 当前批次原文
             self.current_translation = "" # 当前批次译文
-            self.api_url = "http://127.0.0.1:8000" # 默认地址
+            self.api_url = "http://127.0.0.1" # 默认地址（启动后会带端口）
             
+            self.internal_api_url = "http://127.0.0.1" # Worker callback URL（启动后会带端口）
+            self.comparison_seq = 0
+
             # Use a separate thread to monitor the process output
             self.monitor_thread: Optional[threading.Thread] = None
 
@@ -73,6 +76,7 @@ class TaskManager:
         """Update the side-by-side comparison data from the host process."""
         self.current_source = source
         self.current_translation = translation
+        self.comparison_seq += 1
 
     def push_stats(self, stats: Dict[str, Any]):
         """Directly push stats from the host process."""
@@ -83,6 +87,35 @@ class TaskManager:
             "rpm": self.stats.get("rpm", 0),
             "tpm": self.stats.get("tpm", 0)
         })
+
+    def snapshot_status(self, log_cursor: int = 0, chart_cursor: int = 0, comparison_cursor: int = 0) -> Dict[str, Any]:
+        """Get task status snapshot with optional incremental payloads."""
+        logs = list(self.logs)
+        chart = list(self.chart_data)
+
+        if log_cursor < 0 or log_cursor > len(logs):
+            log_cursor = 0
+        if chart_cursor < 0 or chart_cursor > len(chart):
+            chart_cursor = 0
+        if comparison_cursor < 0 or comparison_cursor > self.comparison_seq:
+            comparison_cursor = 0
+
+        comparison_changed = self.comparison_seq > comparison_cursor
+
+        return {
+            "stats": self.stats,
+            "logs": logs[log_cursor:],
+            "chart_data": chart[chart_cursor:],
+            "comparison": {
+                "source": self.current_source,
+                "translation": self.current_translation
+            } if comparison_changed else None,
+            "cursors": {
+                "logs": len(logs),
+                "chart": len(chart),
+                "comparison": self.comparison_seq,
+            },
+        }
 
     def _log_and_parse(self, stream):
         """Read from a stream, log the output, and parse for stats."""
@@ -111,10 +144,10 @@ class TaskManager:
                     self.stats["totalTokens"] = int(tokens_part)
                 except (IndexError, ValueError) as e:
                     # Log parsing error if the format is unexpected, but don't crash
-                    self.logs.append({"timestamp": time.time(), "message": f"[PARSER_ERROR] Could not parse stats line: {line}. Error: {e}"})
+                    self.push_log(f"[PARSER_ERROR] Could not parse stats line: {line}. Error: {e}", "warning")
             else:
-                            # It's a regular log line
-                            self.logs.append({"timestamp": time.time(), "message": line})
+                # It's a regular log line
+                self.push_log(line)
 
 
     def start_task(self, payload: Dict[str, Any]) -> bool:
@@ -126,11 +159,10 @@ class TaskManager:
             self.status = "running"
             self.logs.clear()
             self.chart_data.clear()
-            self.current_source = ""
-            self.current_translation = ""
+            self.push_comparison("", "")
             self.stats = self._get_initial_stats()
             self.stats["status"] = "running"
-            self.logs.append({"timestamp": time.time(), "message": "Task starting with parameters from web UI..."})
+            self.push_log("Task starting with parameters from web UI...")
 
             # Base command using corrected keys and uv runner
             cli_args = [
@@ -199,7 +231,7 @@ class TaskManager:
                 import os as system_os
                 env = system_os.environ.copy()
                 # 获取当前 WebServer 的运行地址
-                env["AINIEE_INTERNAL_API_URL"] = task_manager.api_url
+                env["AINIEE_INTERNAL_API_URL"] = task_manager.internal_api_url
                 # 强制子进程使用 UTF-8 编码输出，防止在 Windows 下产生编码冲突
                 env["PYTHONIOENCODING"] = "utf-8"
                 # 标记该进程为后端 Worker，与核心主进程（WebServer）区分
@@ -224,7 +256,7 @@ class TaskManager:
                 return True
             except Exception as e:
                 self.status = "error"
-                self.logs.append({"timestamp": time.time(), "message": f"Failed to start process: {e}"})
+                self.push_log(f"Failed to start process: {e}", "error")
                 return False
 
     def _process_monitor(self):
@@ -235,7 +267,7 @@ class TaskManager:
             for line in iter(self.process.stdout.readline, ''):
                 line = line.strip()
                 if line:
-                    self.logs.append({"timestamp": time.time(), "message": line})
+                    self.push_log(line)
                     
                     # 1. Parsing current file
                     if "File:" in line:
@@ -304,18 +336,18 @@ class TaskManager:
             
             self.status = "stopping"
             self.stats["status"] = "stopping"
-            self.logs.append({"timestamp": time.time(), "message": "Sending force stop signal..."})
+            self.push_log("Sending force stop signal...", "warning")
             
             try:
                 # Direct force kill as requested (Data safety guaranteed by cache)
                 self.process.kill()
                 self.process.wait(timeout=2)
             except Exception as e:
-                self.logs.append({"timestamp": time.time(), "message": f"Force stop error: {e}"})
+                self.push_log(f"Force stop error: {e}", "error")
             
             self.status = "idle"
             self.stats["status"] = "idle"
-            self.logs.append({"timestamp": time.time(), "message": "Task stopped."})
+            self.push_log("Task stopped.")
 
 
 task_manager = TaskManager()
@@ -1630,17 +1662,14 @@ async def stop_task():
     return {"message": "Stop signal sent."}
 
 @app.get("/api/task/status")
-async def get_task_status(response: Response):
+async def get_task_status(
+    response: Response,
+    log_cursor: int = Query(0, ge=0),
+    chart_cursor: int = Query(0, ge=0),
+    comparison_cursor: int = Query(0, ge=0)
+):
     response.headers["Cache-Control"] = "no-store"
-    return {
-        "stats": task_manager.stats,
-        "logs": list(task_manager.logs),
-        "chart_data": list(task_manager.chart_data),
-        "comparison": {
-            "source": task_manager.current_source,
-            "translation": task_manager.current_translation
-        }
-    }
+    return task_manager.snapshot_status(log_cursor, chart_cursor, comparison_cursor)
 
 class InternalComparisonPayload(BaseModel):
     source: str
@@ -1649,8 +1678,7 @@ class InternalComparisonPayload(BaseModel):
 @app.post("/api/internal/update_comparison")
 async def internal_update_comparison(payload: InternalComparisonPayload):
     """Internal endpoint for subprocesses to push comparison data."""
-    task_manager.current_source = payload.source
-    task_manager.current_translation = payload.translation
+    task_manager.push_comparison(payload.source, payload.translation)
     return {"status": "ok"}
 
 # --- File Management Endpoints ---
@@ -2990,6 +3018,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8000, monitor_mode: bool = F
     
     # 动态记录 WebServer 的地址，以便子进程上报数据
     task_manager.api_url = f"http://{host}:{port}"
+    task_manager.internal_api_url = f"http://127.0.0.1:{port}"
     
     try:
         config = uvicorn.Config(app, host=host, port=port, log_level="info")

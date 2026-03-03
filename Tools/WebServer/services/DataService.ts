@@ -1,4 +1,4 @@
-import { AppConfig, TaskPayload, TaskStats, LogEntry } from '../types';
+import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
 
 // Base API URL
 const API_BASE = '/api';
@@ -6,6 +6,16 @@ const API_BASE = '/api';
 interface TaskStatusResponse {
     stats: TaskStats;
     logs: LogEntry[];
+    chart_data?: ChartDataPoint[];
+    comparison?: {
+        source: string;
+        translation: string;
+    } | null;
+    cursors?: {
+        logs: number;
+        chart: number;
+        comparison: number;
+    };
 }
 
 export const DataService = {
@@ -491,9 +501,19 @@ export const DataService = {
     /**
      * Get real-time status, logs, and stats from the backend
      */
-    async getTaskStatus(): Promise<TaskStatusResponse> {
+    async getTaskStatus(
+        logCursor = 0,
+        chartCursor = 0,
+        comparisonCursor = 0
+    ): Promise<TaskStatusResponse> {
         try {
-            const res = await fetch(`${API_BASE}/task/status?_t=${Date.now()}`);
+            const params = new URLSearchParams({
+                log_cursor: String(logCursor),
+                chart_cursor: String(chartCursor),
+                comparison_cursor: String(comparisonCursor),
+                _t: String(Date.now())
+            });
+            const res = await fetch(`${API_BASE}/task/status?${params.toString()}`);
             if (!res.ok) throw new Error('Failed to get status');
             return await res.json();
         } catch (error) {
@@ -509,7 +529,9 @@ export const DataService = {
                     status: 'error',
                     currentFile: 'Connection Lost'
                 },
-                logs: []
+                logs: [],
+                chart_data: [],
+                comparison: null
             };
         }
     },

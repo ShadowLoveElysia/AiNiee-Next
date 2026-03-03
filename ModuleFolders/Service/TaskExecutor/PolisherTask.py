@@ -314,6 +314,7 @@ class PolisherTask(Base):
             self.extra_log.append("模型回复内容：\n" + response_content)
 
         # 检查译文
+        restore_response_dict = {}
         if check_result == False:
             error = f"[{self.task_id}] [ERROR] 译文文本未通过检查，将在下一轮次的翻译中重新翻译 - {error_content}"
 
@@ -340,7 +341,7 @@ class PolisherTask(Base):
             restore_response_dict = self.text_processor.restore_all(self.config, restore_response_dict)
 
         # 2. 强制发送 TUI 数据 (双通道)
-        if self.config.show_detailed_logs:
+        if restore_response_dict or self.source_text_dict:
             all_res = "\n".join(restore_response_dict.values()) if restore_response_dict else "[Error: No Data]"
             source_preview = list(self.source_text_dict.values())
             all_source = "\n".join(source_preview) if source_preview else ""
@@ -351,7 +352,8 @@ class PolisherTask(Base):
             # 通道2: 网页端同步
             import os as system_os
             try:
-                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
+                webserver_port = getattr(self.config, "webserver_port", 8000)
+                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", f"http://127.0.0.1:{webserver_port}")
                 requests.post(
                     f"{internal_api_base}/api/internal/update_comparison",
                     json={"source": all_source, "translation": all_res},
@@ -463,4 +465,3 @@ class PolisherTask(Base):
                 table.add_row(*row)
 
         return table
-

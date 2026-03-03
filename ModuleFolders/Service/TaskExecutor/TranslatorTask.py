@@ -367,7 +367,7 @@ class TranslatorTask(Base):
                 restore_response_dict = response_dict
 
         # 2. 强制发送 TUI 数据 (双通道)
-        if self.config.show_detailed_logs:
+        if restore_response_dict or self.source_text_dict:
             all_trans = "\n".join(restore_response_dict.values()) if restore_response_dict else "[Error: No Data]"
             source_preview = list(self.source_text_dict.values())
             all_source = "\n".join(source_preview) if source_preview else ""
@@ -379,7 +379,8 @@ class TranslatorTask(Base):
             import os as system_os
             try:
                 # 动态获取父进程传递的 WebServer 地址
-                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", "http://127.0.0.1:8000")
+                webserver_port = getattr(self.config, "webserver_port", 8000)
+                internal_api_base = system_os.environ.get("AINIEE_INTERNAL_API_URL", f"http://127.0.0.1:{webserver_port}")
                 requests.post(
                     f"{internal_api_base}/api/internal/update_comparison",
                     json={"source": all_source, "translation": all_trans},

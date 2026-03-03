@@ -11,32 +11,59 @@ export const Monitor: React.FC = () => {
   const { t } = useI18n();
   const { taskState, setTaskState, config } = useGlobal();
   const intervalRef = useRef<any>(null);
+  const cursorRef = useRef({ logs: 0, chart: 0, comparison: 0 });
   const showDetailed = config?.show_detailed_logs || false;
   const [activeTab, setActiveTab] = useState<'console' | 'comparison'>('console');
+
+  const mapLogs = (logs: any[], prefix: string): LogEntry[] => {
+    return (logs || [])
+      .map((l: any, idx: number) => ({
+        id: l.id || `${prefix}-${idx}-${l.timestamp || Date.now()}`,
+        timestamp: typeof l.timestamp === 'number'
+          ? new Date(l.timestamp * 1000).toLocaleTimeString()
+          : (l.timestamp || new Date().toLocaleTimeString()),
+        message: String(l.message || ''),
+        type: l.type || 'info'
+      }))
+      .filter(Boolean) as LogEntry[];
+  };
 
   const startPolling = () => {
     stopPolling();
     intervalRef.current = setInterval(async () => {
       try {
-        const data = await DataService.getTaskStatus();
+        const requestedCursor = { ...cursorRef.current };
+        const data = await DataService.getTaskStatus(
+          requestedCursor.logs,
+          requestedCursor.chart,
+          requestedCursor.comparison
+        );
+        const nextCursor = data.cursors || requestedCursor;
+        cursorRef.current = {
+          logs: nextCursor.logs ?? requestedCursor.logs,
+          chart: nextCursor.chart ?? requestedCursor.chart,
+          comparison: nextCursor.comparison ?? requestedCursor.comparison
+        };
         
         setTaskState(prev => {
           if (!data || !data.stats) return prev;
-          
-          const mappedLogs = (data.logs || []).map((l: any, idx: number) => ({
-            id: l.id || `be-${idx}-${l.timestamp || Date.now()}`,
-            timestamp: typeof l.timestamp === 'number' 
-              ? new Date(l.timestamp * 1000).toLocaleTimeString() 
-              : (l.timestamp || new Date().toLocaleTimeString()),
-            message: String(l.message || ''),
-            type: l.type || 'info'
-          })).filter(Boolean) as LogEntry[];
+
+          const mappedLogs = mapLogs(data.logs || [], 'be');
+          const logsReset = (nextCursor.logs ?? requestedCursor.logs) < requestedCursor.logs;
+          const chartReset = (nextCursor.chart ?? requestedCursor.chart) < requestedCursor.chart;
+
+          const mergedLogs = logsReset
+            ? mappedLogs
+            : (mappedLogs.length > 0 ? [...prev.logs, ...mappedLogs] : prev.logs);
+          const mergedChart = chartReset
+            ? (data.chart_data || [])
+            : ((data.chart_data && data.chart_data.length > 0) ? [...prev.chartData, ...data.chart_data] : prev.chartData);
 
           return {
             ...prev,
             stats: data.stats,
-            logs: mappedLogs.length > 0 ? mappedLogs : prev.logs,
-            chartData: data.chart_data || prev.chartData,
+            logs: mergedLogs.slice(-500),
+            chartData: mergedChart.slice(-120),
             isRunning: data.stats.status === 'running',
             comparison: data.comparison ? { ...data.comparison } : prev.comparison
           };
@@ -52,6 +79,7 @@ export const Monitor: React.FC = () => {
   };
 
   useEffect(() => {
+    cursorRef.current = { logs: taskState.logs.length, chart: taskState.chartData.length, comparison: 0 };
     startPolling();
     return () => stopPolling();
   }, []);

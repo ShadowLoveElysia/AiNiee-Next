@@ -12,6 +12,7 @@ export const TaskRunner: React.FC = () => {
   const { config, taskState, setTaskState } = useGlobal(); // Use persistent global state
   
   const intervalRef = useRef<any>(null);
+  const cursorRef = useRef({ logs: 0, chart: 0, comparison: 0 });
   
   // Upload State
   const [tempFiles, setTempFiles] = useState<{name: string, path: string, size: number}[]>([]);
@@ -49,6 +50,20 @@ export const TaskRunner: React.FC = () => {
       } catch (e) {
           console.error("Failed to load temp files", e);
       }
+  };
+
+  const mapLogs = (logs: any[], prefix: string): LogEntry[] => {
+      return (logs || []).map((l: any, idx: number) => {
+          if (!l) return null;
+          return {
+              id: l.id || `${prefix}-${idx}-${l.timestamp || Date.now()}`,
+              timestamp: typeof l.timestamp === 'number'
+                  ? new Date(l.timestamp * 1000).toLocaleTimeString()
+                  : (l.timestamp || new Date().toLocaleTimeString()),
+              message: String(l.message || ''),
+              type: l.type || 'info'
+          };
+      }).filter(Boolean) as LogEntry[];
   };
 
   // --- Event Handlers ---
@@ -138,33 +153,38 @@ export const TaskRunner: React.FC = () => {
       stopPolling();
       intervalRef.current = setInterval(async () => {
           try {
-              const data = await DataService.getTaskStatus();
+              const requestedCursor = { ...cursorRef.current };
+              const data = await DataService.getTaskStatus(
+                  requestedCursor.logs,
+                  requestedCursor.chart,
+                  requestedCursor.comparison
+              );
+              const nextCursor = data.cursors || requestedCursor;
+              cursorRef.current = {
+                  logs: nextCursor.logs ?? requestedCursor.logs,
+                  chart: nextCursor.chart ?? requestedCursor.chart,
+                  comparison: nextCursor.comparison ?? requestedCursor.comparison
+              };
               
               setTaskState(prev => {
                   try {
-                      // Use backend-provided chart data
                       const stats = data.stats || prev.stats;
-                      const newChartData = data.chart_data || prev.chartData;
-
-                      // Map backend logs to LogEntry interface
-                      const mappedLogs = (data.logs || []).map((l: any, idx: number) => {
-                          if (!l) return null;
-                          return {
-                              id: l.id || `be-${idx}-${l.timestamp || Date.now()}`,
-                              timestamp: typeof l.timestamp === 'number' 
-                                  ? new Date(l.timestamp * 1000).toLocaleTimeString() 
-                                  : (l.timestamp || new Date().toLocaleTimeString()),
-                              message: String(l.message || ''),
-                              type: l.type || 'info'
-                          };
-                      }).filter(Boolean) as LogEntry[];
+                      const mappedLogs = mapLogs(data.logs || [], 'be');
+                      const logsReset = (nextCursor.logs ?? requestedCursor.logs) < requestedCursor.logs;
+                      const chartReset = (nextCursor.chart ?? requestedCursor.chart) < requestedCursor.chart;
+                      const mergedLogs = logsReset
+                          ? mappedLogs
+                          : (mappedLogs.length > 0 ? [...prev.logs, ...mappedLogs] : prev.logs);
+                      const mergedChart = chartReset
+                          ? (data.chart_data || [])
+                          : ((data.chart_data && data.chart_data.length > 0) ? [...prev.chartData, ...data.chart_data] : prev.chartData);
 
                       // Update State
                       const newState = {
                           ...prev,
                           stats: stats,
-                          logs: mappedLogs.length > 0 ? mappedLogs : prev.logs,
-                          chartData: newChartData,
+                          logs: mergedLogs.slice(-500),
+                          chartData: mergedChart.slice(-120),
                           comparison: data.comparison ? { ...data.comparison } : prev.comparison
                       };
                       
@@ -241,6 +261,7 @@ export const TaskRunner: React.FC = () => {
       };
 
       // Reset Chart but keep input path
+      cursorRef.current = { logs: 0, chart: 0, comparison: 0 };
       setTaskState(prev => ({ 
           ...prev, 
           isRunning: true, 
@@ -307,19 +328,19 @@ export const TaskRunner: React.FC = () => {
   useEffect(() => {
     const recoverState = async () => {
         try {
-            const data = await DataService.getTaskStatus();
+            const data = await DataService.getTaskStatus(0, 0, 0);
+            cursorRef.current = {
+                logs: data.cursors?.logs ?? (data.logs?.length || 0),
+                chart: data.cursors?.chart ?? (data.chart_data?.length || 0),
+                comparison: data.cursors?.comparison ?? (data.comparison ? 1 : 0)
+            };
             setTaskState(prev => ({
                 ...prev,
                 isRunning: data.stats.status === 'running',
                 stats: data.stats,
                 chartData: data.chart_data || [],
                 comparison: data.comparison || prev.comparison,
-                logs: (data.logs || []).map((l: any, idx: number) => ({
-                    id: l.id || `sync-${idx}`,
-                    timestamp: typeof l.timestamp === 'number' ? new Date(l.timestamp * 1000).toLocaleTimeString() : l.timestamp,
-                    message: l.message,
-                    type: l.type || 'info'
-                }))
+                logs: mapLogs(data.logs || [], 'sync')
             }));
             
             if (data.stats.status === 'running') {

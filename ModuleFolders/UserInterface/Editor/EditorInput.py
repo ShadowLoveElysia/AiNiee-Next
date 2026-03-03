@@ -67,7 +67,7 @@ class EditorInput:
             char +
             self.edit_buffer[self.cursor_pos:]
         )
-        self.cursor_pos += 1
+        self.cursor_pos += len(char)
 
     def _handle_backspace(self):
         """处理退格键"""

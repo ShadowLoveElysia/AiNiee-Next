@@ -177,7 +177,6 @@ class WebLogger:
 
         # 2. 拦截实时对照信号
         if "<<<RAW_RESULT>>>" in msg_str:
-            if not self.show_detailed: return
             if time.time() - self._last_result_time < 0.5: return
             try:
                 data = msg_str.split("<<<RAW_RESULT>>>")[1].strip()
@@ -197,13 +196,11 @@ class WebLogger:
 
     def on_source_data(self, event, data):
         """Web 模式下同步原文，用于后续对照发送"""
-        if not self.show_detailed: return
         if not isinstance(data, dict): return
         self.current_source = str(data.get("data", ""))
 
     def on_result_data(self, event, data):
         """Web 模式下接收到译文数据包，推送至 WebServer"""
-        if not self.show_detailed: return
         if not isinstance(data, dict): return
         raw_content = str(data.get("data", ""))
         source_content = data.get("source")
@@ -396,7 +393,7 @@ class CLIMenu:
 
         import webbrowser
         # Pass mode=monitor as a query parameter
-        webbrowser.open(f"http://127.0.0.1:8000/?mode=monitor#/monitor")
+        webbrowser.open(f"{self._get_web_base_url()}/?mode=monitor#/monitor")
 
     def handle_queue_editor_shortcut(self):
         """Handle the 'e' shortcut for TUI queue management."""
@@ -518,11 +515,23 @@ class CLIMenu:
             # 解析失败时静默处理
             pass
 
+    def _get_webserver_port(self):
+        try:
+            return int(self.config.get("webserver_port", 8000) or 8000)
+        except Exception:
+            return 8000
+
+    def _get_internal_api_base(self):
+        return os.environ.get("AINIEE_INTERNAL_API_URL", f"http://127.0.0.1:{self._get_webserver_port()}")
+
+    def _get_web_base_url(self):
+        return f"http://127.0.0.1:{self._get_webserver_port()}"
+
     def _push_stats_to_webserver(self, stats_data):
         """推送统计数据到webserver"""
         try:
             response = requests.post(
-                "http://127.0.0.1:8000/api/internal/update_stats",
+                f"{self._get_internal_api_base()}/api/internal/update_stats",
                 json=stats_data,
                 timeout=1.0
             )
@@ -534,7 +543,7 @@ class CLIMenu:
         """推送日志消息到webserver"""
         try:
             response = requests.post(
-                "http://127.0.0.1:8000/api/internal/push_log",
+                f"{self._get_internal_api_base()}/api/internal/push_log",
                 json={"message": message, "type": log_type},
                 timeout=1.0
             )
@@ -681,7 +690,7 @@ class CLIMenu:
         """Open the WebUI queue management page in browser."""
         import webbrowser
         # Open queue management page directly
-        webbrowser.open("http://127.0.0.1:8000/#/queue")
+        webbrowser.open(f"{self._get_web_base_url()}/#/queue")
 
     def _run_queue_editor(self, queue_manager):
         """运行队列编辑器界面"""

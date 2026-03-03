@@ -125,6 +125,25 @@ class TaskExecutor(Base):
             with self._concurrency_lock:
                 self._current_active -= 1
 
+    def _push_web_comparison(self, source_text: str, translated_text: str) -> None:
+        """Push comparison snapshot to event bus and WebServer internal API."""
+        if not source_text and not translated_text:
+            return
+
+        self.emit(Base.EVENT.TUI_RESULT_DATA, {"source": source_text, "data": translated_text})
+
+        try:
+            import requests
+            webserver_port = self.load_config().get("webserver_port", 8000)
+            internal_api_base = os.environ.get("AINIEE_INTERNAL_API_URL", f"http://127.0.0.1:{webserver_port}")
+            requests.post(
+                f"{internal_api_base}/api/internal/update_comparison",
+                json={"source": source_text, "translation": translated_text},
+                timeout=1,
+            )
+        except Exception:
+            pass
+
     def _execute_tasks_async(self, tasks_list):
         """异步执行模式：使用 aiohttp 处理高并发请求"""
         import asyncio
@@ -206,6 +225,10 @@ class TaskExecutor(Base):
                                 item.model = executor_self.config.model
                                 item.translated_text = response
                                 item.translation_status = TranslationStatus.TRANSLATED
+
+                        source_snapshot = "\n".join(str(v) for v in task.source_text_dict.values()) if getattr(task, "source_text_dict", None) else ""
+                        translated_snapshot = "\n".join(str(v) for v in response_dict.values())
+                        executor_self._push_web_comparison(source_snapshot, translated_snapshot)
 
                         # 打印成功日志
                         executor_self.print(f"[green]√ [{task_id}] Done ({len(task.items)} lines) | {elapsed:.2f}s | {pt}+{ct}T[/green]")
