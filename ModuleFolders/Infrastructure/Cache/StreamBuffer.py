@@ -181,7 +181,7 @@ class IndexedResultBuffer:
     def __init__(self):
         self._lock = threading.Lock()
         # 结构: {file_path: {text_index: translated_text}}
-        self._buffers: Dict[str, Dict[int, str]] =
+        self._buffers: Dict[str, Dict[int, str]] = {}
         self._pending_counts: Dict[str, int] = {}
         self._completed_counts: Dict[str, int] = {}
 
