@@ -260,16 +260,22 @@ class GlossaryAnalyzer:
             'glossary_path': glossary_path
         }
 
-    def save_glossary_directly(self, glossary_data):
+    def save_glossary_directly(self, glossary_data, save_mode="import", base_glossary_path=None):
         """直接保存术语表（无翻译）"""
-        existing_data = self.config.get("prompt_dictionary_data", [])
-        existing_data.extend(glossary_data)
-        self.config["prompt_dictionary_data"] = existing_data
-        self.config["prompt_dictionary_switch"] = True
-        self.save_config()
-        console.print(f"[bold green]{self.i18n.get('msg_glossary_imported') or '术语表已导入!'}[/bold green]")
+        if save_mode in ("import", "both"):
+            existing_data = self.config.get("prompt_dictionary_data", [])
+            existing_data.extend(glossary_data)
+            self.config["prompt_dictionary_data"] = existing_data
+            self.config["prompt_dictionary_switch"] = True
+            self.save_config()
+            console.print(f"[bold green]{self.i18n.get('msg_glossary_imported') or '术语表已导入!'}[/bold green]")
 
-    def multi_translate_and_select(self, filtered_terms, temp_config=None, rounds=3):
+        if save_mode in ("standalone", "both"):
+            save_path = self._build_output_glossary_path(base_glossary_path, "_独立术语表")
+            self._save_glossary_json_to_path(glossary_data, save_path)
+            console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
+
+    def multi_translate_and_select(self, filtered_terms, temp_config=None, rounds=3, save_mode="import", base_glossary_path=None):
         """
         多翻译选择功能
 
@@ -329,6 +335,10 @@ class GlossaryAnalyzer:
 
         if not multi_results:
             console.print(f"[yellow]{self.i18n.get('msg_no_translation_results') or '未获得翻译结果'}[/yellow]")
+            fallback_glossary = self._generate_glossary_json(filtered_terms)
+            fallback_path = self._build_output_glossary_path(base_glossary_path, "_翻译失败原文回退")
+            self._save_glossary_json_to_path(fallback_glossary, fallback_path)
+            console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
             return
 
         # 显示选择界面
@@ -336,6 +346,8 @@ class GlossaryAnalyzer:
 
         # 定义单条保存回调
         def save_single_term(term_data):
+            if save_mode not in ("import", "both"):
+                return
             existing_data = self.config.get("prompt_dictionary_data", [])
             existing_srcs = {item['src'] for item in existing_data}
             if term_data['src'] not in existing_srcs:
@@ -357,9 +369,14 @@ class GlossaryAnalyzer:
             return
 
         # 保存到术语表
-        self._save_selected_translations(selected_results)
+        self._save_selected_translations(
+            selected_results,
+            filtered_terms,
+            save_mode=save_mode,
+            base_glossary_path=base_glossary_path
+        )
 
-    def batch_translate_and_select(self, filtered_terms, temp_config=None):
+    def batch_translate_and_select(self, filtered_terms, temp_config=None, save_mode="import", base_glossary_path=None):
         """批量翻译 - 所有术语一次性发送给AI"""
         from ModuleFolders.UserInterface.TermSelector.TermSelector import TermSelector
         from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
@@ -431,10 +448,16 @@ Only output the JSON array, no other text."""
 
         if not multi_results:
             console.print(f"[yellow]{self.i18n.get('msg_no_translation_results')}[/yellow]")
+            fallback_glossary = self._generate_glossary_json(filtered_terms)
+            fallback_path = self._build_output_glossary_path(base_glossary_path, "_翻译失败原文回退")
+            self._save_glossary_json_to_path(fallback_glossary, fallback_path)
+            console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
             return
 
         # 定义回调
         def save_single_term(term_data):
+            if save_mode not in ("import", "both"):
+                return
             existing_data = self.config.get("prompt_dictionary_data", [])
             existing_srcs = {item['src'] for item in existing_data}
             if term_data['src'] not in existing_srcs:
@@ -454,25 +477,68 @@ Only output the JSON array, no other text."""
             console.print(f"[yellow]{self.i18n.get('msg_cancelled')}[/yellow]")
             return
 
-        self._save_selected_translations(selected_results)
+        self._save_selected_translations(
+            selected_results,
+            filtered_terms,
+            save_mode=save_mode,
+            base_glossary_path=base_glossary_path
+        )
 
-    def _save_selected_translations(self, selected_results):
+    def _save_selected_translations(self, selected_results, filtered_terms, save_mode="import", base_glossary_path=None):
         """保存用户选择的翻译到术语表"""
-        existing_data = self.config.get("prompt_dictionary_data", [])
-        existing_srcs = {item['src'] for item in existing_data}
-
         added_count = 0
-        for item in selected_results:
-            if item['src'] not in existing_srcs:
-                existing_data.append(item)
-                existing_srcs.add(item['src'])
-                added_count += 1
+        if save_mode in ("import", "both"):
+            existing_data = self.config.get("prompt_dictionary_data", [])
+            existing_srcs = {item['src'] for item in existing_data}
+            for item in selected_results:
+                if item['src'] not in existing_srcs:
+                    existing_data.append(item)
+                    existing_srcs.add(item['src'])
+                    added_count += 1
 
-        self.config["prompt_dictionary_data"] = existing_data
-        self.config["prompt_dictionary_switch"] = True
-        self.save_config()
+            self.config["prompt_dictionary_data"] = existing_data
+            self.config["prompt_dictionary_switch"] = True
+            self.save_config()
+            console.print(f"[bold green]{self.i18n.get('msg_terms_added') or '已添加'} {added_count} {self.i18n.get('msg_terms_to_glossary') or '个术语到术语表'}[/bold green]")
 
-        console.print(f"[bold green]{self.i18n.get('msg_terms_added') or '已添加'} {added_count} {self.i18n.get('msg_terms_to_glossary') or '个术语到术语表'}[/bold green]")
+        if save_mode in ("standalone", "both"):
+            selected_map = {item.get("src"): item for item in selected_results if item.get("src")}
+            merged_glossary = []
+            for src, meta in filtered_terms.items():
+                selected = selected_map.get(src)
+                if selected:
+                    merged_glossary.append({
+                        "src": src,
+                        "dst": selected.get("dst", ""),
+                        "info": selected.get("info", meta.get("type", ""))
+                    })
+                else:
+                    merged_glossary.append({
+                        "src": src,
+                        "dst": "",
+                        "info": meta.get("type", "")
+                    })
+
+            save_path = self._build_output_glossary_path(base_glossary_path, "_独立术语表_翻译结果")
+            self._save_glossary_json_to_path(merged_glossary, save_path)
+            console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
+
+    def _save_glossary_json_to_path(self, glossary_data, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(glossary_data, f, indent=2, ensure_ascii=False)
+
+    def _build_output_glossary_path(self, base_glossary_path=None, suffix="_独立术语表"):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if base_glossary_path:
+            base_dir = os.path.dirname(base_glossary_path) or "."
+            base_name = os.path.splitext(os.path.basename(base_glossary_path))[0]
+            if base_name.endswith("_自动术语"):
+                base_name = base_name[:-5]
+        else:
+            base_dir = "."
+            base_name = "glossary"
+        return os.path.join(base_dir, f"{base_name}{suffix}_{timestamp}.json")
 
     def _request_term_translation(self, src, term_data, target_language, platform_config, avoid_set):
         """请求单个术语的翻译"""
