@@ -338,6 +338,12 @@ profile_handlers: Dict[str, Any] = {
     "delete": None
 }
 
+# --- Queue Handlers (Dependency Injection) ---
+# Queue execution must be delegated to the host CLI instance.
+queue_handlers: Dict[str, Any] = {
+    "run": None
+}
+
 # --- Pydantic Models for API Requests ---
 
 class AppConfig(BaseModel):
@@ -2788,13 +2794,31 @@ async def run_queue():
     """Start queue execution"""
     try:
         qm = get_queue_manager()
-        # Check if QueueManager has run_queue method, if not use alternative
+
+        if qm.is_running:
+            return {"success": True, "message": "Queue is already running"}
+
+        # Backward compatibility if QueueManager later provides a direct runner
         if hasattr(qm, 'run_queue'):
             qm.run_queue()
-        else:
-            # Alternative: set is_running flag or call CLI task execution
-            qm.is_running = True
-        return {"success": True}
+            return {"success": True}
+
+        # Preferred path: delegate to host CLI callback
+        if queue_handlers.get("run"):
+            try:
+                started = queue_handlers["run"]()
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if not started:
+                raise HTTPException(status_code=400, detail="Failed to start queue")
+            return {"success": True}
+
+        raise HTTPException(
+            status_code=503,
+            detail="Queue execution requires host integration. Start Web Server from AiNiee CLI."
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

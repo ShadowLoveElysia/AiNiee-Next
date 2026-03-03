@@ -54,6 +54,13 @@ class LLMRequester:
         }
         return policies.get(failure_type, policies["generic"])
 
+    @staticmethod
+    def _clone_messages(messages: list[dict]) -> list[dict]:
+        """Clone message list to avoid in-place mutations across retries."""
+        if not messages:
+            return []
+        return [message.copy() if isinstance(message, dict) else message for message in messages]
+
     # Dispatch request
     def sent_request(self, messages: list[dict], system_prompt: str, platform_config: dict) -> tuple[bool, str, str, int, int]:
         from ModuleFolders.Base.Base import Base
@@ -64,6 +71,7 @@ class LLMRequester:
         retry_enabled = config.get("enable_retry_backoff", True)
         max_retries = configured_retries if retry_enabled else 1
         current_retry = 0
+        base_messages = self._clone_messages(messages)
 
         skip = True
         response_think = "API_FAIL"
@@ -77,67 +85,68 @@ class LLMRequester:
 
             target_platform = platform_config.get("target_platform")
             api_format = platform_config.get("api_format")
+            request_messages = self._clone_messages(base_messages)
 
             if target_platform == "sakura":
                 sakura_requester = SakuraRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = sakura_requester.request_sakura(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "murasaki":
                 murasaki_requester = MurasakiRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = murasaki_requester.request_murasaki(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "LocalLLM":
                 local_llm_requester = LocalLLMRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = local_llm_requester.request_LocalLLM(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "cohere":
                 cohere_requester = CohereRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = cohere_requester.request_cohere(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "google" or (target_platform.startswith("custom_platform_") and api_format == "Google"):
                 google_requester = GoogleRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = google_requester.request_google(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "anthropic" or (target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
                 anthropic_requester = AnthropicRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = anthropic_requester.request_anthropic(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "amazonbedrock":
                 amazonbedrock_requester = AmazonbedrockRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = amazonbedrock_requester.request_amazonbedrock(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             elif target_platform == "dashscope":
                 dashscope_requester = DashscopeRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = dashscope_requester.request_openai(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )
             else:
                 openai_requester = OpenaiRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = openai_requester.request_openai(
-                    messages,
+                    request_messages,
                     system_prompt,
                     platform_config,
                 )

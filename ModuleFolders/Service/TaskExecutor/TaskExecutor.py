@@ -141,20 +141,22 @@ class TaskExecutor(Base):
         # 引用 self 以便在异步函数中使用
         executor_self = self
 
-        async def run_single_task(task, semaphore):
+        async def run_single_task(task):
             """执行单个异步任务"""
             import time as time_module
             task_start = time_module.time()
+            slot_acquired = False
 
-            if Base.work_status == Base.STATUS.STOPING:
-                return None
-
-            # 等待暂停恢复
-            await signal_hub.wait_if_paused()
-
-            # 信号量控制：保护本地系统资源
-            async with semaphore:
+            try:
                 if Base.work_status == Base.STATUS.STOPING:
+                    return None
+
+                # 等待暂停恢复
+                await signal_hub.wait_if_paused()
+
+                # 统一并发槽控制，支持运行中热调整并发
+                slot_acquired = await signal_hub.acquire_slot()
+                if Base.work_status == Base.STATUS.STOPING or await signal_hub.check_stop():
                     return None
 
                 # 检查是否跳过
@@ -217,15 +219,16 @@ class TaskExecutor(Base):
                         }
 
                 return {"check_result": False, "row_count": 0, "prompt_tokens": pt, "completion_tokens": ct}
+            finally:
+                if slot_acquired:
+                    signal_hub.release_slot()
 
         async def run_all_tasks():
             """运行所有异步任务"""
             # 初始化连接池，传入线程数以保护系统资源
             await AsyncLLMRequester.get_session(max_concurrency)
 
-            # 信号量控制并发数，保护文件描述符和端口资源
-            semaphore = asyncio.Semaphore(max_concurrency)
-            tasks = [run_single_task(task, semaphore) for task in tasks_list]
+            tasks = [run_single_task(task) for task in tasks_list]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # 处理结果

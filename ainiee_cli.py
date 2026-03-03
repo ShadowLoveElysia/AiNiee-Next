@@ -359,6 +359,7 @@ class CLIMenu:
                 ws_module.profile_handlers['create'] = self._host_create_profile
                 ws_module.profile_handlers['rename'] = self._host_rename_profile
                 ws_module.profile_handlers['delete'] = self._host_delete_profile
+                ws_module.queue_handlers['run'] = self._host_run_queue
 
                 webserver_port = self.config.get("webserver_port", 8000)
                 self.web_server_thread = run_server(host="0.0.0.0", port=webserver_port, monitor_mode=True)
@@ -602,7 +603,13 @@ class CLIMenu:
 
         # 在后台线程中启动Web服务器
         import threading
-        from Tools.WebServer.web_server import run_server
+        import Tools.WebServer.web_server as ws_module
+
+        ws_module.profile_handlers['create'] = self._host_create_profile
+        ws_module.profile_handlers['rename'] = self._host_rename_profile
+        ws_module.profile_handlers['delete'] = self._host_delete_profile
+        ws_module.queue_handlers['run'] = self._host_run_queue
+        run_server = ws_module.run_server
 
         webserver_port = self.config.get("webserver_port", 8000)
         def start_server():
@@ -906,6 +913,31 @@ class CLIMenu:
         if cnt <= 1: raise Exception("Cannot delete last profile")
         
         os.remove(target)
+
+    def _host_run_queue(self):
+        from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
+
+        qm = QueueManager()
+        if not qm.tasks:
+            raise Exception("Task queue is empty")
+
+        if qm.is_running:
+            return True
+
+        self._is_queue_mode = True
+        self.start_queue_log_monitor()
+        qm.start_queue(self)
+
+        def queue_cleanup():
+            try:
+                while qm.is_running:
+                    time.sleep(0.5)
+            finally:
+                self.stop_queue_log_monitor()
+                self._is_queue_mode = False
+
+        threading.Thread(target=queue_cleanup, daemon=True).start()
+        return True
 
     def run_non_interactive(self, args):
         """处理命令行参数，以非交互模式运行任务"""
@@ -3038,6 +3070,11 @@ class CLIMenu:
                                 self.task_executor.config.actual_thread_counts = new_val
                                 self.task_executor.config.user_thread_counts = new_val
                                 self.config["user_thread_counts"] = new_val
+                                try:
+                                    from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
+                                    get_signal_hub().set_concurrency(new_val)
+                                except Exception:
+                                    pass
                                 self.ui.log(f"[yellow]{i18n.get('msg_thread_changed').format(new_val)}[/yellow]")
                             elif key == '+': # 增加线程
                                 old_val = self.task_executor.config.actual_thread_counts
@@ -3045,6 +3082,11 @@ class CLIMenu:
                                 self.task_executor.config.actual_thread_counts = new_val
                                 self.task_executor.config.user_thread_counts = new_val
                                 self.config["user_thread_counts"] = new_val
+                                try:
+                                    from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
+                                    get_signal_hub().set_concurrency(new_val)
+                                except Exception:
+                                    pass
                                 self.ui.log(f"[green]{i18n.get('msg_thread_changed').format(new_val)}[/green]")
                             elif key == 'k': # 热切换 API
                                 self.ui.log(f"[cyan]{i18n.get('msg_api_switching_manual')}[/cyan]")
@@ -3476,6 +3518,7 @@ class CLIMenu:
         ws_module.profile_handlers['create'] = host_create_profile
         ws_module.profile_handlers['rename'] = host_rename_profile
         ws_module.profile_handlers['delete'] = host_delete_profile
+        ws_module.queue_handlers['run'] = self._host_run_queue
 
         # Detect Local IP
         local_ip = "127.0.0.1"

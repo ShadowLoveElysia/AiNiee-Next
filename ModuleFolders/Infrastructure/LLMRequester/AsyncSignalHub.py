@@ -73,6 +73,8 @@ class AsyncSignalHub:
         # 并发控制
         self._concurrency_semaphore: Optional[asyncio.Semaphore] = None
         self._current_concurrency = 0
+        self._active_slots = 0
+        self._concurrency_lock = threading.Lock()
 
         self._initialized = True
 
@@ -82,6 +84,10 @@ class AsyncSignalHub:
         self._stopped.clear()
         self._cache_disabled.clear()
         self._signal_history.clear()
+        with self._concurrency_lock:
+            self._concurrency_semaphore = None
+            self._current_concurrency = 0
+            self._active_slots = 0
 
     # ========== 状态控制 ==========
 
@@ -137,8 +143,30 @@ class AsyncSignalHub:
 
     def set_concurrency(self, limit: int) -> None:
         """设置并发限制"""
-        self._concurrency_semaphore = asyncio.Semaphore(limit)
-        self._current_concurrency = limit
+        limit = max(1, int(limit))
+
+        with self._concurrency_lock:
+            if self._concurrency_semaphore is None:
+                self._concurrency_semaphore = asyncio.Semaphore(limit)
+                self._current_concurrency = limit
+                self._active_slots = 0
+                return
+
+            old_limit = self._current_concurrency
+            self._current_concurrency = limit
+
+            if limit > old_limit:
+                # Increase permits immediately to unblock waiting tasks.
+                for _ in range(limit - old_limit):
+                    self._concurrency_semaphore.release()
+            elif limit < old_limit:
+                # Shrink only currently free permits. Active tasks are naturally
+                # respected and the new limit takes effect as tasks release slots.
+                reduce_count = old_limit - limit
+                available = max(0, getattr(self._concurrency_semaphore, "_value", 0))
+                shrink = min(reduce_count, available)
+                if shrink > 0:
+                    self._concurrency_semaphore._value -= shrink
 
     def get_concurrency(self) -> int:
         """获取当前并发限制"""
@@ -146,15 +174,33 @@ class AsyncSignalHub:
 
     async def acquire_slot(self) -> bool:
         """获取执行槽位"""
-        if self._concurrency_semaphore is None:
+        semaphore = self._concurrency_semaphore
+        if semaphore is None:
             return True
-        await self._concurrency_semaphore.acquire()
+        await semaphore.acquire()
+        with self._concurrency_lock:
+            self._active_slots += 1
         return True
 
     def release_slot(self) -> None:
         """释放执行槽位"""
-        if self._concurrency_semaphore is not None:
-            self._concurrency_semaphore.release()
+        semaphore = self._concurrency_semaphore
+        if semaphore is None:
+            return
+
+        with self._concurrency_lock:
+            if self._active_slots <= 0:
+                return
+
+            self._active_slots -= 1
+            max_available = max(0, self._current_concurrency - self._active_slots)
+            available = max(0, getattr(semaphore, "_value", 0))
+
+            # Keep available permits bounded by current target concurrency.
+            if available >= max_available:
+                return
+
+        semaphore.release()
 
     # ========== 信号广播 ==========
 

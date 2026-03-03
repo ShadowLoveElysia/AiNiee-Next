@@ -602,7 +602,15 @@ export const DataService = {
     },
 
     async runQueue(): Promise<void> {
-        await fetch(`${API_BASE}/queue/run`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/queue/run`, { method: 'POST' });
+        if (!res.ok) {
+            let detail = 'Failed to start queue';
+            try {
+                const err = await res.json();
+                detail = err?.detail || detail;
+            } catch {}
+            throw new Error(detail);
+        }
     },
 
     async editQueueFile(): Promise<void> {
