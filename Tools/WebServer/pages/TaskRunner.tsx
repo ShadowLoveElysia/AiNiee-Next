@@ -13,6 +13,8 @@ export const TaskRunner: React.FC = () => {
   
   const intervalRef = useRef<any>(null);
   const cursorRef = useRef({ logs: 0, chart: 0, comparison: 0 });
+  const [comparisonChannelStatus, setComparisonChannelStatus] = useState<'idle' | 'waiting' | 'active' | 'stale'>('idle');
+  const [comparisonLagSec, setComparisonLagSec] = useState<number | null>(null);
   
   // Upload State
   const [tempFiles, setTempFiles] = useState<{name: string, path: string, size: number}[]>([]);
@@ -64,6 +66,15 @@ export const TaskRunner: React.FC = () => {
               type: l.type || 'info'
           };
       }).filter(Boolean) as LogEntry[];
+  };
+
+  const resolveComparisonStatus = (taskStatus: string, comparisonSeq: number, comparisonUpdatedAt?: number) => {
+      if (taskStatus !== 'running') return { status: 'idle' as const, lagSec: null as number | null };
+      if (!comparisonSeq || !comparisonUpdatedAt) return { status: 'waiting' as const, lagSec: null as number | null };
+      const lagSec = Math.max(0, Math.floor(Date.now() / 1000 - comparisonUpdatedAt));
+      return lagSec <= 20
+          ? { status: 'active' as const, lagSec }
+          : { status: 'stale' as const, lagSec };
   };
 
   // --- Event Handlers ---
@@ -165,6 +176,14 @@ export const TaskRunner: React.FC = () => {
                   chart: nextCursor.chart ?? requestedCursor.chart,
                   comparison: nextCursor.comparison ?? requestedCursor.comparison
               };
+              const comparisonSeq = nextCursor.comparison ?? requestedCursor.comparison ?? 0;
+              const comparisonStatus = resolveComparisonStatus(
+                  data.stats?.status || 'idle',
+                  comparisonSeq,
+                  data.comparison_updated_at
+              );
+              setComparisonChannelStatus(comparisonStatus.status);
+              setComparisonLagSec(comparisonStatus.lagSec);
               
               setTaskState(prev => {
                   try {
@@ -262,6 +281,8 @@ export const TaskRunner: React.FC = () => {
 
       // Reset Chart but keep input path
       cursorRef.current = { logs: 0, chart: 0, comparison: 0 };
+      setComparisonChannelStatus('waiting');
+      setComparisonLagSec(null);
       setTaskState(prev => ({ 
           ...prev, 
           isRunning: true, 
@@ -334,6 +355,13 @@ export const TaskRunner: React.FC = () => {
                 chart: data.cursors?.chart ?? (data.chart_data?.length || 0),
                 comparison: data.cursors?.comparison ?? (data.comparison ? 1 : 0)
             };
+            const recoveredStatus = resolveComparisonStatus(
+                data.stats?.status || 'idle',
+                cursorRef.current.comparison,
+                data.comparison_updated_at
+            );
+            setComparisonChannelStatus(recoveredStatus.status);
+            setComparisonLagSec(recoveredStatus.lagSec);
             setTaskState(prev => ({
                 ...prev,
                 isRunning: data.stats.status === 'running',
@@ -364,6 +392,30 @@ export const TaskRunner: React.FC = () => {
   // --- Render ---
 
   const [activeTab, setActiveTab] = useState<'console' | 'comparison'>('console');
+  const comparisonStatusMeta = (() => {
+      if (comparisonChannelStatus === 'active') {
+          return {
+              label: `ACTIVE${comparisonLagSec !== null ? ` · ${comparisonLagSec}s` : ''}`,
+              className: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
+          };
+      }
+      if (comparisonChannelStatus === 'waiting') {
+          return {
+              label: 'WAITING',
+              className: 'text-amber-300 border-amber-500/30 bg-amber-500/10'
+          };
+      }
+      if (comparisonChannelStatus === 'stale') {
+          return {
+              label: `DELAYED${comparisonLagSec !== null ? ` · ${comparisonLagSec}s` : ''}`,
+              className: 'text-rose-300 border-rose-500/30 bg-rose-500/10'
+          };
+      }
+      return {
+          label: 'IDLE',
+          className: 'text-slate-300 border-slate-600/40 bg-slate-700/20'
+      };
+  })();
 
   return (
     <div className="space-y-3 h-[calc(100vh-140px)] flex flex-col">
@@ -572,6 +624,12 @@ export const TaskRunner: React.FC = () => {
         ) : (
             <div className="flex-1 flex flex-col space-y-4 min-h-0">
                 <StatsPanel data={taskState.chartData} stats={taskState.stats} variant="compact" />
+                <div className="px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40 flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Comparison Channel</span>
+                    <span className={`px-2 py-1 rounded border text-[10px] font-mono uppercase tracking-wide ${comparisonStatusMeta.className}`}>
+                        {comparisonStatusMeta.label}
+                    </span>
+                </div>
                 <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0 overflow-y-auto">
                     {/* Source Pane */}
                     <div className="flex flex-col bg-slate-900/40 border border-magenta/20 rounded-xl overflow-hidden backdrop-blur-sm shadow-inner shadow-magenta/5 min-h-[300px]">

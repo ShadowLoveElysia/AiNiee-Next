@@ -16,6 +16,7 @@ interface TaskStatusResponse {
         chart: number;
         comparison: number;
     };
+    comparison_updated_at?: number;
 }
 
 export const DataService = {

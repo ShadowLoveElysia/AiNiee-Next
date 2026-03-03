@@ -57,6 +57,7 @@ class TaskManager:
             
             self.internal_api_url = "http://127.0.0.1" # Worker callback URL（启动后会带端口）
             self.comparison_seq = 0
+            self.comparison_updated_at = 0.0
 
             # Use a separate thread to monitor the process output
             self.monitor_thread: Optional[threading.Thread] = None
@@ -77,6 +78,14 @@ class TaskManager:
         self.current_source = source
         self.current_translation = translation
         self.comparison_seq += 1
+        self.comparison_updated_at = time.time()
+
+    def reset_comparison(self):
+        """Clear comparison state for a brand-new task run."""
+        self.current_source = ""
+        self.current_translation = ""
+        self.comparison_seq = 0
+        self.comparison_updated_at = 0.0
 
     def push_stats(self, stats: Dict[str, Any]):
         """Directly push stats from the host process."""
@@ -115,6 +124,7 @@ class TaskManager:
                 "chart": len(chart),
                 "comparison": self.comparison_seq,
             },
+            "comparison_updated_at": self.comparison_updated_at,
         }
 
     def _log_and_parse(self, stream):
@@ -159,7 +169,7 @@ class TaskManager:
             self.status = "running"
             self.logs.clear()
             self.chart_data.clear()
-            self.push_comparison("", "")
+            self.reset_comparison()
             self.stats = self._get_initial_stats()
             self.stats["status"] = "running"
             self.push_log("Task starting with parameters from web UI...")
