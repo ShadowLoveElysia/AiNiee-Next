@@ -1,0 +1,131 @@
+name: tauri-dev-preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "Tools/WebServer/**"
+      - "Tools/TauriShell/**"
+      - "LaunchGUI.bat"
+      - "LaunchGUI.sh"
+      - ".github/workflows/tauri-dev-preview.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tauri-dev-preview-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-dev-gui:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            args: ""
+          - platform: "ubuntu-22.04"
+            args: ""
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest"
+            args: "--target x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install macOS Rust targets
+        if: matrix.platform == 'macos-latest'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./Tools/TauriShell/src-tauri -> target
+
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
+        working-directory: Tools/TauriShell
+        run: npm ci
+
+      - name: Build and publish GUI to dev pre-release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: Tools/TauriShell
+          tagName: dev-build
+          releaseName: "AiNiee Dev Preview (Web + GUI)"
+          releaseBody: |
+            Auto-generated development preview build.
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref_name }}
+            Message: ${{ github.event.head_commit.message }}
+          releaseDraft: false
+          prerelease: true
+          args: ${{ matrix.args }}
+
+  upload-dev-launchers:
+    runs-on: ubuntu-latest
+    needs: build-dev-gui
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload launcher scripts to dev pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-build
+          name: "AiNiee Dev Preview (Web + GUI)"
+          prerelease: true
+          make_latest: false
+          files: |
+            LaunchGUI.bat
+            LaunchGUI.sh
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  arch-linux-launcher-check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install minimal tools
+        run: pacman -Sy --noconfirm bash git
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate launcher script syntax on Arch Linux
+        run: bash -n LaunchGUI.sh

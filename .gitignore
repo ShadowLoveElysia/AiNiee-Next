@@ -59,3 +59,8 @@ Resource/rules_profiles/月白.json
 /Resource/rules_profiles
 /Resource/config.json
 tests/test_web_comparison_flow.py
+Tools/TauriShell/node_modules/
+Tools/TauriShell/src-tauri/target/
+Tools/TauriShell/src-tauri/gen/
+Tools/TauriShell/__pycache__/
+Tools/TauriShell/icons/

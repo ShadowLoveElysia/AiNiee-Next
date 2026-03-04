@@ -1,0 +1,14 @@
+{
+  "name": "ainiee-tauri-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tauri desktop shell PoC for AiNiee WebServer",
+  "scripts": {
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:exe": "tauri build --no-bundle"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
