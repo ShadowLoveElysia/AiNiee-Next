@@ -1,0 +1,70 @@
+name: tauri-dev-windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "Tools/WebServer/**"
+      - "Tools/TauriShell/**"
+      - "LaunchGUI.bat"
+      - ".github/workflows/tauri-dev-windows.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tauri-dev-windows-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-dev-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./Tools/TauriShell/src-tauri -> target
+
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
+        working-directory: Tools/TauriShell
+        run: npm ci
+
+      - name: Build and publish Windows GUI to dev pre-release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: Tools/TauriShell
+          tagName: dev-build
+          releaseName: "AiNiee Dev Preview (Web + GUI)"
+          releaseBody: |
+            Auto-generated Windows development preview build.
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref_name }}
+            Message: ${{ github.event.head_commit.message || 'manual dispatch' }}
+          releaseDraft: false
+          prerelease: true

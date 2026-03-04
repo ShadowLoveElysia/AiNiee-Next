@@ -1,4 +1,4 @@
-name: tauri-dev-preview
+name: tauri-dev-linux
 
 on:
   workflow_dispatch:
@@ -9,39 +9,24 @@ on:
     paths:
       - "Tools/WebServer/**"
       - "Tools/TauriShell/**"
-      - "LaunchGUI.bat"
       - "LaunchGUI.sh"
-      - ".github/workflows/tauri-dev-preview.yml"
+      - ".github/workflows/tauri-dev-linux.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: tauri-dev-preview-${{ github.ref_name }}
+  group: tauri-dev-linux-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  build-dev-gui:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: "windows-latest"
-            args: ""
-          - platform: "ubuntu-22.04"
-            args: ""
-          - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-
-    runs-on: ${{ matrix.platform }}
+  build-dev-linux:
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -58,12 +43,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install macOS Rust targets
-        if: matrix.platform == 'macos-latest'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -79,8 +58,8 @@ jobs:
         working-directory: Tools/TauriShell
         run: npm ci
 
-      - name: Build and publish GUI to dev pre-release
-        uses: tauri-apps/tauri-action@v0
+      - name: Build and publish Linux GUI to dev pre-release
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -88,17 +67,16 @@ jobs:
           tagName: dev-build
           releaseName: "AiNiee Dev Preview (Web + GUI)"
           releaseBody: |
-            Auto-generated development preview build.
+            Auto-generated Linux development preview build.
             Commit: ${{ github.sha }}
             Ref: ${{ github.ref_name }}
-            Message: ${{ github.event.head_commit.message }}
+            Message: ${{ github.event.head_commit.message || 'manual dispatch' }}
           releaseDraft: false
           prerelease: true
-          args: ${{ matrix.args }}
 
   upload-dev-launchers:
     runs-on: ubuntu-latest
-    needs: build-dev-gui
+    needs: build-dev-linux
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

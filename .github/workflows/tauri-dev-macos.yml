@@ -1,0 +1,126 @@
+name: tauri-dev-macos
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "Tools/WebServer/**"
+      - "Tools/TauriShell/**"
+      - "LaunchGUI.sh"
+      - ".github/workflows/tauri-dev-macos.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tauri-dev-macos-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-dev-macos-aarch64:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
+
+      - name: Install Rust stable with macOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./Tools/TauriShell/src-tauri -> target
+
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
+        working-directory: Tools/TauriShell
+        run: npm ci
+
+      - name: Build and publish macOS (arm64) GUI to dev pre-release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: Tools/TauriShell
+          tagName: dev-build
+          releaseName: "AiNiee Dev Preview (Web + GUI)"
+          releaseBody: |
+            Auto-generated macOS arm64 development preview build.
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref_name }}
+            Message: ${{ github.event.head_commit.message || 'manual dispatch' }}
+          releaseDraft: false
+          prerelease: true
+          args: --target aarch64-apple-darwin
+
+  build-dev-macos-x64:
+    runs-on: macos-latest
+    needs: build-dev-macos-aarch64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
+
+      - name: Install Rust stable with macOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./Tools/TauriShell/src-tauri -> target
+
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
+        working-directory: Tools/TauriShell
+        run: npm ci
+
+      - name: Build and publish macOS (x64) GUI to dev pre-release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: Tools/TauriShell
+          tagName: dev-build
+          releaseName: "AiNiee Dev Preview (Web + GUI)"
+          releaseBody: |
+            Auto-generated macOS x64 development preview build.
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref_name }}
+            Message: ${{ github.event.head_commit.message || 'manual dispatch' }}
+          releaseDraft: false
+          prerelease: true
+          args: --target x86_64-apple-darwin
