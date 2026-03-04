@@ -68,3 +68,4 @@ jobs:
             Message: ${{ github.event.head_commit.message || 'manual dispatch' }}
           releaseDraft: false
           prerelease: true
+          args: --bundles nsis
