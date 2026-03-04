@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Save, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Globe, Server, FileJson, CheckCircle, Loader2, Wifi, WifiOff, Edit2, X, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { AppConfig, PlatformConfig } from '../types';
 import { DataService } from '../services/DataService';
+import { nativeConfirm } from '../services/nativeDialog';
 import { PROJECT_TYPES } from '../constants';
 import { useI18n } from '../contexts/I18nContext';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -243,7 +244,7 @@ export const Settings: React.FC = () => {
 
   const handleDeleteTempFiles = async () => {
       if (selectedTempFiles.length === 0) return;
-      if (!confirm(`Delete ${selectedTempFiles.length} files?`)) return;
+      if (!(await nativeConfirm(`Delete ${selectedTempFiles.length} files?`))) return;
       setIsDeletingFiles(true);
       try {
           await DataService.deleteTempFiles(selectedTempFiles);
@@ -310,7 +311,7 @@ export const Settings: React.FC = () => {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!window.confirm(t('msg_profile_delete_confirm').replace('{}', name))) return;
+      if (!(await nativeConfirm(t('msg_profile_delete_confirm').replace('{}', name)))) return;
       try { await DataService.deleteProfile(name); await loadProfiles(); } catch (e: any) { alert(e.message); }
   };
 

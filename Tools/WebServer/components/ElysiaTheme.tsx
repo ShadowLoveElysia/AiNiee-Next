@@ -4,7 +4,8 @@ export const ElysiaTheme: React.FC<{ active: boolean }> = ({ active }) => {
   const [clicks, setClicks] = useState<{ id: number, x: number, y: number }[]>([]);
   const [particles, setParticles] = useState<{ id: number, x: number, y: number, size: number, duration: number, delay: number }[]>([]);
   const [trail, setTrail] = useState<{ id: number, x: number, y: number }[]>([]);
-  const trailRef = useRef<{ x: number, y: number }[]>([]);
+  const clickIdRef = useRef(0);
+  const trailIdRef = useRef(0);
 
   useEffect(() => {
     if (active) {
@@ -29,7 +30,8 @@ export const ElysiaTheme: React.FC<{ active: boolean }> = ({ active }) => {
       setParticles(newParticles);
 
       const handleClick = (e: MouseEvent) => {
-        const id = Date.now();
+        clickIdRef.current += 1;
+        const id = clickIdRef.current;
         setClicks(prev => [...prev, { id, x: e.clientX, y: e.clientY }]);
         setTimeout(() => {
           setClicks(prev => prev.filter(c => c.id !== id));
@@ -37,16 +39,34 @@ export const ElysiaTheme: React.FC<{ active: boolean }> = ({ active }) => {
       };
 
       const handleMouseMove = (e: MouseEvent) => {
-        const id = Date.now();
+        trailIdRef.current += 1;
+        const id = trailIdRef.current;
         setTrail(prev => [{ id, x: e.clientX, y: e.clientY }, ...prev.slice(0, 24)]);
+      };
+
+      const clearTrail = () => {
+        setTrail([]);
+      };
+
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          clearTrail();
+        }
       };
 
       window.addEventListener('click', handleClick);
       window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('blur', clearTrail);
+      window.addEventListener('mouseleave', clearTrail);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => {
         window.removeEventListener('click', handleClick);
         window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('blur', clearTrail);
+        window.removeEventListener('mouseleave', clearTrail);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
         document.body.classList.remove('elysia-transforming');
+        setTrail([]);
       };
     } else {
       document.documentElement.classList.remove('elysia-mode');

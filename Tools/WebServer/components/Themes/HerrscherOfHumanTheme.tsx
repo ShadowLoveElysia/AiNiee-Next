@@ -5,6 +5,8 @@ export const HerrscherOfHumanTheme: React.FC<{ active: boolean }> = ({ active })
   const [clicks, setClicks] = useState<{ id: number, x: number, y: number }[]>([]);
   const [trail, setTrail] = useState<{ id: number, x: number, y: number }[]>([]);
   const [parallax, setParallax] = useState({ x: 0, y: 0 });
+  const clickIdRef = useRef(0);
+  const trailIdRef = useRef(0);
 
   useEffect(() => {
     if (active) {
@@ -26,13 +28,15 @@ export const HerrscherOfHumanTheme: React.FC<{ active: boolean }> = ({ active })
       setPetals(newPetals);
 
       const handleClick = (e: MouseEvent) => {
-        const id = Date.now();
+        clickIdRef.current += 1;
+        const id = clickIdRef.current;
         setClicks(prev => [...prev, { id, x: e.clientX, y: e.clientY }]);
         setTimeout(() => setClicks(prev => prev.filter(c => c.id !== id)), 1000);
       };
 
       const handleMouseMove = (e: MouseEvent) => {
-        const id = Date.now();
+        trailIdRef.current += 1;
+        const id = trailIdRef.current;
         setTrail(prev => [{ id, x: e.clientX, y: e.clientY }, ...prev.slice(0, 25)]);
         
         const moveX = (e.clientX / window.innerWidth - 0.5) * 20;
@@ -40,15 +44,39 @@ export const HerrscherOfHumanTheme: React.FC<{ active: boolean }> = ({ active })
         setParallax({ x: moveX, y: moveY });
       };
 
+      const clearTrail = () => {
+        setTrail([]);
+      };
+
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          clearTrail();
+        }
+      };
+
       window.addEventListener('click', handleClick);
       window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('blur', clearTrail);
+      window.addEventListener('mouseleave', clearTrail);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
 
       return () => {
         document.documentElement.classList.remove('herrscher-mode');
         document.body.classList.remove('herrscher-transforming');
         window.removeEventListener('click', handleClick);
         window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('blur', clearTrail);
+        window.removeEventListener('mouseleave', clearTrail);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        setTrail([]);
       };
+    } else {
+      document.documentElement.classList.remove('herrscher-mode');
+      document.body.classList.remove('herrscher-transforming');
+      setPetals([]);
+      setClicks([]);
+      setTrail([]);
+      setParallax({ x: 0, y: 0 });
     }
   }, [active]);
 

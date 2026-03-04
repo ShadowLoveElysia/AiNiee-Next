@@ -3,6 +3,7 @@ import { Terminal } from '../components/Terminal';
 import { StatsPanel } from '../components/StatsPanel';
 import { Play, Square, Upload, FileText, ChevronRight, ChevronDown, Terminal as TerminalIcon, Loader2, History, AlertCircle, Sparkles, ListPlus, X } from 'lucide-react';
 import { DataService } from '../services/DataService';
+import { nativeConfirm } from '../services/nativeDialog';
 import { TaskStats, LogEntry, TaskType, TaskPayload } from '../types';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -91,7 +92,7 @@ export const TaskRunner: React.FC = () => {
                   .replace('{}', result.limit)
                   .replace('{}', result.oldest); // Reuse token
               
-              if (confirm(confirmMsg)) {
+              if (await nativeConfirm(confirmMsg)) {
                   // User chose to Delete (Overwrite)
                   result = await DataService.uploadFile(file, 'overwrite');
               } else {

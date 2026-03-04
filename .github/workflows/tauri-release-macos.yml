@@ -27,7 +27,9 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-          cache-dependency-path: Tools/TauriShell/package-lock.json
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
 
       - name: Install Rust stable with macOS targets
         uses: dtolnay/rust-toolchain@stable
@@ -39,7 +41,13 @@ jobs:
         with:
           workspaces: ./Tools/TauriShell/src-tauri -> target
 
-      - name: Install frontend dependencies
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
         working-directory: Tools/TauriShell
         run: npm ci
 
@@ -68,7 +76,9 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-          cache-dependency-path: Tools/TauriShell/package-lock.json
+          cache-dependency-path: |
+            Tools/WebServer/package-lock.json
+            Tools/TauriShell/package-lock.json
 
       - name: Install Rust stable with macOS targets
         uses: dtolnay/rust-toolchain@stable
@@ -80,7 +90,13 @@ jobs:
         with:
           workspaces: ./Tools/TauriShell/src-tauri -> target
 
-      - name: Install frontend dependencies
+      - name: Build Web assets
+        working-directory: Tools/WebServer
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Tauri shell dependencies
         working-directory: Tools/TauriShell
         run: npm ci
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ListPlus, Trash2, Play, FileJson, Settings2, FolderOpen, Globe, BookOpen, Layers, Plus, Loader2, Save, X, AlertTriangle, Edit3, ChevronDown, ChevronUp, Cpu, Zap, MessageSquare, Server, GripVertical } from 'lucide-react';
 import { DataService } from '../services/DataService';
+import { nativeConfirm } from '../services/nativeDialog';
 import { useI18n } from '../contexts/I18nContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { QueueTaskItem } from '../types';
@@ -131,7 +132,7 @@ export const TaskQueue: React.FC = () => {
   };
 
   const handleRemoveTask = async (index: number) => {
-    if (!confirm(t('msg_profile_delete_confirm').replace('{}', `Task #${index + 1}`))) return;
+    if (!(await nativeConfirm(t('msg_profile_delete_confirm').replace('{}', `Task #${index + 1}`)))) return;
     try {
       await DataService.removeFromQueue(index);
       fetchQueue();
@@ -141,7 +142,7 @@ export const TaskQueue: React.FC = () => {
   };
 
   const handleClearQueue = async () => {
-    if (!confirm(t('menu_clear_data') + "?")) return;
+    if (!(await nativeConfirm(t('menu_clear_data') + "?"))) return;
     try {
       await DataService.clearQueue();
       fetchQueue();

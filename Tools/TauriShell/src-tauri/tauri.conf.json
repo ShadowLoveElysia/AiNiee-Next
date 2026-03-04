@@ -8,13 +8,40 @@
   },
   "app": {
     "windows": [],
+    "withGlobalTauri": true,
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../../../*.py": "ainiee-runtime/",
+      "../../../pyproject.toml": "ainiee-runtime/pyproject.toml",
+      "../../../README.md": "ainiee-runtime/README.md",
+      "../../../uv.lock": "ainiee-runtime/uv.lock",
+      "../../../requirements.txt": "ainiee-runtime/requirements.txt",
+      "../../../Launch.bat": "ainiee-runtime/Launch.bat",
+      "../../../Launch.sh": "ainiee-runtime/Launch.sh",
+      "../../../LaunchGUI.bat": "ainiee-runtime/LaunchGUI.bat",
+      "../../../LaunchGUI.sh": "ainiee-runtime/LaunchGUI.sh",
+      "../../../ModuleFolders": "ainiee-runtime/ModuleFolders",
+      "../../../Resource": "ainiee-runtime/Resource",
+      "../../../I18N": "ainiee-runtime/I18N",
+      "../../../PluginScripts": "ainiee-runtime/PluginScripts",
+      "../../../StevExtraction": "ainiee-runtime/StevExtraction",
+      "../../../skimage": "ainiee-runtime/skimage",
+      "../../../Tools/__init__.py": "ainiee-runtime/Tools/__init__.py",
+      "../../../Tools/WebServer/__init__.py": "ainiee-runtime/Tools/WebServer/__init__.py",
+      "../../../Tools/WebServer/web_server.py": "ainiee-runtime/Tools/WebServer/web_server.py",
+      "../../../Tools/WebServer/dist": "ainiee-runtime/Tools/WebServer/dist",
+      "../tauri_web_host.py": "ainiee-runtime/Tools/TauriShell/tauri_web_host.py",
+      "../runtime_manifest.json": "ainiee-runtime/runtime_manifest.json"
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Save, Plus, Trash2, BookOpen, Ban, AlertTriangle, RefreshCw, Search, ToggleLeft, ToggleRight, Download, Upload, History, Users, Map as MapIcon, PenTool, Languages, FileJson, ChevronDown, Sparkles, Play, Square } from 'lucide-react';
 import { GlossaryItem, ExclusionItem, CharacterizationItem, TranslationExampleItem, TermItem, TermOption } from '../types';
 import { DataService } from '../services/DataService';
+import { nativeConfirm } from '../services/nativeDialog';
 import { useI18n } from '../contexts/I18nContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { TermSelector } from '../components/TermSelector';
@@ -171,7 +172,7 @@ export const Rules: React.FC = () => {
     };
 
     const recoverDraft = async () => {
-        if (!confirm(t('msg_recover_draft_confirm'))) return;
+        if (!(await nativeConfirm(t('msg_recover_draft_confirm')))) return;
         try {
             const [gd, ed, cd, wd, sd, exd] = await Promise.all([
                 DataService.getGlossaryDraft(),

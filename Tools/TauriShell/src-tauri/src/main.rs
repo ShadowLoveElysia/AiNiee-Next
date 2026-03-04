@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::fs;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -7,10 +8,18 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 struct BackendState {
     child: Mutex<Option<Child>>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeContext {
+    project_root: PathBuf,
+    host_script: PathBuf,
+    uv_path: Option<PathBuf>,
 }
 
 impl Default for BackendState {
@@ -19,6 +28,60 @@ impl Default for BackendState {
             child: Mutex::new(None),
         }
     }
+}
+
+fn normalize_dialog_title(title: Option<String>) -> String {
+    match title {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => "AiNiee".to_string(),
+    }
+}
+
+#[tauri::command]
+fn show_native_alert(
+    message: String,
+    title: Option<String>,
+    level: Option<String>,
+) -> Result<bool, String> {
+    let dialog_title = normalize_dialog_title(title);
+    let level = level
+        .unwrap_or_else(|| "info".to_string())
+        .trim()
+        .to_lowercase();
+
+    let dialog_level = match level.as_str() {
+        "error" => MessageLevel::Error,
+        "warning" => MessageLevel::Warning,
+        _ => MessageLevel::Info,
+    };
+
+    MessageDialog::new()
+        .set_title(dialog_title)
+        .set_description(message)
+        .set_level(dialog_level)
+        .set_buttons(MessageButtons::Ok)
+        .show();
+
+    Ok(true)
+}
+
+#[tauri::command]
+fn show_native_confirm(
+    message: String,
+    title: Option<String>,
+) -> Result<bool, String> {
+    let dialog_title = normalize_dialog_title(title);
+    let result = MessageDialog::new()
+        .set_title(dialog_title)
+        .set_description(message)
+        .set_level(MessageLevel::Warning)
+        .set_buttons(MessageButtons::OkCancel)
+        .show();
+
+    Ok(matches!(
+        result,
+        MessageDialogResult::Ok | MessageDialogResult::Yes
+    ))
 }
 
 fn io_error(message: impl Into<String>) -> std::io::Error {
@@ -32,10 +95,322 @@ fn parse_port() -> u16 {
         .unwrap_or(18000)
 }
 
-fn resolve_shell_dir() -> Result<PathBuf, String> {
+fn read_text_if_exists(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|e| format!("Failed to create {}: {e}", destination.display()))?;
+
+    for entry in fs::read_dir(source)
+        .map_err(|e| format!("Failed to read directory {}: {e}", source.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to read file type for {}: {e}", source_path.display()))?;
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!("Failed to create parent directory {}: {e}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &destination_path).map_err(|e| {
+                format!(
+                    "Failed to copy {} to {}: {e}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn runtime_manifest_text(root: &Path) -> Option<String> {
+    read_text_if_exists(&root.join("runtime_manifest.json"))
+}
+
+fn sync_packaged_runtime(packaged_root: &Path, runtime_root: &Path) -> Result<(), String> {
+    let packaged_manifest = runtime_manifest_text(packaged_root)
+        .ok_or_else(|| format!("Missing runtime_manifest.json in {}", packaged_root.display()))?;
+    let local_manifest = runtime_manifest_text(runtime_root);
+    let refresh_required = !runtime_root.exists() || local_manifest.as_deref() != Some(packaged_manifest.as_str());
+
+    if refresh_required {
+        if runtime_root.exists() {
+            fs::remove_dir_all(runtime_root).map_err(|e| {
+                format!(
+                    "Failed to remove stale runtime directory {}: {e}",
+                    runtime_root.display()
+                )
+            })?;
+        }
+        copy_dir_recursive(packaged_root, runtime_root)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_runtime_directories(project_root: &Path) -> Result<(), String> {
+    for relative_path in [
+        "output",
+        "output/cache",
+        "output/logs",
+        "output/temp_edit",
+        "updatetemp",
+    ] {
+        let full_path = project_root.join(relative_path);
+        fs::create_dir_all(&full_path)
+            .map_err(|e| format!("Failed to create {}: {e}", full_path.display()))?;
+    }
+    Ok(())
+}
+
+fn is_dir_writable(path: &Path) -> bool {
+    if fs::create_dir_all(path).is_err() {
+        return false;
+    }
+
+    let test_file = path.join(".ainiee_write_test");
+    match fs::write(&test_file, b"ok") {
+        Ok(_) => {
+            let _ = fs::remove_file(test_file);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn resolve_runtime_root(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(custom_runtime_dir) = std::env::var("AINIEE_RUNTIME_DIR") {
+        let trimmed = custom_runtime_dir.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            if is_dir_writable(&path) {
+                return Ok(path);
+            }
+            return Err(format!(
+                "AINIEE_RUNTIME_DIR is not writable: {}",
+                path.display()
+            ));
+        }
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let runtime_root = exe_dir.join("ainiee-runtime");
+            if is_dir_writable(&runtime_root) {
+                return Ok(runtime_root);
+            }
+        }
+    }
+
+    let local_data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to resolve app local data directory: {e}"))?;
+    let runtime_root = local_data_dir.join("ainiee-runtime");
+    if is_dir_writable(&runtime_root) {
+        return Ok(runtime_root);
+    }
+
+    Err(format!(
+        "No writable runtime directory found. Checked executable directory and {}",
+        runtime_root.display()
+    ))
+}
+
+fn uv_executable_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "uv.exe"
+    } else {
+        "uv"
+    }
+}
+
+fn command_works(command_path: &Path) -> bool {
+    Command::new(command_path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn candidate_uv_paths() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let uv_name = uv_executable_name();
+
+    if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
+        candidates.push(PathBuf::from(cargo_home).join("bin").join(uv_name));
+    }
+
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        candidates.push(PathBuf::from(user_profile).join(".cargo").join("bin").join(uv_name));
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join(".cargo").join("bin").join(uv_name));
+    }
+
+    candidates
+}
+
+fn locate_uv() -> Option<PathBuf> {
+    if command_works(Path::new("uv")) {
+        return Some(PathBuf::from("uv"));
+    }
+
+    for candidate in candidate_uv_paths() {
+        if candidate.exists() && command_works(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn install_uv() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://astral.sh/uv/install.ps1 | iex",
+            ])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| format!("Failed to execute uv installer: {e}"))?;
+
+        if !status.success() {
+            return Err(format!("uv installer failed with status: {status}"));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = Command::new("sh")
+            .args(["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| format!("Failed to execute uv installer: {e}"))?;
+
+        if !status.success() {
+            return Err(format!("uv installer failed with status: {status}"));
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_uv_available() -> Result<PathBuf, String> {
+    if let Some(uv_path) = locate_uv() {
+        return Ok(uv_path);
+    }
+
+    install_uv()?;
+
+    locate_uv().ok_or_else(|| {
+        "uv installation command completed but uv was not found in PATH or cargo bin.".to_string()
+    })
+}
+
+fn sync_runtime_dependencies(project_root: &Path, uv_path: &Path) -> Result<(), String> {
+    let manifest_content = runtime_manifest_text(project_root).unwrap_or_default();
+    let marker_path = project_root.join(".uv_sync_marker");
+    let marker_content = read_text_if_exists(&marker_path).unwrap_or_default();
+    let marker_matches = marker_content == manifest_content;
+    let venv_exists = project_root.join(".venv").exists();
+
+    if marker_matches && venv_exists {
+        return Ok(());
+    }
+
+    let status = Command::new(uv_path)
+        .args(["sync", "--frozen"])
+        .current_dir(project_root)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|e| format!("Failed to run `uv sync --frozen`: {e}"))?;
+
+    if !status.success() {
+        let fallback = Command::new(uv_path)
+            .arg("sync")
+            .current_dir(project_root)
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| format!("Failed to run fallback `uv sync`: {e}"))?;
+
+        if !fallback.success() {
+            return Err(format!(
+                "Dependency installation failed (uv sync exit status: {status}, fallback status: {fallback})."
+            ));
+        }
+    }
+
+    fs::write(&marker_path, manifest_content)
+        .map_err(|e| format!("Failed to write sync marker {}: {e}", marker_path.display()))?;
+
+    Ok(())
+}
+
+fn resolve_packaged_context(app_handle: &tauri::AppHandle) -> Result<Option<RuntimeContext>, String> {
+    let resource_dir = match app_handle.path().resource_dir() {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+
+    let packaged_runtime = resource_dir.join("ainiee-runtime");
+    if !packaged_runtime.join("runtime_manifest.json").exists() {
+        return Ok(None);
+    }
+
+    let runtime_root = resolve_runtime_root(app_handle)?;
+
+    sync_packaged_runtime(&packaged_runtime, &runtime_root)?;
+    ensure_runtime_directories(&runtime_root)?;
+
+    let uv_path = ensure_uv_available()?;
+    sync_runtime_dependencies(&runtime_root, &uv_path)?;
+
+    let host_script = runtime_root
+        .join("Tools")
+        .join("TauriShell")
+        .join("tauri_web_host.py");
+    if !host_script.exists() {
+        return Err(format!("Missing host script: {}", host_script.display()));
+    }
+
+    Ok(Some(RuntimeContext {
+        project_root: runtime_root,
+        host_script,
+        uv_path: Some(uv_path),
+    }))
+}
+
+fn resolve_dev_context() -> Result<RuntimeContext, String> {
     let shell_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to resolve shell directory.")?
+        .to_path_buf();
+
+    let project_root = shell_dir
+        .parent()
+        .and_then(|path| path.parent())
+        .ok_or("Failed to resolve development project root.")?
         .to_path_buf();
 
     let host_script = shell_dir.join("tauri_web_host.py");
@@ -43,40 +418,85 @@ fn resolve_shell_dir() -> Result<PathBuf, String> {
         return Err(format!("Missing host script: {}", host_script.display()));
     }
 
-    Ok(shell_dir)
+    Ok(RuntimeContext {
+        project_root,
+        host_script,
+        uv_path: locate_uv(),
+    })
 }
 
-fn spawn_backend(shell_dir: &Path, port: u16) -> Result<Child, String> {
-    let host_script = shell_dir.join("tauri_web_host.py");
-    let port_arg = port.to_string();
+fn resolve_runtime_context(app_handle: &tauri::AppHandle) -> Result<RuntimeContext, String> {
+    if let Some(packaged_context) = resolve_packaged_context(app_handle)? {
+        return Ok(packaged_context);
+    }
 
-    let mut uv_cmd = Command::new("uv");
-    uv_cmd
+    resolve_dev_context()
+}
+
+fn spawn_backend_with_uv(context: &RuntimeContext, port: u16, uv_path: &Path) -> Result<Child, String> {
+    let port_arg = port.to_string();
+    let mut command = Command::new(uv_path);
+    command
         .arg("run")
-        .arg(&host_script)
+        .arg(&context.host_script)
         .arg("--port")
         .arg(&port_arg)
-        .current_dir(shell_dir)
+        .current_dir(&context.project_root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    match uv_cmd.spawn() {
-        Ok(child) => Ok(child),
-        Err(uv_err) => {
-            let mut py_cmd = Command::new("python");
-            py_cmd
-                .arg(&host_script)
-                .arg("--port")
-                .arg(&port_arg)
-                .current_dir(shell_dir)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
+    command
+        .spawn()
+        .map_err(|e| format!("Failed to start backend with uv: {e}"))
+}
 
-            py_cmd
-                .spawn()
-                .map_err(|py_err| format!("Failed to start backend. uv error: {uv_err}; python error: {py_err}"))
+fn spawn_backend_with_python(context: &RuntimeContext, port: u16) -> Result<Child, String> {
+    let mut last_error = String::new();
+    let port_arg = port.to_string();
+
+    for python_cmd in ["python", "python3"] {
+        let mut command = Command::new(python_cmd);
+        command
+            .arg(&context.host_script)
+            .arg("--port")
+            .arg(&port_arg)
+            .current_dir(&context.project_root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(err) => {
+                last_error = format!("{python_cmd}: {err}");
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to start backend with python fallback. Last error: {last_error}"
+    ))
+}
+
+fn spawn_backend(context: &RuntimeContext, port: u16) -> Result<Child, String> {
+    let uv_error = if let Some(uv_path) = context.uv_path.as_deref() {
+        match spawn_backend_with_uv(context, port, uv_path) {
+            Ok(child) => return Ok(child),
+            Err(err) => Some(err),
+        }
+    } else {
+        None
+    };
+
+    match spawn_backend_with_python(context, port) {
+        Ok(child) => Ok(child),
+        Err(py_err) => {
+            if let Some(uv_err) = uv_error {
+                Err(format!("uv error: {uv_err}; python error: {py_err}"))
+            } else {
+                Err(py_err)
+            }
         }
     }
 }
@@ -108,11 +528,16 @@ fn stop_backend(app_handle: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            show_native_alert,
+            show_native_confirm
+        ])
         .manage(BackendState::default())
         .setup(|app| {
+            let app_handle = app.handle().clone();
             let port = parse_port();
-            let shell_dir = resolve_shell_dir().map_err(io_error)?;
-            let mut child = spawn_backend(&shell_dir, port).map_err(io_error)?;
+            let runtime_context = resolve_runtime_context(&app_handle).map_err(io_error)?;
+            let mut child = spawn_backend(&runtime_context, port).map_err(io_error)?;
 
             if !wait_for_backend(port, Duration::from_secs(20)) {
                 let _ = child.kill();
