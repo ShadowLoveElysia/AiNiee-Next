@@ -521,64 +521,59 @@ class GlossaryMenu:
 
     def _show_glossary_action_menu(self, filtered_terms, glossary_data, glossary_path=None, temp_config=None):
         """显示术语表操作菜单"""
-        console.print(f"\n[cyan]{self.i18n.get('prompt_select_action') or '请选择操作:'}[/cyan]")
-        table = Table(show_header=False, box=None)
-        table.add_row("[cyan]1.[/]", self.i18n.get('option_save_without_translation') or "直接加入当前术语表（无翻译）")
-        table.add_row("[cyan]2.[/]", self.i18n.get('option_save_standalone_without_translation') or "仅另存为独立术语表（无翻译）")
-        table.add_row("[cyan]3.[/]", (self.i18n.get('option_multi_translate') or "多翻译选择") + " (当前配置)")
-        table.add_row("[cyan]4.[/]", (self.i18n.get('option_multi_translate') or "多翻译选择") + " (临时API)")
-        table.add_row("[cyan]5.[/]", (self.i18n.get('option_set_rounds') or "设置轮询次数") + " (当前配置)")
-        table.add_row("[cyan]6.[/]", (self.i18n.get('option_set_rounds') or "设置轮询次数") + " (临时API)")
-        console.print(table)
-        console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
+        while True:
+            console.print(f"\n[cyan]{self.i18n.get('prompt_select_action') or '请选择操作:'}[/cyan]")
+            table = Table(show_header=False, box=None)
+            table.add_row("[cyan]1.[/]", self.i18n.get('option_save_without_translation') or "直接加入当前术语表（无翻译）")
+            table.add_row("[cyan]2.[/]", self.i18n.get('option_save_standalone_without_translation') or "仅另存为独立术语表（无翻译）")
+            table.add_row("[cyan]3.[/]", (self.i18n.get('option_multi_translate') or "多翻译选择") + " " + (self.i18n.get('label_current_config') or "(当前配置)"))
+            table.add_row("[cyan]4.[/]", (self.i18n.get('option_multi_translate') or "多翻译选择") + " " + (self.i18n.get('label_temp_api') or "(临时API)"))
+            table.add_row("[cyan]5.[/]", (self.i18n.get('option_set_rounds') or "设置轮询次数") + " " + (self.i18n.get('label_current_config') or "(当前配置)"))
+            table.add_row("[cyan]6.[/]", (self.i18n.get('option_set_rounds') or "设置轮询次数") + " " + (self.i18n.get('label_temp_api') or "(临时API)"))
+            console.print(table)
+            console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
 
-        choice = IntPrompt.ask(
-            self.i18n.get('prompt_select'),
-            choices=["0", "1", "2", "3", "4", "5", "6"],
-            show_choices=False,
-            default=3
-        )
-
-        if choice == 0:
-            return
-        elif choice == 1:
-            self.analyzer.save_glossary_directly(glossary_data, save_mode="import", base_glossary_path=glossary_path)
-        elif choice == 2:
-            self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
-        elif choice == 3:
-            # 多翻译选择（当前配置）
-            rounds = self.config.get("term_translation_rounds", 3)
-            save_mode = self._prompt_glossary_save_mode(default_mode="import")
-            self.analyzer.multi_translate_and_select(
-                filtered_terms, None, rounds,
-                save_mode=save_mode,
-                base_glossary_path=glossary_path
+            choice = IntPrompt.ask(
+                self.i18n.get('prompt_select'),
+                choices=["0", "1", "2", "3", "4", "5", "6"],
+                show_choices=False,
+                default=3
             )
-        elif choice == 4:
-            # 多翻译选择（临时API）
-            translate_config = self.api_manager.configure_temp_api_for_analysis()
-            if translate_config:
+
+            if choice == 0:
+                return
+            elif choice == 1:
+                self.analyzer.save_glossary_directly(glossary_data, save_mode="import", base_glossary_path=glossary_path)
+            elif choice == 2:
+                self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
+            elif choice == 3:
+                # 多翻译选择（当前配置）
+                # 先保存原文术语表
+                self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
                 rounds = self.config.get("term_translation_rounds", 3)
                 save_mode = self._prompt_glossary_save_mode(default_mode="import")
                 self.analyzer.multi_translate_and_select(
-                    filtered_terms, translate_config, rounds,
+                    filtered_terms, None, rounds,
                     save_mode=save_mode,
                     base_glossary_path=glossary_path
                 )
-        elif choice == 5:
-            # 设置轮询次数（当前配置）
-            rounds = IntPrompt.ask(
-                self.i18n.get('prompt_translation_rounds') or "翻译轮询次数",
-                default=self.config.get("term_translation_rounds", 3)
-            )
-            rounds = max(1, min(10, rounds))
-            self.config["term_translation_rounds"] = rounds
-            self.save_config()
-            self._ask_translate_mode_and_run(filtered_terms, None, rounds, glossary_path)
-        elif choice == 6:
-            # 设置轮询次数（临时API）
-            translate_config = self.api_manager.configure_temp_api_for_analysis()
-            if translate_config:
+                return
+            elif choice == 4:
+                # 多翻译选择（临时API）
+                translate_config = self.api_manager.configure_temp_api_for_analysis()
+                if translate_config:
+                    # 先保存原文术语表
+                    self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
+                    rounds = self.config.get("term_translation_rounds", 3)
+                    save_mode = self._prompt_glossary_save_mode(default_mode="import")
+                    self.analyzer.multi_translate_and_select(
+                        filtered_terms, translate_config, rounds,
+                        save_mode=save_mode,
+                        base_glossary_path=glossary_path
+                    )
+                    return
+            elif choice == 5:
+                # 设置轮询次数（当前配置）
                 rounds = IntPrompt.ask(
                     self.i18n.get('prompt_translation_rounds') or "翻译轮询次数",
                     default=self.config.get("term_translation_rounds", 3)
@@ -586,7 +581,25 @@ class GlossaryMenu:
                 rounds = max(1, min(10, rounds))
                 self.config["term_translation_rounds"] = rounds
                 self.save_config()
-                self._ask_translate_mode_and_run(filtered_terms, translate_config, rounds, glossary_path)
+                # 先保存原文术语表
+                self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
+                self._ask_translate_mode_and_run(filtered_terms, None, rounds, glossary_path)
+                return
+            elif choice == 6:
+                # 设置轮询次数（临时API）
+                translate_config = self.api_manager.configure_temp_api_for_analysis()
+                if translate_config:
+                    rounds = IntPrompt.ask(
+                        self.i18n.get('prompt_translation_rounds') or "翻译轮询次数",
+                        default=self.config.get("term_translation_rounds", 3)
+                    )
+                    rounds = max(1, min(10, rounds))
+                    self.config["term_translation_rounds"] = rounds
+                    self.save_config()
+                    # 先保存原文术语表
+                    self.analyzer.save_glossary_directly(glossary_data, save_mode="standalone", base_glossary_path=glossary_path)
+                    self._ask_translate_mode_and_run(filtered_terms, translate_config, rounds, glossary_path)
+                    return
 
     def _ask_translate_mode_and_run(self, filtered_terms, temp_config, rounds, glossary_path=None):
         """询问翻译模式并执行"""

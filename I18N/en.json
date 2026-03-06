@@ -690,6 +690,8 @@
         "option_save_standalone_without_translation": "Save as standalone glossary only (no translation)",
         "option_multi_translate": "Multi-translation selection (Recommended)",
         "option_set_rounds": "Set rounds then translate",
+        "label_current_config": "(Current Config)",
+        "label_temp_api": "(Temp API)",
         "prompt_select_save_mode": "Select save mode:",
         "option_save_mode_import": "Add to current glossary",
         "option_save_mode_standalone": "Save standalone only",

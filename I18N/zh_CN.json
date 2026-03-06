@@ -712,6 +712,8 @@
         "option_save_standalone_without_translation": "仅另存为独立术语表（无翻译）",
         "option_multi_translate": "多翻译选择（推荐）",
         "option_set_rounds": "设置轮询次数后翻译",
+        "label_current_config": "(当前配置)",
+        "label_temp_api": "(临时API)",
         "prompt_select_save_mode": "请选择保存方式:",
         "option_save_mode_import": "加入当前术语表",
         "option_save_mode_standalone": "仅另存为独立术语表",
