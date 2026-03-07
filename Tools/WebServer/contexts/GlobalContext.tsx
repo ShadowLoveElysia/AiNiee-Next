@@ -78,6 +78,61 @@ export const GlobalProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [profiles, setProfiles] = useState<string[]>([]);
   const [rulesProfiles, setRulesProfiles] = useState<string[]>([]);
 
+  const normalizeConfig = (rawConfig: unknown): AppConfig => {
+    const raw = (rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig))
+      ? (rawConfig as Record<string, any>)
+      : {};
+
+    const rawPlatforms = raw.platforms;
+    const hasValidPlatforms =
+      rawPlatforms &&
+      typeof rawPlatforms === 'object' &&
+      !Array.isArray(rawPlatforms) &&
+      Object.keys(rawPlatforms).length > 0;
+    const platforms = hasValidPlatforms ? rawPlatforms : { ...(DEFAULT_CONFIG.platforms || {}) };
+
+    const backupApis = Array.isArray(raw.backup_apis)
+      ? raw.backup_apis.filter((item: unknown) => typeof item === 'string')
+      : [...(DEFAULT_CONFIG.backup_apis || [])];
+
+    const responseCheckSwitch =
+      raw.response_check_switch &&
+      typeof raw.response_check_switch === 'object' &&
+      !Array.isArray(raw.response_check_switch)
+        ? { ...DEFAULT_CONFIG.response_check_switch, ...raw.response_check_switch }
+        : { ...DEFAULT_CONFIG.response_check_switch };
+
+    const apiSettings =
+      raw.api_settings &&
+      typeof raw.api_settings === 'object' &&
+      !Array.isArray(raw.api_settings)
+        ? { ...DEFAULT_CONFIG.api_settings, ...raw.api_settings }
+        : { ...DEFAULT_CONFIG.api_settings };
+
+    const unlockedThemes = Array.isArray(raw.unlocked_themes)
+      ? raw.unlocked_themes
+      : [...(DEFAULT_CONFIG.unlocked_themes || ['default'])];
+
+    let targetPlatform = typeof raw.target_platform === 'string'
+      ? raw.target_platform
+      : DEFAULT_CONFIG.target_platform;
+    if (!platforms[targetPlatform]) {
+      const firstPlatform = Object.keys(platforms)[0];
+      targetPlatform = firstPlatform || DEFAULT_CONFIG.target_platform;
+    }
+
+    return {
+      ...DEFAULT_CONFIG,
+      ...(raw as Partial<AppConfig>),
+      backup_apis: backupApis,
+      platforms,
+      target_platform: targetPlatform,
+      response_check_switch: responseCheckSwitch,
+      api_settings: apiSettings,
+      unlocked_themes: unlockedThemes
+    };
+  };
+
   // Theme & Transition
   const [activeTheme, setActiveThemeState] = useState<ThemeType>('default');
   const [notification, setNotification] = useState<ThemeType | null>(null);
@@ -192,7 +247,8 @@ export const GlobalProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const refreshConfig = async () => {
     try {
       const data = await DataService.getConfig();
-      setConfigState(data);
+      const normalized = normalizeConfig(data);
+      setConfigState(normalized);
 
       // Fetch profiles
       const pList = await DataService.getProfiles();
@@ -202,8 +258,8 @@ export const GlobalProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       // Also sync input path if not set yet
       setTaskState(prev => {
-         if (!prev.customInputPath && data.label_input_path) {
-             return { ...prev, customInputPath: data.label_input_path };
+         if (!prev.customInputPath && normalized.label_input_path) {
+             return { ...prev, customInputPath: normalized.label_input_path };
          }
          return prev;
       });
@@ -214,7 +270,7 @@ export const GlobalProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Wrap setConfig to allow simpler updates from components
   const setConfig = (newConfig: AppConfig | null) => {
-      setConfigState(newConfig);
+      setConfigState(newConfig ? normalizeConfig(newConfig) : null);
       // In a real app, you might want to auto-save here or debounce save
   };
 

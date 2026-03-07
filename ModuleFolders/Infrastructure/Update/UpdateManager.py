@@ -151,9 +151,125 @@ class UpdateManager(Base):
         except: pass
         return "AiNiee-Cli V0.0.0"
 
+    def _github_headers(self) -> dict:
+        return {"User-Agent": "AiNiee-Next-Updater"}
+
+    def _fetch_releases_safe(self, timeout: int = 5):
+        """
+        安全获取 GitHub releases 列表。
+        返回: (releases_list, error_message)
+        """
+        try:
+            response = requests.get(self.RELEASES_URL, headers=self._github_headers(), timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            return [], str(e)
+
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)], ""
+
+        if isinstance(data, dict):
+            return [], str(data.get("message", "Unexpected release response object."))
+
+        return [], f"Unexpected release response type: {type(data).__name__}"
+
+    def _build_release_info(self, release_data: dict) -> dict:
+        """从 release JSON 构建统一的版本信息结构。"""
+        published_at = str(release_data.get("published_at", "") or "")
+        return {
+            "tag": str(release_data.get("tag_name", "") or ""),
+            "name": str(release_data.get("name", "") or ""),
+            "body": str(release_data.get("body", "") or ""),
+            "date": published_at[:10],
+            "datetime": published_at
+        }
+
+    def _select_main_prerelease(self, releases: list):
+        """
+        选择主程序 Pre-release。
+        策略：
+        1) 优先最新 dev-build（排除 web-dist 专用预发布）
+        2) 其次匹配 V...B（传统 Beta tag）
+        3) 最后回退到最新普通 pre-release
+        """
+        candidates = []
+        for release in releases:
+            if not isinstance(release, dict):
+                continue
+            if not release.get("prerelease"):
+                continue
+
+            tag = str(release.get("tag_name", "") or "")
+            tag_lower = tag.lower()
+
+            # 排除 Web UI 专用 pre-release，避免与主程序预览版冲突
+            if "web-dist" in tag_lower:
+                continue
+            assets = release.get("assets", [])
+            if isinstance(assets, list):
+                asset_names = [str(a.get("name", "")).lower() for a in assets if isinstance(a, dict)]
+                if any(name in ("web-dist-dev.zip", "web-dist.zip") for name in asset_names):
+                    continue
+
+            candidates.append(release)
+
+        if not candidates:
+            return None
+
+        # GitHub 返回通常已按时间倒序，这里再按发布时间显式排序一次以增强健壮性
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda r: str(r.get("published_at", "") or ""),
+            reverse=True
+        )
+
+        for release in sorted_candidates:
+            tag = str(release.get("tag_name", "") or "").lower()
+            name = str(release.get("name", "") or "").lower()
+            if "dev-build" in tag or "dev-build" in name:
+                return release
+
+        for release in sorted_candidates:
+            tag_upper = str(release.get("tag_name", "") or "").upper()
+            if "V" in tag_upper and "B" in tag_upper:
+                return release
+
+        for release in sorted_candidates:
+            tag_lower = str(release.get("tag_name", "") or "").lower()
+            name_lower = str(release.get("name", "") or "").lower()
+            if "beta" in tag_lower or "beta" in name_lower:
+                return release
+
+        return sorted_candidates[0]
+
+    def _select_web_preview_asset(self, releases: list):
+        """
+        在 pre-release 中选择 Web 预览包资产。
+        优先 web-dist-dev.zip，若不存在则回退 web-dist.zip。
+        """
+        preferred_assets = ("web-dist-dev.zip", "web-dist.zip")
+        for release in releases:
+            if not isinstance(release, dict):
+                continue
+            if not release.get("prerelease"):
+                continue
+
+            assets = release.get("assets", [])
+            if not isinstance(assets, list):
+                continue
+
+            for preferred_name in preferred_assets:
+                for asset in assets:
+                    if not isinstance(asset, dict):
+                        continue
+                    if asset.get("name") == preferred_name and asset.get("browser_download_url"):
+                        return release, asset
+        return None, None
+
     def fetch_update_info(self):
         """获取 Commit, Release 和 Pre-release 信息"""
-        headers = {"User-Agent": "AiNiee-Next-Updater"}
+        headers = self._github_headers()
         commit_info = None
         release_info = None
         prerelease_info = None
@@ -163,15 +279,22 @@ class UpdateManager(Base):
             response = requests.get(self.COMMITS_URL, headers=headers, timeout=5)
             if response.status_code == 200:
                 commits = response.json()
-                if commits:
+                if isinstance(commits, list) and commits:
                     latest = commits[0]
-                    commit_info = {
-                        "sha": latest.get("sha"),
-                        "message": latest.get("commit", {}).get("message", "").split('\n')[0],
-                        "date": latest.get("commit", {}).get("author", {}).get("date", "")[:10],
-                        "datetime": latest.get("commit", {}).get("author", {}).get("date", ""),
-                        "author": latest.get("commit", {}).get("author", {}).get("name", "Unknown")
-                    }
+                    if isinstance(latest, dict):
+                        commit_block = latest.get("commit", {})
+                        if not isinstance(commit_block, dict):
+                            commit_block = {}
+                        author_block = commit_block.get("author", {})
+                        if not isinstance(author_block, dict):
+                            author_block = {}
+                        commit_info = {
+                            "sha": latest.get("sha"),
+                            "message": str(commit_block.get("message", "")).split('\n')[0],
+                            "date": str(author_block.get("date", ""))[:10],
+                            "datetime": str(author_block.get("date", "")),
+                            "author": str(author_block.get("name", "Unknown") or "Unknown")
+                        }
         except: pass
 
         # 2. Fetch Latest Release (stable)
@@ -179,37 +302,17 @@ class UpdateManager(Base):
             response = requests.get(self.UPDATE_URL, headers=headers, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                release_info = {
-                    "tag": data.get("tag_name"),
-                    "name": data.get("name"),
-                    "body": data.get("body", ""),
-                    "date": data.get("published_at", "")[:10],
-                    "datetime": data.get("published_at", "")
-                }
+                if isinstance(data, dict):
+                    release_info = self._build_release_info(data)
         except: pass
 
-        # 3. Fetch Latest Pre-release (主程序Beta版本，排除WebUI专用的pre-release和dev-build)
+        # 3. Fetch Latest Pre-release (主程序预览版，优先 dev-build，排除 WebUI 专用 pre-release)
         try:
-            response = requests.get(self.RELEASES_URL, headers=headers, timeout=5)
-            if response.status_code == 200:
-                releases = response.json()
-                for r in releases:
-                    if r.get("prerelease"):
-                        tag = r.get("tag_name", "")
-                        # 只获取主程序的Beta版本（tag包含V且包含B，如V2.4.0B）
-                        # 排除WebUI专用的pre-release（如web-dist-dev等）
-                        # 排除GitHub Action自动构建的dev-build
-                        if 'dev-build' in tag.lower():
-                            continue
-                        if 'V' in tag.upper() and 'B' in tag.upper():
-                            prerelease_info = {
-                                "tag": tag,
-                                "name": r.get("name"),
-                                "body": r.get("body", ""),
-                                "date": r.get("published_at", "")[:10],
-                                "datetime": r.get("published_at", "")
-                            }
-                            break
+            releases, _ = self._fetch_releases_safe(timeout=5)
+            if releases:
+                selected = self._select_main_prerelease(releases)
+                if selected:
+                    prerelease_info = self._build_release_info(selected)
         except: pass
 
         return commit_info, release_info, prerelease_info
@@ -689,28 +792,19 @@ class UpdateManager(Base):
                 # Dev: Use Latest Pre-release asset (web-dist-dev.zip)
                 self.print("[cyan]Fetching latest pre-release info...[/cyan]")
                 try:
-                    # 获取所有 Release
-                    releases = requests.get(self.RELEASES_URL, timeout=10).json()
-                    # 找到包含 web-dist-dev.zip 的 Prerelease（而不是第一个prerelease）
-                    # 因为可能存在多个prerelease，比如主程序Beta版和WebUI专用版
-                    target_release = None
-                    asset = None
-                    for r in releases:
-                        if r.get('prerelease'):
-                            # 检查这个prerelease是否包含web-dist-dev.zip
-                            found_asset = next((a for a in r.get('assets', []) if a['name'] == 'web-dist-dev.zip'), None)
-                            if found_asset:
-                                target_release = r
-                                asset = found_asset
-                                break
-
-                    if target_release and asset:
-                        url = asset['browser_download_url']
-                        self.print(f"[green]Found Pre-release: {target_release['tag_name']}[/green]")
-                    elif target_release:
-                        self.error("Found pre-release but 'web-dist-dev.zip' asset is missing.")
+                    releases, err = self._fetch_releases_safe(timeout=10)
+                    if err and not releases:
+                        self.error(f"Failed to fetch pre-release info: {err}")
                     else:
-                        self.error("No pre-release with 'web-dist-dev.zip' found.")
+                        target_release, asset = self._select_web_preview_asset(releases)
+                        if target_release and asset:
+                            url = str(asset.get('browser_download_url', '') or '')
+                            self.print(
+                                f"[green]Found Pre-release: {target_release.get('tag_name', 'unknown')} "
+                                f"({asset.get('name', 'asset')})[/green]"
+                            )
+                        else:
+                            self.error("No pre-release with 'web-dist-dev.zip' or 'web-dist.zip' asset found.")
                 except Exception as e:
                     self.error(f"Failed to fetch pre-release info: {e}")
             
