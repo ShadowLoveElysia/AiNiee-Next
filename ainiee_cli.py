@@ -1214,6 +1214,100 @@ class CLIMenu:
         
         self.root_config["recent_projects"] = new_recent[:5]
         self.save_config(save_root=True)
+
+    def _auto_merge_batch_ebooks(self, merge_input_dir, merge_output_dir, merge_name, allow_non_series_prompt=True):
+        """批量目录任务完成后，自动调用批量电子书整合脚本进行合并。"""
+        conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
+        if not os.path.isfile(conv_script):
+            self.ui.log(f"[dim]{i18n.get('msg_batch_merge_script_missing')}[/dim]")
+            return False
+
+        supported_extensions = (
+            '.pdf', '.cbz', '.cbr', '.epub', '.mobi', '.azw3', '.docx', '.txt',
+            '.kepub', '.fb2', '.lit', '.lrf', '.pdb', '.pmlz', '.rb', '.rtf',
+            '.tcr', '.txtz', '.htmlz'
+        )
+        try:
+            merge_candidates = [
+                f for f in os.listdir(merge_input_dir)
+                if os.path.isfile(os.path.join(merge_input_dir, f)) and f.lower().endswith(supported_extensions)
+            ]
+        except Exception as e:
+            self.ui.log(i18n.get("msg_batch_merge_failed").format(str(e)))
+            return False
+
+        if len(merge_candidates) < 2:
+            self.ui.log(f"[dim]{i18n.get('msg_batch_merge_not_enough_files')}[/dim]")
+            return False
+
+        keyword_counter = collections.Counter()
+        for file_name in merge_candidates:
+            stem = os.path.splitext(file_name)[0]
+            stem = re.sub(r"(?i)(?:_translated|\.translated)$", "", stem).strip()
+
+            while True:
+                old_stem = stem
+                # 只按“同名 + 末尾数字序号”思路去掉尾巴，如：作品名 01 / 作品名-02 / 作品名(003)
+                stem = re.sub(r"[\s._\-]*[（(【\[]?\d{1,4}[】\])）]?$", "", stem).strip()
+                stem = re.sub(r"[\s._\-]+$", "", stem).strip()
+                if stem == old_stem:
+                    break
+
+            keyword = re.sub(r"[\s._\-]+", " ", stem).strip()
+            if len(keyword) >= 2:
+                keyword_counter[keyword] += 1
+
+        detected_keywords = keyword_counter.most_common(3)
+        top_count = detected_keywords[0][1] if detected_keywords else 0
+        threshold = max(2, int(len(merge_candidates) * 0.6 + 0.5))
+        is_series_like = top_count >= threshold
+
+        if not is_series_like and allow_non_series_prompt:
+            keyword_text = ", ".join([f"{k} x{v}" for k, v in detected_keywords]) if detected_keywords else i18n.get("label_none")
+            self.ui.log(f"[yellow]{i18n.get('msg_batch_merge_non_series_detected').format(keyword_text)}[/yellow]")
+            if not Confirm.ask(i18n.get("prompt_batch_merge_disable_for_non_series"), default=False):
+                self.ui.log(f"[yellow]{i18n.get('msg_batch_merge_auto_disabled')}[/yellow]")
+                return False
+
+        self.ui.log(i18n.get("msg_batch_merge_start").format(merge_name))
+        cmd = [
+            "uv", "run", conv_script,
+            "-p", merge_input_dir,
+            "-f", "epub",
+            "-m", "novel",
+            "-op", merge_output_dir,
+            "-o", merge_name,
+            "-t", merge_name,
+            "-l", _get_calibre_lang_code(),
+            "--auto-merge",
+            "--AiNiee",
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                merged_name = f"{merge_name}.epub"
+                merged_path = os.path.join(merge_output_dir, merged_name)
+                if os.path.exists(merged_path):
+                    self.ui.log(i18n.get("msg_batch_merge_success").format(os.path.basename(merged_path)))
+                else:
+                    self.ui.log(i18n.get("msg_batch_merge_success").format(merged_name))
+                return True
+
+            err_detail = (result.stderr or result.stdout or "").strip()
+            if err_detail:
+                err_detail = err_detail.splitlines()[-1][:240]
+            else:
+                err_detail = "Unknown error"
+            self.ui.log(i18n.get("msg_batch_merge_failed").format(err_detail))
+        except FileNotFoundError as e:
+            missing_cmd = e.filename or str(e)
+            self.ui.log(i18n.get("msg_batch_merge_failed").format(f"Command not found: {missing_cmd}"))
+        except Exception as e:
+            self.ui.log(i18n.get("msg_batch_merge_failed").format(str(e)))
+
+        return False
+
     def signal_handler(self, sig, frame):
         if self.task_running:
             if getattr(self, "stop_requested", False):
@@ -1308,6 +1402,8 @@ class CLIMenu:
         # 3. 对照显示模式 (TUI Detailed View)
         detailed_on = self.config.get("show_detailed_logs", False)
         detailed_status = f"[green]{i18n.get('banner_on')}[/green]" if detailed_on else f"[red]{i18n.get('banner_off')}[/red]"
+        batch_merge_on = self.config.get("enable_batch_auto_merge_ebook", False)
+        batch_merge_status = f"[green]{i18n.get('banner_on')}[/green]" if batch_merge_on else f"[red]{i18n.get('banner_off')}[/red]"
 
         # 获取第二行参数
         target_platform = self.config.get("target_platform", "Unknown")
@@ -1331,7 +1427,7 @@ class CLIMenu:
             think_status = f" | [bold]{i18n.get('banner_think')}:[/bold] {think_text}"
 
         settings_line_1 = f"| [bold]{i18n.get('banner_langs')}:[/bold] {src}->{tgt} | [bold]{i18n.get('banner_conv')}:[/bold] {conv_status}{conv_warning} | [bold]{i18n.get('banner_bilingual_file')}:[/bold] {bilingual_file_status} | [bold]{i18n.get('banner_bilingual')}:[/bold] {bilingual_content_status} |"
-        settings_line_2 = f"| [bold]{i18n.get('banner_api')}:[/bold] {target_platform} | [bold]{i18n.get('banner_threads')}:[/bold] {threads_display} | [bold]{i18n.get('banner_detailed')}:[/bold] {detailed_status}{think_status} |"
+        settings_line_2 = f"| [bold]{i18n.get('banner_api')}:[/bold] {target_platform} | [bold]{i18n.get('banner_threads')}:[/bold] {threads_display} | [bold]{i18n.get('banner_detailed')}:[/bold] {detailed_status} | [bold]{i18n.get('banner_batch_merge')}:[/bold] {batch_merge_status}{think_status} |"
 
         # 提示词状态
         trans_p = self.config.get("translation_prompt_selection", {}).get("last_selected_id", "common")
@@ -2707,6 +2803,8 @@ class CLIMenu:
         if self.input_listener.disabled and not web_mode:
             self.ui.log("[bold yellow]Warning: Keyboard listener failed to initialize (no TTY found). Hotkeys will be disabled.[/bold yellow]")
 
+        is_batch_folder_mode = os.path.isdir(target_path)
+        batch_folder_name = os.path.basename(os.path.normpath(target_path)) if is_batch_folder_mode else ""
         original_ext = os.path.splitext(target_path)[1].lower()
         is_middleware_converted = False
         is_xlsx_converted = False
@@ -3239,6 +3337,20 @@ class CLIMenu:
 
                 except Exception as e:
                     self.ui.log(f"[yellow]XLSX restoration error: {e}[/yellow]")
+
+            if (
+                success.is_set()
+                and task_mode == TaskType.TRANSLATION
+                and is_batch_folder_mode
+                and self.config.get("enable_batch_auto_merge_ebook", False)
+            ):
+                merge_name = f"{batch_folder_name}_AiNiee_Merged" if batch_folder_name else "AiNiee_Merged"
+                self._auto_merge_batch_ebooks(
+                    opath,
+                    opath,
+                    merge_name,
+                    allow_non_series_prompt=(not non_interactive and not web_mode),
+                )
             
             if not web_mode and not non_interactive and not from_queue:
                 Prompt.ask(f"\n{i18n.get('msg_task_ended')}")

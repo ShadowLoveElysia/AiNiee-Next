@@ -816,6 +816,16 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="enable_batch_auto_merge_ebook",
+    default=False,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_enable_batch_auto_merge_ebook",
+    i18n_desc_key="setting_enable_batch_auto_merge_ebook_desc",
+    category="advanced"
+))
+
+register_config(ConfigItem(
     key="tokens_limit_switch",
     default=False,
     level=ConfigLevel.ADVANCED,
