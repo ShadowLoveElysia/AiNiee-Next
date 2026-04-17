@@ -285,6 +285,8 @@
     "label_est_time": "予測完了時間",
     "msg_ref_only": "注意：計算結果は参考値です。実際のトークン数はプロバイダーの統計に従います。",
     "label_shortcuts": "[dim]ショートカット: [P] 一時停止 | [R] 再開 | [Q] 停止 | [-/+] スレッド | [K] キー切り替え | [M] モニター[/dim]",
+    "label_project_credit": "GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia",
+    "label_manga_core_credit": "漫画処理参考元: hgmzhn / manga-translator-ui",
     "label_status_normal": "● システム正常",
     "label_status_fixing": "◐ 障害修正中 (キー切替/リトライ中)",
     "label_status_warning": "◑ ネットワーク不安定、回復試行中",

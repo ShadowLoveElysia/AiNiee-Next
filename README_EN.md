@@ -217,6 +217,17 @@ This project utilizes a Wrapper / Adapter pattern:
 
 ---
 
+## Manga Reference
+
+This project references **hgmzhn / manga-translator-ui** for manga image processing related workflows and implementation ideas:
+
+- GitHub: https://github.com/hgmzhn/manga-translator-ui
+- Gitee mirror: https://gitee.com/hgmzhn/manga-translator-ui
+
+If related core modules are referenced, integrated, or reused in later stages, this project will continue to preserve source attribution and acknowledgement, and will comply with the corresponding open-source license terms.
+
+---
+
 ## Disclaimer
 
 - This project is an unofficial optimized branch of AiNiee

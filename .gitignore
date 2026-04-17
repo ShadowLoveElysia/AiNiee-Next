@@ -66,3 +66,5 @@ Tools/TauriShell/__pycache__/
 Tools/TauriShell/icons/
 /manga-translator-ui-main
 .codex
+/.venv
+/tests

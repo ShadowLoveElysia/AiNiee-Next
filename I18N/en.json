@@ -294,6 +294,8 @@
     "label_est_time": "Estimated Completion Time",
     "msg_ref_only": "Note: Estimates are for reference only. Actual tokens depend on service provider.",
     "label_shortcuts": "[dim]Shortcuts: [P] Pause | [R] Resume | [Q] Stop | [-/+] Threads | [K] Next Key | [M] Monitor[/dim]",
+    "label_project_credit": "GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia",
+    "label_manga_core_credit": "Manga reference: hgmzhn / manga-translator-ui",
     "label_status_normal": "● System Normal",
     "label_status_fixing": "◐ Correcting Fault (Switching key/Retrying)",
     "label_status_warning": "◑ Network Fluctuation, Retrying",

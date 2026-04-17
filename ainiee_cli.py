@@ -1485,7 +1485,8 @@ class CLIMenu:
         
         banner_content = (
             f"[bold cyan]AiNiee-Next[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
-            f"[dim]GUI Original: By NEKOparapa | CLI Version: By ShadowLoveElysia[/dim]\n"
+            f"[dim]{i18n.get('label_project_credit')}[/dim]\n"
+            f"[dim]{i18n.get('label_manga_core_credit')}[/dim]\n"
             f"{settings_line_1}\n"
             f"{settings_line_2}\n"
             f"{settings_line_3}\n"

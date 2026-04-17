@@ -217,6 +217,17 @@ uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 
 ---
 
+## 漫画处理参考
+
+本项目在漫画图像处理相关能力的设计与规划中，参考了 **hgmzhn / manga-translator-ui** 的实现与工作流：
+
+- GitHub: https://github.com/hgmzhn/manga-translator-ui
+- Gitee 备份: https://gitee.com/hgmzhn/manga-translator-ui
+
+后续若参考、接入或复用相关核心模块，本项目会持续保留来源说明与鸣谢信息，并遵守对应开源协议。
+
+---
+
 ## 免责声明
 
 - 本项目是 AiNiee 的非官方优化分支，侧重于运行体验与工程稳定性
