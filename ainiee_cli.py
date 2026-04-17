@@ -10,14 +10,12 @@ import time
 import signal
 import threading
 import warnings
-import locale
 import collections
 import glob
 import rapidjson as json
 import shutil
 import subprocess
 import argparse
-import threading
 import requests
 import traceback
 from datetime import datetime
@@ -47,207 +45,29 @@ try: initialize_tiktoken()
 except Exception: pass
 
 from ModuleFolders.Base.Base import Base, TUIHandler
-from ModuleFolders.Base.PluginManager import PluginManager
 from ModuleFolders.Infrastructure.Cache.CacheItem import TranslationStatus
-from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
-from ModuleFolders.Domain.FileReader.FileReader import FileReader
-from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
-from ModuleFolders.Service.SimpleExecutor.SimpleExecutor import SimpleExecutor
-from ModuleFolders.Service.TaskExecutor.TaskExecutor import TaskExecutor
-from ModuleFolders.Infrastructure.Update.UpdateManager import UpdateManager
 from ModuleFolders.Infrastructure.TaskConfig.SettingsRenderer import SettingsMenuBuilder
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
-from ModuleFolders.UserInterface.Editor import TUIEditor
-from ModuleFolders.Diagnostic import SmartDiagnostic, DiagnosticFormatter
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-from ModuleFolders.Service.HttpService.HttpService import HttpService
-from ModuleFolders.UserInterface.FileSelector import FileSelector
-from ModuleFolders.UserInterface.InputListener import InputListener
-from ModuleFolders.UserInterface.TaskUI import TaskUI
-from ModuleFolders.UserInterface.APIManager import APIManager
-from ModuleFolders.UserInterface.GlossaryMenu import GlossaryMenu
-from ModuleFolders.UserInterface.AIProofreadMenu import AIProofreadMenu
-from ModuleFolders.UserInterface.AutomationMenu import AutomationMenu
-from ModuleFolders.UserInterface.EditorMenu import EditorMenu
 from ModuleFolders.CLI.OperationLogger import OperationLogger, log_operation
+from ModuleFolders.UserInterface.AppI18N import (
+    detect_system_language,
+    get_base_interface_language_name,
+    initialize_i18n,
+    switch_runtime_language,
+)
+from ModuleFolders.UserInterface.BannerRenderer import build_status_banner
+from ModuleFolders.UserInterface.UIHelpers import (
+    ensure_calibre_available,
+    get_calibre_lang_code,
+    open_in_editor,
+)
+from ModuleFolders.UserInterface.WebLogger import WebLogger
 
 
 
 console = Console()
-
-# 角色介绍与翻译示例的校验键值对
-FEATURE_REQUIRED_KEYS = {
-    "characterization_data": {"original_name", "translated_name", "gender", "age", "personality", "speech_style", "additional_info"},
-    "translation_example_data": {"src", "dst"}
-}
-
-class I18NLoader:
-    def __init__(self, lang="en"):
-        self.lang, self.data = lang, {}
-        self.load_language(lang)
-    def load_language(self, lang):
-        path = os.path.join(PROJECT_ROOT, "I18N", f"{lang}.json")
-        if os.path.exists(path):
-            with open(path, 'r', encoding='utf-8') as f: self.data = json.load(f)
-        elif lang != "en": self.load_language("en")
-    def get(self, key): return self.data.get(key, key)
-
-config_path = os.path.join(PROJECT_ROOT, "Resource", "config.json")
-config = {}
-if os.path.exists(config_path):
-    with open(config_path, 'r', encoding='utf-8') as f: config = json.load(f)
-
-saved_lang = config.get("interface_language")
-config_path = os.path.join(PROJECT_ROOT, "Resource", "config.json")
-config = {}
-if os.path.exists(config_path):
-    with open(config_path, 'r', encoding='utf-8') as f: config = json.load(f)
-
-saved_lang = config.get("interface_language")
-current_lang = saved_lang or (lambda: "zh_CN" if (l := locale.getdefaultlocale()[0]) and l.startswith("zh") else "ja" if l and l.startswith("ja") else "en")()
-i18n = I18NLoader(current_lang)
-Base.i18n = i18n # Make I18N globally accessible
-
-def mask_key(key):
-    if not key: return ""
-    if len(key) <= 5: return key[:1] + "***" + key[-1:]
-    return key[:2] + "***" + key[-3:]
-
-def open_in_editor(file_path):
-    try:
-        if sys.platform == 'win32':
-            os.startfile(file_path)
-        elif sys.platform == 'darwin':
-            subprocess.run(['open', file_path])
-        else:
-            subprocess.run(['xdg-open', file_path])
-        return True
-    except Exception as e:
-        console.print(f"[red]Failed to open editor: {e}[/red]")
-        return False
-
-
-# ============================================================
-# Calibre 辅助函数 - 调用批量电子书整合.py中的实现
-# ============================================================
-from importlib import import_module as _import_module
-_ebook_module = _import_module("批量电子书整合")
-_getCalibreToolPath = _ebook_module.getCalibreToolPath
-_ensureCalibreTool = _ebook_module.ensureCalibreTool
-
-def _get_calibre_lang_code():
-    """将当前语言转换为批量电子书整合.py使用的语言代码"""
-    lang_map = {"zh_CN": "zh", "ja": "ja", "en": "en"}
-    return lang_map.get(current_lang, "en")
-
-def ensure_calibre_available(tool_name="ebook-convert.exe"):
-    """确保Calibre可用，如果不可用则询问用户是否下载"""
-    return _ensureCalibreTool(tool_name, _get_calibre_lang_code(), isInteractive=True)
-
-
-class WebLogger:
-    def __init__(self, stream=None, show_detailed=False):
-        self.last_stats_time = 0
-        self.stream = stream or sys.__stdout__
-        self.show_detailed = show_detailed
-        self.internal_api_url = os.environ.get("AINIEE_INTERNAL_API_URL")
-        self.current_source = ""
-        self._last_result_time = 0
-
-    def _push_to_web(self, source, translation):
-        if not self.internal_api_url: return
-        try:
-            import httpx
-            # 同步发送，但在本地网络下通常极快
-            httpx.post(f"{self.internal_api_url}/api/internal/update_comparison", 
-                      json={"source": source, "translation": translation},
-                      timeout=1.0)
-        except: pass
-
-    def log(self, msg):
-        # 1. 预处理：将对象转为字符串
-        if not isinstance(msg, str):
-            from io import StringIO
-            with StringIO() as buf:
-                temp_console = Console(file=buf, force_terminal=True, width=120)
-                temp_console.print(msg)
-                msg_str = buf.getvalue()
-        else:
-            msg_str = msg
-
-        # 2. 拦截实时对照信号
-        if "<<<RAW_RESULT>>>" in msg_str:
-            if time.time() - self._last_result_time < 0.5: return
-            try:
-                data = msg_str.split("<<<RAW_RESULT>>>")[1].strip()
-                if data:
-                    self._push_to_web(self.current_source, data)
-            except: pass
-            return
-
-        if msg_str:
-            # Strip rich markup for web log stream
-            clean = re.sub(r'\[/?[a-zA-Z\s]+\]', '', msg_str)
-            try:
-                # 确保写入并换行
-                self.stream.write(clean.strip() + '\n')
-                self.stream.flush()
-            except: pass
-
-    def on_source_data(self, event, data):
-        """Web 模式下同步原文，用于后续对照发送"""
-        if not isinstance(data, dict): return
-        self.current_source = str(data.get("data", ""))
-
-    def on_result_data(self, event, data):
-        """Web 模式下接收到译文数据包，推送至 WebServer"""
-        if not isinstance(data, dict): return
-        raw_content = str(data.get("data", ""))
-        source_content = data.get("source")
-        if not raw_content and not source_content: return
-        
-        if source_content:
-            self.current_source = str(source_content)
-        
-        if raw_content:
-            self._push_to_web(self.current_source, raw_content)
-            self._last_result_time = time.time()
-
-    def update_progress(self, event, data):
-        if not data or not isinstance(data, dict): return
-
-        if time.time() - self.last_stats_time < 0.5:
-            return
-        self.last_stats_time = time.time()
-
-        d = data
-        completed = d.get("line", 0)
-        total = d.get("total_line", 1)
-        tokens = d.get("token", 0)
-        elapsed = d.get("time", 0)
-        
-        # Success/Error Rate
-        total_req = d.get("total_requests", 0)
-        success_req = d.get("success_requests", 0)
-        error_req = d.get("error_requests", 0)
-        
-        s_rate = (success_req / total_req * 100) if total_req > 0 else 0
-        e_rate = (error_req / total_req * 100) if total_req > 0 else 0
-        
-        # Use session tokens for TPM calculation if available (Resume Fix)
-        calc_tokens = d.get("session_token", tokens)
-        calc_requests = d.get("session_requests", d.get("total_requests", 0))
-        
-        rpm = (calc_requests / (elapsed / 60)) if elapsed > 0 else 0
-        tpm_k = (calc_tokens / (elapsed / 60) / 1000) if elapsed > 0 else 0
-        
-        try:
-            self.stream.write(f"[STATS] RPM: {rpm:.2f} | TPM: {tpm_k:.2f}k | Progress: {completed}/{total} | Tokens: {tokens} | S-Rate: {s_rate:.1f}% | E-Rate: {e_rate:.1f}%\n")
-            self.stream.flush()
-        except: pass
-
-    def update_status(self, event, data):
-        pass
+current_lang, i18n = initialize_i18n(PROJECT_ROOT)
 
 class CLIMenu:
     def __init__(self):
@@ -255,6 +75,21 @@ class CLIMenu:
         self.profiles_dir = os.path.join(PROJECT_ROOT, "Resource", "profiles")
         self.rules_profiles_dir = os.path.join(PROJECT_ROOT, "Resource", "rules_profiles")
         os.makedirs(self.rules_profiles_dir, exist_ok=True)
+
+        self._plugin_manager = None
+        self._file_reader = None
+        self._file_outputer = None
+        self._cache_manager = None
+        self._task_executor = None
+        self._file_selector = None
+        self._update_manager = None
+        self._input_listener = None
+        self._smart_diagnostic = None
+        self._api_manager = None
+        self._glossary_menu = None
+        self._ai_proofread_menu = None
+        self._automation_menu = None
+        self._editor_menu_handler = None
         
         self.config = {}
         self.root_config = {}
@@ -262,29 +97,11 @@ class CLIMenu:
         self.active_rules_profile_name = "default"
         self.load_config()
 
-        self.plugin_manager = PluginManager()
-        self.plugin_manager.load_plugins_from_directory(os.path.join(PROJECT_ROOT, "PluginScripts"))
-        
-        # 同步插件启用状态
-        if "plugin_enables" in self.root_config:
-            self.plugin_manager.update_plugins_enable(self.root_config["plugin_enables"])
-            
-        self.file_reader, self.file_outputer, self.cache_manager = FileReader(), FileOutputer(), CacheManager()
-        self.simple_executor = SimpleExecutor()
-        self.task_executor = TaskExecutor(self.plugin_manager, self.cache_manager, self.file_reader, self.file_outputer)
-        self.file_selector = FileSelector(i18n)
-        self.update_manager = UpdateManager(i18n)
-        
-        # 输入监听器
-        self.input_listener = InputListener()
-
         # 全局属性供子模块使用
         self.PROJECT_ROOT = PROJECT_ROOT
-        self.i18n = i18n
 
         # 加载 Base 翻译库以供子模块 (Dry Run等) 使用
-        Base.current_interface_language = "简中" if current_lang == "zh_CN" else "日语" if current_lang == "ja" else "英语"
-        Base.multilingual_interface_dict = Base.load_translations(Base, os.path.join(PROJECT_ROOT, "Resource", "Localization"))
+        self._sync_base_interface_language()
 
         signal.signal(signal.SIGINT, self.signal_handler)
         self.task_running, self.original_print = False, Base.print
@@ -295,32 +112,166 @@ class CLIMenu:
         if self.config.get("enable_operation_logging", False):
             self.operation_logger.enable()
 
-        # 智能诊断模块
-        self.smart_diagnostic = SmartDiagnostic(lang=current_lang)
         self._api_error_count = 0  # API错误计数
         self._api_error_messages = []  # 存储最近的API错误信息
         self._show_diagnostic_hint = False  # 是否显示诊断提示
 
-        # --- WebServer 独立检测 (必须在 operation_logger 和 smart_diagnostic 之后) ---
+        # --- WebServer 独立检测 (必须在 operation_logger 之后) ---
         self._check_web_server_dist()
-        self._api_error_count = 0  # API错误计数
-        self._api_error_messages = []  # 存储最近的API错误信息
-        self._show_diagnostic_hint = False  # 是否显示诊断提示
 
-        # API管理器
-        self.api_manager = APIManager(self)
+    @property
+    def i18n(self):
+        return i18n
 
-        # 术语/规则菜单
-        self.glossary_menu = GlossaryMenu(self)
+    def _sync_base_interface_language(self):
+        Base.current_interface_language = get_base_interface_language_name(current_lang)
+        if not Base.multilingual_interface_dict:
+            Base.multilingual_interface_dict = Base.load_translations(
+                Base,
+                os.path.join(PROJECT_ROOT, "Resource", "Localization"),
+            )
 
-        # AI校对菜单
-        self.ai_proofread_menu = AIProofreadMenu(self)
+    @property
+    def plugin_manager(self):
+        if self._plugin_manager is None:
+            from ModuleFolders.Base.PluginManager import PluginManager
 
-        # 自动化菜单
-        self.automation_menu = AutomationMenu(self)
+            self._plugin_manager = PluginManager()
+            self._plugin_manager.load_plugins_from_directory(os.path.join(PROJECT_ROOT, "PluginScripts"))
+            if "plugin_enables" in self.root_config:
+                self._plugin_manager.update_plugins_enable(self.root_config["plugin_enables"])
+        return self._plugin_manager
 
-        # 编辑器菜单
-        self.editor_menu_handler = EditorMenu(self)
+    @property
+    def file_reader(self):
+        if self._file_reader is None:
+            from ModuleFolders.Domain.FileReader.FileReader import FileReader
+
+            self._file_reader = FileReader()
+        return self._file_reader
+
+    @property
+    def file_outputer(self):
+        if self._file_outputer is None:
+            from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
+
+            self._file_outputer = FileOutputer()
+        return self._file_outputer
+
+    @property
+    def cache_manager(self):
+        if self._cache_manager is None:
+            from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
+
+            self._cache_manager = CacheManager()
+        return self._cache_manager
+
+    @property
+    def task_executor(self):
+        if self._task_executor is None:
+            from ModuleFolders.Service.TaskExecutor.TaskExecutor import TaskExecutor
+
+            self._task_executor = TaskExecutor(
+                self.plugin_manager,
+                self.cache_manager,
+                self.file_reader,
+                self.file_outputer,
+            )
+        return self._task_executor
+
+    @property
+    def file_selector(self):
+        if (
+            self._file_selector is None
+            or getattr(getattr(self._file_selector, "i18n", None), "lang", None) != current_lang
+        ):
+            from ModuleFolders.UserInterface.FileSelector import FileSelector
+
+            self._file_selector = FileSelector(self.i18n)
+        return self._file_selector
+
+    @property
+    def update_manager(self):
+        if (
+            self._update_manager is None
+            or getattr(getattr(self._update_manager, "i18n", None), "lang", None) != current_lang
+        ):
+            from ModuleFolders.Infrastructure.Update.UpdateManager import UpdateManager
+
+            self._update_manager = UpdateManager(self.i18n)
+        return self._update_manager
+
+    @property
+    def input_listener(self):
+        if self._input_listener is None:
+            from ModuleFolders.UserInterface.InputListener import InputListener
+
+            self._input_listener = InputListener()
+        return self._input_listener
+
+    @property
+    def smart_diagnostic(self):
+        if self._smart_diagnostic is None or getattr(self._smart_diagnostic, "lang", None) != current_lang:
+            from ModuleFolders.Diagnostic import SmartDiagnostic
+
+            self._smart_diagnostic = SmartDiagnostic(lang=current_lang)
+        return self._smart_diagnostic
+
+    @property
+    def api_manager(self):
+        if self._api_manager is None:
+            from ModuleFolders.UserInterface.APIManager import APIManager
+
+            self._api_manager = APIManager(self)
+        return self._api_manager
+
+    @property
+    def glossary_menu(self):
+        if self._glossary_menu is None:
+            from ModuleFolders.UserInterface.GlossaryMenu import GlossaryMenu
+
+            self._glossary_menu = GlossaryMenu(self)
+        return self._glossary_menu
+
+    @property
+    def ai_proofread_menu(self):
+        if self._ai_proofread_menu is None:
+            from ModuleFolders.UserInterface.AIProofreadMenu import AIProofreadMenu
+
+            self._ai_proofread_menu = AIProofreadMenu(self)
+        return self._ai_proofread_menu
+
+    @property
+    def automation_menu(self):
+        if self._automation_menu is None:
+            from ModuleFolders.UserInterface.AutomationMenu import AutomationMenu
+
+            self._automation_menu = AutomationMenu(self)
+        return self._automation_menu
+
+    @property
+    def editor_menu_handler(self):
+        if self._editor_menu_handler is None:
+            from ModuleFolders.UserInterface.EditorMenu import EditorMenu
+
+            self._editor_menu_handler = EditorMenu(self)
+        return self._editor_menu_handler
+
+    def _is_task_ui_instance(self):
+        ui = getattr(self, "ui", None)
+        if ui is None:
+            return False
+        try:
+            from ModuleFolders.UserInterface.TaskUI import TaskUI
+
+            return isinstance(ui, TaskUI)
+        except Exception:
+            return False
+
+    def _format_diagnostic_result(self, result):
+        from ModuleFolders.Diagnostic import DiagnosticFormatter
+
+        return DiagnosticFormatter.format_result(result, current_lang)
 
     def _check_web_server_dist(self):
         """检查 WebServer 编译产物是否存在"""
@@ -368,7 +319,7 @@ class CLIMenu:
                 Base.print(f"[cyan]您可以通过 http://{local_ip}:{webserver_port} 访问网页监控面板[/cyan]")
                 
                 # Signal TUI takeover if running
-                if self.task_running and hasattr(self, "ui") and isinstance(self.ui, TaskUI):
+                if self.task_running and self._is_task_ui_instance():
                     self.ui.web_task_manager = ws_module.task_manager
                     self.ui._server_ip = local_ip
 
@@ -1163,6 +1114,8 @@ class CLIMenu:
             self.active_rules_profile_name = "default"
         
         self._migrate_and_load_profiles()
+        if getattr(self, "_plugin_manager", None) is not None and "plugin_enables" in self.root_config:
+            self._plugin_manager.update_plugins_enable(self.root_config["plugin_enables"])
 
     def save_config(self, save_root=False):
         # 1. Save Settings (Exclude rules)
@@ -1278,7 +1231,7 @@ class CLIMenu:
             "-op", merge_output_dir,
             "-o", merge_name,
             "-t", merge_name,
-            "-l", _get_calibre_lang_code(),
+            "-l", get_calibre_lang_code(current_lang),
             "--auto-merge",
             "--AiNiee",
         ]
@@ -1354,148 +1307,8 @@ class CLIMenu:
         thread.start()
 
     def display_banner(self):
-        # 获取版本号
-        v_str = "V0.0.0"
-        try:
-            v_path = os.path.join(PROJECT_ROOT, "Resource", "Version", "version.json")
-            if os.path.exists(v_path):
-                with open(v_path, 'r', encoding='utf-8') as f:
-                    v_data = json.load(f)
-                    v_full = v_data.get("version", "")
-                    if 'V' in v_full: v_str = "V" + v_full.split('V')[-1].strip()
-        except: pass
-
-        # 整理重要设置状态
-        src = self.config.get("source_language", "Unknown")
-        tgt = self.config.get("target_language", "Unknown")
-        conv_on = self.config.get("response_conversion_toggle", False)
-        conv_preset = self.config.get("opencc_preset", "None")
-        bilingual_order = self.config.get("bilingual_text_order", "translation_first")
-        
-        # 简繁纠错逻辑: 如果目标是简体但预设包含 s2t (简转繁)
-        is_tgt_simplified = any(k in tgt for k in ["简", "Simplified", "zh-cn"])
-        is_preset_s2t = "s2t" in conv_preset.lower()
-        conv_warning = ""
-        if conv_on and is_tgt_simplified and is_preset_s2t:
-            conv_warning = f" [bold red]{i18n.get('warn_conv_direction')}[/bold red]"
-
-        # 判断双语与对照状态
-        plugin_enables = self.root_config.get("plugin_enables", {})
-        is_plugin_bilingual = plugin_enables.get("BilingualPlugin", False)
-        
-        # 1. 内容双语 (Bilingual Content via Plugin)
-        bilingual_content_status = f"[green]{i18n.get('banner_on')}[/green]" if is_plugin_bilingual else f"[red]{i18n.get('banner_off')}[/red]"
-        
-        # 2. 对照文件 (Bilingual File Generation)
-        bilingual_file_on = self.config.get("enable_bilingual_output", False)
-        proj_type = self.config.get("translation_project", "AutoType")
-        # 只有特定格式支持双语输出
-        is_type_support_bilingual = proj_type in ["Txt", "Epub", "Srt"]
-        if bilingual_file_on:
-            if is_type_support_bilingual:
-                bilingual_file_status = f"[green]{i18n.get('banner_on')}[/green] ([cyan]{bilingual_order.replace('_', ' ')}[/cyan])"
-            else:
-                bilingual_file_status = f"[yellow]{i18n.get('banner_on')} ({i18n.get('banner_unsupported')})[/yellow]"
-        else:
-            bilingual_file_status = f"[red]{i18n.get('banner_off')}[/red]"
-        
-        # 3. 对照显示模式 (TUI Detailed View)
-        detailed_on = self.config.get("show_detailed_logs", False)
-        detailed_status = f"[green]{i18n.get('banner_on')}[/green]" if detailed_on else f"[red]{i18n.get('banner_off')}[/red]"
-        batch_merge_on = self.config.get("enable_batch_auto_merge_ebook", False)
-        batch_merge_status = f"[green]{i18n.get('banner_on')}[/green]" if batch_merge_on else f"[red]{i18n.get('banner_off')}[/red]"
-
-        # 获取第二行参数
-        target_platform = self.config.get("target_platform", "Unknown")
-        model_name = self.config.get("model", "Unknown")
-        user_threads = self.config.get("user_thread_counts", 0)
-        context_lines = self.config.get("pre_line_counts", 3)
-        think_on = self.config.get("think_switch", False)
-        is_local = target_platform.lower() in ["sakura", "localllm", "murasaki"]
-
-        # 使用 I18N 获取文字
-        conv_on_text = i18n.get("banner_on")
-        conv_off_text = i18n.get("banner_off")
-        
-        conv_status = f"[green]{conv_on_text} ({conv_preset})[/green]" if conv_on else f"[red]{conv_off_text}[/red]"
-        
-        # 第二行状态构建
-        threads_display = f"Auto" if user_threads == 0 else str(user_threads)
-        think_status = ""
-        if not is_local:
-            think_text = f"[green]{conv_on_text}[/green]" if think_on else f"[red]{conv_off_text}[/red]"
-            think_status = f" | [bold]{i18n.get('banner_think')}:[/bold] {think_text}"
-
-        settings_line_1 = f"| [bold]{i18n.get('banner_langs')}:[/bold] {src}->{tgt} | [bold]{i18n.get('banner_conv')}:[/bold] {conv_status}{conv_warning} | [bold]{i18n.get('banner_bilingual_file')}:[/bold] {bilingual_file_status} | [bold]{i18n.get('banner_bilingual')}:[/bold] {bilingual_content_status} |"
-        settings_line_2 = f"| [bold]{i18n.get('banner_api')}:[/bold] {target_platform} | [bold]{i18n.get('banner_threads')}:[/bold] {threads_display} | [bold]{i18n.get('banner_detailed')}:[/bold] {detailed_status} | [bold]{i18n.get('banner_batch_merge')}:[/bold] {batch_merge_status}{think_status} |"
-
-        # 提示词状态
-        trans_p = self.config.get("translation_prompt_selection", {}).get("last_selected_id", "common")
-        polish_p = self.config.get("polishing_prompt_selection", {}).get("last_selected_id", "common")
-        if trans_p == "command": trans_p = i18n.get("label_none") or "None"
-        if polish_p == "command": polish_p = i18n.get("label_none") or "None"
-        settings_line_3 = f"| [bold]{i18n.get('banner_prompts') or 'Prompts'}:[/bold] {i18n.get('banner_trans') or 'Trans'}:[green]{trans_p}[/green] | {i18n.get('banner_polish') or 'Polish'}:[green]{polish_p}[/green] |"
-
-        # 操作记录状态 - 开启时显示详细说明
-        op_log_on = self.operation_logger.is_enabled()
-        op_log_status = f"[green]{conv_on_text}[/green]" if op_log_on else f"[red]{conv_off_text}[/red]"
-        if op_log_on:
-            op_log_hint = f" [dim]({i18n.get('banner_op_log_hint_on') or '敏感信息已抹除'})[/dim]"
-        else:
-            op_log_hint = f" [dim]({i18n.get('banner_op_log_hint_off') or '建议开启以获得更准确的LLM分析'})[/dim]"
-
-        # 自动AI校对状态 - 只在开启时显示，单独一行
-        auto_proofread_on = self.config.get("enable_auto_proofread", False)
-        auto_proofread_line = ""
-        if auto_proofread_on:
-            auto_proofread_hint = i18n.get('banner_auto_proofread_hint') or '翻译完成后自动调用AI校对，会产生额外的API费用，请注意API费用'
-            auto_proofread_line = f"\n| [bold]{i18n.get('banner_auto_proofread') or '自动校对'}:[/bold] [green]{conv_on_text}[/green] [dim]({auto_proofread_hint})[/dim] |"
-
-        settings_line_4 = f"| [bold]{i18n.get('banner_op_log') or '操作记录'}:[/bold] {op_log_status}{op_log_hint} |{auto_proofread_line}"
-
-        # GitHub 状态栏 (必须显示)
-        github_status_line = ""
-        github_info = getattr(self, '_cached_github_info', None)
-
-        if github_info:
-            parts = []
-            if github_info.get("commit_text"):
-                parts.append(f"[dim]{github_info['commit_text']}[/dim]")
-            if github_info.get("release_text"):
-                parts.append(f"[dim]{github_info['release_text']}[/dim]")
-            if github_info.get("prerelease_text"):
-                parts.append(f"[dim yellow]{github_info['prerelease_text']}[/dim yellow]")
-            if parts:
-                github_status_line = "\n" + " | ".join(parts)
-            else:
-                fail_msg = i18n.get('banner_github_fetch_failed') or '无法连接至Github，获取最新Commit和Release失败'
-                github_status_line = f"\n[dim red]{fail_msg}[/dim red]"
-        else:
-            fail_msg = i18n.get('banner_github_fetch_failed') or '无法连接至Github，获取最新Commit和Release失败'
-            github_status_line = f"\n[dim red]{fail_msg}[/dim red]"
-
-        # Beta 版本提示
-        beta_warning_line = ""
-        if 'B' in v_str.upper():
-            beta_msg = i18n.get('banner_beta_warning') or '注意:您正处于Beta版本，可能存在一些问题，若您遇到了，请提交issue以供修复/优化'
-            beta_warning_line = f"\n[yellow]{beta_msg}[/yellow]"
-
-        profile_display = f"[bold yellow]({self.active_profile_name})[/bold yellow]"
         console.clear()
-        
-        banner_content = (
-            f"[bold cyan]AiNiee-Next[/bold cyan] [bold green]{v_str}[/bold green] {profile_display}\n"
-            f"[dim]{i18n.get('label_project_credit')}[/dim]\n"
-            f"[dim]{i18n.get('label_manga_core_credit')}[/dim]\n"
-            f"{settings_line_1}\n"
-            f"{settings_line_2}\n"
-            f"{settings_line_3}\n"
-            f"{settings_line_4}"
-            f"{github_status_line}"
-            f"{beta_warning_line}"
-        )
-        
-        console.print(Panel.fit(banner_content, title="Status", border_style="cyan"))
+        console.print(build_status_banner(self, PROJECT_ROOT))
 
     def run_wizard(self):
         self.display_banner()
@@ -1919,7 +1732,7 @@ class CLIMenu:
 
         # 使用诊断模块进行诊断
         result = self.smart_diagnostic.diagnose(error_text)
-        formatted = DiagnosticFormatter.format_result(result, current_lang)
+        formatted = self._format_diagnostic_result(result)
 
         console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('msg_diagnostic_result')}[/bold cyan]"))
         Prompt.ask(f"\n{i18n.get('msg_press_enter_to_continue')}")
@@ -1992,7 +1805,7 @@ class CLIMenu:
         rule_result = self.smart_diagnostic.rule_matcher.match(keyword)
         if rule_result.is_matched:
             found_any = True
-            formatted = DiagnosticFormatter.format_result(rule_result, current_lang)
+            formatted = self._format_diagnostic_result(rule_result)
             console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('label_matched_rule')}: {rule_result.matched_rule}[/bold cyan]"))
 
         # 2. 使用知识库搜索
@@ -2024,7 +1837,7 @@ class CLIMenu:
 
         # 2. 如果匹配到规则，显示诊断结果
         if diag_result.is_matched:
-            formatted = DiagnosticFormatter.format_result(diag_result, current_lang)
+            formatted = self._format_diagnostic_result(diag_result)
             console.print(Panel(formatted, title=f"[bold cyan]{i18n.get('msg_diagnostic_result')}[/bold cyan]", border_style="cyan"))
             console.print("")
         else:
@@ -2354,12 +2167,8 @@ class CLIMenu:
 
     def first_time_lang_setup(self):
         global current_lang, i18n
-        
-        detected = "en"
-        if (l := locale.getdefaultlocale()[0]):
-            if l.startswith("zh"): detected = "zh_CN"
-            elif l.startswith("ja"): detected = "ja"
-            
+
+        detected = detect_system_language()
         default_idx = {"zh_CN": 1, "ja": 2, "en": 3}.get(detected, 3)
         
         console.print(Panel(f"[bold cyan]Language Setup / 语言设置 / 言語設定[/bold cyan]"))
@@ -2376,7 +2185,11 @@ class CLIMenu:
         current_lang = {"1": "zh_CN", "2": "ja", "3": "en"}[str(c)]
         self.config["interface_language"] = current_lang
         self.save_config()
-        i18n = I18NLoader(current_lang)
+        i18n = switch_runtime_language(PROJECT_ROOT, current_lang)
+        self._file_selector = None
+        self._update_manager = None
+        self._smart_diagnostic = None
+        self._sync_base_interface_language()
 
     def _scan_cache_files(self):
         """扫描系统中的缓存文件"""
@@ -2790,6 +2603,8 @@ class CLIMenu:
         if web_mode:
             self.ui = WebLogger(stream=original_stdout, show_detailed=self.config.get("show_detailed_logs", False))
         else:
+            from ModuleFolders.UserInterface.TaskUI import TaskUI
+
             self.ui = TaskUI(parent_cli=self, i18n=i18n)
             # 设置 TUIHandler 的 UI 实例
             TUIHandler.set_ui(self.ui)
@@ -2981,7 +2796,7 @@ class CLIMenu:
                         current_target_path = potential_epub
                     else:
                         # 先检查Calibre是否可用
-                        calibre_path = ensure_calibre_available()
+                        calibre_path = ensure_calibre_available(current_lang)
                         if not calibre_path:
                             self.ui.log("[red]Calibre is required for this format. Task cancelled.[/red]")
                             time.sleep(2); return
@@ -3256,7 +3071,7 @@ class CLIMenu:
             if log_file: log_file.close()
             
             # --- Ensure Takeover Mode is disabled before UI cleanup ---
-            if hasattr(self, "ui") and isinstance(self.ui, TaskUI):
+            if self._is_task_ui_instance():
                 with self.ui._lock:
                     self.ui.taken_over = False
                 # The Live context manager is about to exit, let it do one last clean frame
@@ -3382,7 +3197,7 @@ class CLIMenu:
                     output_files = [f for f in os.listdir(output_dir) if f.endswith(".epub")]
                     if output_files:
                         # 使用新的Calibre检测和下载逻辑
-                        calibre_path = ensure_calibre_available()
+                        calibre_path = ensure_calibre_available(current_lang)
                         if calibre_path:
                             self.ui.log(f"[cyan]Converting to {self.target_output_format.upper()} format...[/cyan]")
                             for epub_file in output_files:
