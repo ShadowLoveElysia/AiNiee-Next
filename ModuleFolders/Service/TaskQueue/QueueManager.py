@@ -758,7 +758,27 @@ class QueueManager(Base):
             if self.current_task_index >= 0:
                 self.update_task_activity(self.current_task_index)
 
-            cli_menu.run_task(step_type, target_path=task.input_path, continue_status=resume, non_interactive=True, from_queue=True)
+            skip_prompt_validation = False
+            if step_type == TaskType.TRANSLATION and task.task_type == TaskType.TRANSLATE_AND_POLISH:
+                if not cli_menu.prompt_selection_guard.ensure_prompts_selected(
+                    TaskType.TRANSLATE_AND_POLISH,
+                    interactive=False,
+                ):
+                    raise RuntimeError("Required prompt selection is missing for all-in-one task.")
+                skip_prompt_validation = True
+            elif step_type == TaskType.POLISH and task.task_type == TaskType.TRANSLATE_AND_POLISH:
+                skip_prompt_validation = True
+
+            task_ok = cli_menu.run_task(
+                step_type,
+                target_path=task.input_path,
+                continue_status=resume,
+                non_interactive=True,
+                from_queue=True,
+                skip_prompt_validation=skip_prompt_validation,
+            )
+            if not task_ok:
+                raise RuntimeError("Task blocked before start.")
             
             if Base.work_status != Base.STATUS.STOPING:
                 if step_type == TaskType.TRANSLATION and task.task_type == TaskType.TRANSLATE_AND_POLISH:

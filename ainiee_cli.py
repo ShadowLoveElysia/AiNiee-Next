@@ -90,6 +90,7 @@ class CLIMenu:
         self._ai_proofread_menu = None
         self._automation_menu = None
         self._editor_menu_handler = None
+        self._prompt_selection_guard = None
         
         self.config = {}
         self.root_config = {}
@@ -256,6 +257,14 @@ class CLIMenu:
 
             self._editor_menu_handler = EditorMenu(self)
         return self._editor_menu_handler
+
+    @property
+    def prompt_selection_guard(self):
+        if self._prompt_selection_guard is None:
+            from ModuleFolders.UserInterface.PromptSelectionGuard import PromptSelectionGuard
+
+            self._prompt_selection_guard = PromptSelectionGuard(self)
+        return self._prompt_selection_guard
 
     def _is_task_ui_instance(self):
         ui = getattr(self, "ui", None)
@@ -986,10 +995,30 @@ class CLIMenu:
             if args.task == 'all_in_one':
                 # 在非交互模式下，如果传入了 input_path，则使用它
                 if args.input_path:
+                    if not self.prompt_selection_guard.ensure_prompts_selected(
+                        TaskType.TRANSLATE_AND_POLISH,
+                        interactive=False,
+                    ):
+                        return
                     # 使用 run_task 组合逻辑，因为 run_all_in_one 内部带 path 选择
-                    self.run_task(TaskType.TRANSLATION, target_path=args.input_path, continue_status=args.resume, non_interactive=True, web_mode=args.web_mode, from_queue=True)
-                    if Base.work_status != Base.STATUS.STOPING:
-                        self.run_task(TaskType.POLISH, target_path=args.input_path, continue_status=True, non_interactive=True, web_mode=args.web_mode)
+                    translate_ok = self.run_task(
+                        TaskType.TRANSLATION,
+                        target_path=args.input_path,
+                        continue_status=args.resume,
+                        non_interactive=True,
+                        web_mode=args.web_mode,
+                        from_queue=True,
+                        skip_prompt_validation=True,
+                    )
+                    if translate_ok and Base.work_status != Base.STATUS.STOPING:
+                        self.run_task(
+                            TaskType.POLISH,
+                            target_path=args.input_path,
+                            continue_status=True,
+                            non_interactive=True,
+                            web_mode=args.web_mode,
+                            skip_prompt_validation=True,
+                        )
                 else:
                     self.run_all_in_one()
             else:
@@ -2361,7 +2390,7 @@ class CLIMenu:
             console.print(f"[green]Plugin '{name}' {'enabled' if not current_state else 'disabled'}.[/green]")
             time.sleep(0.5)
 
-    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False):
+    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False, skip_prompt_validation=False):
         # 如果是非交互模式，直接跳过菜单
         if target_path is None:
             last_path = self.config.get("label_input_path")
@@ -2412,7 +2441,8 @@ class CLIMenu:
             prompt_text = i18n.get('prompt_select').strip().rstrip(':').rstrip('：')
             choice = IntPrompt.ask(f"\n{prompt_text}", choices=choices, show_choices=False)
             console.print("\n")
-            if choice == 0: return
+            if choice == 0:
+                return False
             
             if can_resume and choice == 3:
                 target_path = last_path
@@ -2452,7 +2482,7 @@ class CLIMenu:
                 target_path = self.file_selector.select_path(start_path=start_path, select_file=False, select_dir=True)
 
             if not target_path:
-                return
+                return False
 
         # Smart suggestion for folders
         if os.path.isdir(target_path):
@@ -2469,7 +2499,15 @@ class CLIMenu:
         # --- 非交互模式的路径处理 ---
         if not os.path.exists(target_path):
             console.print(f"[red]Error: Input path '{target_path}' not found.[/red]")
-            return
+            return False
+
+        if not skip_prompt_validation:
+            can_interact_for_prompt_guard = not non_interactive and not web_mode and not from_queue
+            if not self.prompt_selection_guard.ensure_prompts_selected(
+                task_mode,
+                interactive=can_interact_for_prompt_guard,
+            ):
+                return False
 
         self._update_recent_projects(target_path)
         self.config["label_input_path"] = target_path
@@ -2524,7 +2562,7 @@ class CLIMenu:
                     console.print(i18n.get('msg_archive_success').format(os.path.basename(backup_path)))
                 except OSError as e:
                     console.print(f"[red]Error archiving directory: {e}[/red]")
-                    return
+                    return False
                 continue_status = False
             elif action == "overwrite":
                 if Confirm.ask(i18n.get('msg_overwrite_confirm').format(os.path.basename(opath)), default=False):
@@ -2533,13 +2571,13 @@ class CLIMenu:
                         console.print(f"[green]'{os.path.basename(opath)}' deleted.[/green]")
                     except OSError as e:
                         console.print(f"[red]Error deleting directory: {e}[/red]")
-                        return
+                        return False
                 else:
                     console.print("[yellow]Overwrite cancelled.[/yellow]")
-                    return
+                    return False
                 continue_status = False
             elif action == "cancel":
-                return
+                return False
         
         # Fallback for non-interactive or simple resume case
         elif not continue_status and os.path.exists(os.path.join(opath, "cache", "AinieeCacheData.json")):
@@ -3243,20 +3281,31 @@ class CLIMenu:
             if not non_interactive and not web_mode and not from_queue:
                 Prompt.ask(f"\n{i18n.get('msg_task_ended')}")
 
+        return success.is_set()
+
 
     def run_all_in_one(self):
         """Sequential execution of translation and then polishing."""
         start_path = self.config.get("label_input_path", ".")
         target_path = self.file_selector.select_path(start_path=start_path)
-        if not target_path: return
+        if not target_path:
+            return
+
+        if not self.prompt_selection_guard.ensure_prompts_selected(
+            TaskType.TRANSLATE_AND_POLISH,
+            interactive=True,
+        ):
+            return
 
         # 1. Run Translation
-        self.run_task(
+        if not self.run_task(
             TaskType.TRANSLATION,
             target_path=target_path,
             continue_status=False,
-            from_queue=True # Suppress "Press Enter"
-        )
+            from_queue=True, # Suppress "Press Enter"
+            skip_prompt_validation=True,
+        ):
+            return
         
         # 2. Check stop signal
         if Base.work_status == Base.STATUS.STOPING:
@@ -3267,7 +3316,8 @@ class CLIMenu:
             TaskType.POLISH,
             target_path=target_path,
             continue_status=True, # Resume based on translation output
-            from_queue=False # Allow "Press Enter" on final completion
+            from_queue=False, # Allow "Press Enter" on final completion
+            skip_prompt_validation=True,
         )
 
     def run_export_only(self, target_path=None, non_interactive=False):
