@@ -64,3 +64,5 @@ Tools/TauriShell/src-tauri/target/
 Tools/TauriShell/src-tauri/gen/
 Tools/TauriShell/__pycache__/
 Tools/TauriShell/icons/
+/manga-translator-ui-main
+.codex
