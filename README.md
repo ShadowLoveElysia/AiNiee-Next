@@ -229,26 +229,40 @@ uv run ainiee_cli.py mcp --mcp-transport stdio
 - 如果修改了 `mcp_server_port`，请同步更新 MCP 客户端中的连接路由
 
 **客户端接入示例：**
-1. Codex 通过 `stdio` 直连：
+1. Codex 通过 `stdio` 直连，推荐直接使用项目内置 launcher：
 
 ```bash
-codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
 ```
 
-2. 支持 `streamable-http` 的 MCP 客户端，可直接连接菜单启动后的 HTTP 路由：
+首次启动如果依赖尚未缓存，建议在 `~/.codex/config.toml` 中给该 MCP 增加较大的超时，例如：
+
+```toml
+[mcp_servers.ainiee-cli]
+startup_timeout_sec = 90
+```
+
+2. 如果你想手写原始命令，推荐使用隔离模式，避免误碰项目 `.venv`：
+
+```bash
+uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+3. 支持 `streamable-http` 的 MCP 客户端，可直接连接菜单启动后的 HTTP 路由：
 
 ```text
 本机地址: http://127.0.0.1:8765/mcp
 局域网地址: http://<你的局域网IP>:8765/mcp
 ```
 
-3. Windows 项目路径示例：
+4. Windows 项目路径示例：
 
 ```text
 H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 ```
 
 如果你把 `mcp_server_port` 改成了其他值，上面的 `8765` 也要同步替换。
+如果项目目录里的 `.venv` 曾经在另一套系统下创建过，例如 WSL 生成后又在 Windows 下执行 `uv add`，建议先重建 `.venv`，否则容易出现 `lib64` / 符号链接相关报错。
 
 ---
 

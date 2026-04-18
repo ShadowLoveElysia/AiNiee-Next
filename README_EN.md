@@ -229,26 +229,40 @@ This project provides an optional MCP server module that reuses the existing Web
 - If you change `mcp_server_port`, update the MCP route in your client as well
 
 **Client integration examples:**
-1. Codex over `stdio`:
+1. Codex over `stdio`, preferably via the bundled launcher:
 
 ```bash
-codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
 ```
 
-2. MCP clients that support `streamable-http` can connect to the menu-started HTTP route directly:
+If this is the first startup and dependencies are not cached yet, add a larger timeout in `~/.codex/config.toml`, for example:
+
+```toml
+[mcp_servers.ainiee-cli]
+startup_timeout_sec = 90
+```
+
+2. If you prefer the raw command, use an isolated environment so the project `.venv` is not touched:
+
+```bash
+uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+3. MCP clients that support `streamable-http` can connect to the menu-started HTTP route directly:
 
 ```text
 Local endpoint: http://127.0.0.1:8765/mcp
 LAN endpoint: http://<your-lan-ip>:8765/mcp
 ```
 
-3. Example Windows project path:
+4. Example Windows project path:
 
 ```text
 H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 ```
 
 If you change `mcp_server_port`, replace `8765` in the route above with the new port.
+If the project `.venv` was created under another OS first, for example in WSL and then reused from Windows, recreate `.venv` before running `uv add` to avoid `lib64` / symlink related errors.
 
 ---
 

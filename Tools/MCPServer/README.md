@@ -29,13 +29,21 @@ uv add mcp fastapi uvicorn[standard] requests
 
 客户端接入示例：
 
-1. Codex `stdio` 接入
+1. Codex `stdio` 接入，推荐使用项目内置 launcher
 
 ```bash
-codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
 ```
 
-2. `streamable-http` 路由接入
+首次启动若依赖尚未缓存，建议在 `~/.codex/config.toml` 中为该 MCP 配置较大的 `startup_timeout_sec`，例如 `90`。
+
+2. 若需要原始命令，推荐使用隔离模式，避免项目 `.venv` 干扰
+
+```bash
+uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+3. `streamable-http` 路由接入
 
 ```text
 本机地址: http://127.0.0.1:8765/mcp
@@ -43,6 +51,7 @@ codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --wi
 ```
 
 如果修改了 `mcp_server_port`，请同步更新客户端中的 MCP 路由配置。
+如果项目目录中的 `.venv` 混用了 Windows / WSL 两侧创建的环境，执行 `uv add` 前建议先重建 `.venv`。
 
 暂定支持的 MCP 工具能力：
 
