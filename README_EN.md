@@ -225,7 +225,7 @@ Any LLM client that supports MCP over `stdio` or `streamable-http` can connect t
 **Notes:**
 - The MCP server is optional and does not affect the main process when missing
 - Required components and Python dependencies are checked on every MCP startup
-- If dependencies are missing, the program shows suggested `uv add ...` commands
+- If dependencies are missing, the program shows complete install commands for the current system
 - Menu startup uses background `streamable-http` mode and returns to the menu after 3 seconds
 - If you change `mcp_server_port`, update the MCP route in your client as well
 
@@ -317,7 +317,13 @@ LAN endpoint: http://<your-lan-ip>:8765/mcp
 5. If MCP startup reports missing dependencies, run this from the project root:
 
 ```bash
-uv add mcp fastapi uvicorn requests
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp" "fastapi" "uvicorn[standard]" "requests"
+```
+
+On Linux / macOS, use:
+
+```bash
+UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi' 'uvicorn[standard]' 'requests'
 ```
 
 If you change `mcp_server_port`, replace `8765` in the route above with the new port.

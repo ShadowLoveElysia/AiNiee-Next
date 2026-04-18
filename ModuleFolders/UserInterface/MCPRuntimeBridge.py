@@ -4,10 +4,8 @@ MCP 运行桥接模块
 """
 import os
 import socket
-import subprocess
-import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from rich.console import Console
 from rich.panel import Panel
@@ -37,7 +35,7 @@ class MCPRuntimeBridge:
         return inspect_mcp_runtime(self.project_root)
 
     def start_mcp_server(self) -> bool:
-        """Menu entry: launch MCP as a detached background subprocess and return."""
+        """Menu entry: run MCP in foreground and return to the menu on Ctrl+C."""
         status = self.inspect_runtime()
         if not status.get("available"):
             self._show_missing_runtime(status, auto_exit=False)
@@ -48,9 +46,9 @@ class MCPRuntimeBridge:
             self._show_status_panel(
                 self._t("msg_mcp_server_already_running", "MCP服务已在后台运行。"),
                 (
-                    f"Transport: streamable-http\n"
-                    f"Local: {self.get_mcp_local_endpoint()}\n"
-                    f"Network: {self.get_mcp_network_endpoint()}\n\n"
+                    f"{self._label_line('label_transport', 'Transport', 'streamable-http')}\n"
+                    f"{self._label_line('label_local', 'Local', self.get_mcp_local_endpoint())}\n"
+                    f"{self._label_line('label_network', 'Network', self.get_mcp_network_endpoint())}\n\n"
                     f"{self._get_route_update_notice()}\n\n"
                     f"{self._get_llm_guide_notice()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
@@ -60,18 +58,49 @@ class MCPRuntimeBridge:
             time.sleep(3)
             return True
 
-        command = self._build_menu_command()
-
         try:
-            # 菜单模式不能阻塞主线程，所以这里启动独立后台进程并把控制权还给菜单。
-            process = subprocess.Popen(
-                command,
-                cwd=self.project_root,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=self._build_subprocess_env(),
+            from Tools.MCPServer.server import run_mcp_server
+        except Exception as exc:
+            self._show_runtime_error(
+                self._t("msg_mcp_import_failed", "MCP组件导入失败。"),
+                exc,
+                auto_exit=False,
             )
+            time.sleep(3)
+            return False
+
+        self._show_status_panel(
+            self._t("msg_mcp_server_started", "MCP服务已启动。"),
+            (
+                f"{self._label_line('label_transport', 'Transport', 'streamable-http')}\n"
+                f"{self._label_line('label_local', 'Local', self.get_mcp_local_endpoint())}\n"
+                f"{self._label_line('label_network', 'Network', self.get_mcp_network_endpoint())}\n"
+                f"{self._label_line('label_backend', 'Backend', f'http://{self._get_backend_host()}:{self._get_backend_port()}')}\n\n"
+                f"{self._get_route_update_notice()}\n\n"
+                f"{self._get_llm_guide_notice()}\n\n"
+                f"{self._t('msg_mcp_logs_below', '运行日志和请求日志会显示在下方。')}\n"
+                f"{self._t('msg_mcp_press_ctrl_c_return', '按 Ctrl+C 停止 MCP 服务并返回菜单。')}"
+            ),
+            border_style="green",
+        )
+
+        setattr(self.host, "mcp_server_active", True)
+        try:
+            run_mcp_server(
+                host_cli=self.host,
+                transport="streamable-http",
+                host=self._get_mcp_host(),
+                port=self._get_mcp_port(),
+                path=self._get_mcp_path(),
+                backend_host=self._get_backend_host(),
+                backend_port=self._get_backend_port(),
+            )
+            return True
+        except KeyboardInterrupt:
+            console.print(
+                f"\n[yellow]{self._t('msg_mcp_stopping_returning', '正在停止 MCP 服务并返回菜单...')}[/yellow]"
+            )
+            return True
         except Exception as exc:
             self._show_runtime_error(
                 self._t("msg_mcp_server_start_failed", "MCP服务启动失败。"),
@@ -80,54 +109,8 @@ class MCPRuntimeBridge:
             )
             time.sleep(3)
             return False
-
-        setattr(self.host, "mcp_server_process", process)
-
-        if self._wait_for_port(self._get_probe_host(), self._get_mcp_port(), timeout=3.0):
-            self._show_status_panel(
-                self._t("msg_mcp_server_started", "MCP服务已启动。"),
-                (
-                    f"Transport: streamable-http\n"
-                    f"Local: {self.get_mcp_local_endpoint()}\n"
-                    f"Network: {self.get_mcp_network_endpoint()}\n"
-                    f"Backend: http://{self._get_backend_host()}:{self._get_backend_port()}\n\n"
-                    f"{self._get_route_update_notice()}\n\n"
-                    f"{self._get_llm_guide_notice()}\n\n"
-                    f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
-                ),
-                border_style="green",
-            )
-            time.sleep(3)
-            return True
-
-        if process.poll() is not None:
-            setattr(self.host, "mcp_server_process", None)
-            self._show_status_panel(
-                self._t("msg_mcp_server_start_failed", "MCP服务启动失败。"),
-                (
-                    f"Command: {' '.join(command)}\n"
-                    f"{self._t('msg_mcp_check_install', '请检查 MCP 依赖和端口占用。')}\n\n"
-                    f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
-                ),
-                border_style="red",
-            )
-            time.sleep(3)
-            return False
-
-        self._show_status_panel(
-            self._t("msg_mcp_server_starting_bg", "MCP服务正在后台继续启动。"),
-            (
-                f"Transport: streamable-http\n"
-                f"Expected local: {self.get_mcp_local_endpoint()}\n"
-                f"Expected network: {self.get_mcp_network_endpoint()}\n\n"
-                f"{self._get_route_update_notice()}\n\n"
-                f"{self._get_llm_guide_notice()}\n\n"
-                f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
-            ),
-            border_style="yellow",
-        )
-        time.sleep(3)
-        return True
+        finally:
+            setattr(self.host, "mcp_server_active", False)
 
     def run_mcp_server_from_command(self, transport: str = "stdio") -> int:
         """
@@ -153,6 +136,7 @@ class MCPRuntimeBridge:
             time.sleep(3)
             return 1
 
+        setattr(self.host, "mcp_server_active", True)
         try:
             run_mcp_server(
                 host_cli=self.host,
@@ -163,6 +147,9 @@ class MCPRuntimeBridge:
                 backend_host=self._get_backend_host(),
                 backend_port=self._get_backend_port(),
             )
+        except KeyboardInterrupt:
+            console.print(self._t("msg_mcp_stopping_exit", "Stopping MCP......."))
+            return 130
         except Exception as exc:
             self._show_runtime_error(
                 self._t("msg_mcp_server_start_failed", "MCP服务启动失败。"),
@@ -171,17 +158,22 @@ class MCPRuntimeBridge:
             )
             time.sleep(3)
             return 1
+        finally:
+            setattr(self.host, "mcp_server_active", False)
 
         return 0
 
     def is_mcp_server_running(self) -> bool:
-        process = self._get_mcp_process()
-        if process is not None and process.poll() is None:
-            return True
-        if process is not None and process.poll() is not None:
-            setattr(self.host, "mcp_server_process", None)
+        try:
+            from Tools.MCPServer.server import is_reusable_mcp_service_running
 
-        return self._is_port_open(self._get_probe_host(), self._get_mcp_port())
+            return is_reusable_mcp_service_running(
+                self._get_mcp_host(),
+                self._get_mcp_port(),
+                self._get_mcp_path(),
+            )
+        except Exception:
+            return self._is_port_open(self._get_probe_host(), self._get_mcp_port())
 
     def get_mcp_http_endpoint(self) -> str:
         return self.get_mcp_local_endpoint()
@@ -191,13 +183,6 @@ class MCPRuntimeBridge:
 
     def get_mcp_network_endpoint(self) -> str:
         return f"http://{self._detect_local_ip()}:{self._get_mcp_port()}{self._get_mcp_path()}"
-
-    def _get_mcp_process(self) -> Optional[subprocess.Popen]:
-        process = getattr(self.host, "mcp_server_process", None)
-        if process is not None and process.poll() is not None:
-            setattr(self.host, "mcp_server_process", None)
-            return None
-        return process
 
     def _get_config_value(self, key: str, default: Any) -> Any:
         config = getattr(self.host, "config", None)
@@ -229,44 +214,8 @@ class MCPRuntimeBridge:
         except Exception:
             return 18000
 
-    def _build_menu_command(self):
-        launcher = self._resolve_python_launcher()
-        script_path = os.path.join(self.project_root, "Tools", "MCPServer", "server.py")
-        return launcher + [
-            script_path,
-            "--transport",
-            "streamable-http",
-            "--host",
-            self._get_mcp_host(),
-            "--port",
-            str(self._get_mcp_port()),
-            "--path",
-            self._get_mcp_path(),
-            "--backend-host",
-            self._get_backend_host(),
-            "--backend-port",
-            str(self._get_backend_port()),
-        ]
-
-    def _resolve_python_launcher(self):
-        executable = sys.executable or ""
-        executable_name = os.path.basename(executable).lower()
-        if executable and "python" in executable_name:
-            return [executable]
-        return ["uv", "run", "python"]
-
-    def _build_subprocess_env(self):
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        env.setdefault("AINIEE_MCP_HOST", self._get_mcp_host())
-        env.setdefault("AINIEE_MCP_PORT", str(self._get_mcp_port()))
-        env.setdefault("AINIEE_MCP_PATH", self._get_mcp_path())
-        env.setdefault("AINIEE_MCP_BACKEND_HOST", self._get_backend_host())
-        env.setdefault("AINIEE_MCP_BACKEND_PORT", str(self._get_backend_port()))
-        return env
-
     def _show_missing_runtime(self, status: Dict[str, object], auto_exit: bool):
-        lines = format_runtime_status_lines(status)
+        lines = format_runtime_status_lines(status, translate=self._t)
         footer = self._t(
             "msg_mcp_auto_exit_3s",
             "3 秒后自动退出当前 MCP 启动流程。",
@@ -345,7 +294,14 @@ class MCPRuntimeBridge:
 
     def _get_llm_guide_notice(self) -> str:
         """Return the startup hint that points operators to the self-describing MCP tools."""
-        return get_startup_hint_text()
+        return self._t(
+            "msg_mcp_guide_tools_hint",
+            get_startup_hint_text(),
+        )
+
+    def _label_line(self, key: str, default: str, value: str) -> str:
+        """Render a localized label-value line inside MCP startup panels."""
+        return f"{self._t(key, default)}: {value}"
 
     def _t(self, key: str, default: str) -> str:
         i18n = self.i18n

@@ -225,7 +225,7 @@ uv run ainiee_cli.py mcp --mcp-transport stdio
 **说明：**
 - MCP 服务是可选组件，缺失时不会影响主程序其他功能
 - 每次启动 MCP 前都会检查必要组件与依赖
-- 若缺少依赖，程序会提示可执行的 `uv add ...` 命令
+- 若缺少依赖，程序会提示当前系统可直接执行的完整安装命令
 - 菜单启动默认使用后台 `streamable-http` 模式，等待 3 秒后返回菜单
 - 如果修改了 `mcp_server_port`，请同步更新 MCP 客户端中的连接路由
 
@@ -317,7 +317,13 @@ uv run ainiee_cli.py mcp --mcp-transport streamable-http
 5. 如果启动 MCP 时提示缺少依赖，可以在项目根目录执行：
 
 ```bash
-uv add mcp fastapi uvicorn requests
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp" "fastapi" "uvicorn[standard]" "requests"
+```
+
+Linux / macOS 可使用：
+
+```bash
+UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi' 'uvicorn[standard]' 'requests'
 ```
 
 如果你把 `mcp_server_port` 改成了其他值，上面的 `8765` 也要同步替换。

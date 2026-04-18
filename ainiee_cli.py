@@ -101,6 +101,7 @@ class CLIMenu:
         self.task_running, self.original_print = False, Base.print
         self.web_server_thread = None
         self.mcp_server_process = None
+        self.mcp_server_active = False
 
         # 操作记录器 (必须在 _check_web_server_dist 之前初始化，因为 display_banner 会使用它)
         self.operation_logger = OperationLogger()
@@ -716,8 +717,8 @@ class CLIMenu:
 
             from ModuleFolders.Base.EventManager import EventManager
             EventManager.get_singleton().emit(Base.EVENT.TASK_STOP, {})
-        elif getattr(self, "web_server_active", False):
-            # Webserver运行时，抛出KeyboardInterrupt让try-except捕获
+        elif getattr(self, "web_server_active", False) or getattr(self, "mcp_server_active", False):
+            # WebServer / MCP 运行时，抛出 KeyboardInterrupt 让对应流程自行清理并返回菜单或退出
             raise KeyboardInterrupt
         else:
             sys.exit(0)
@@ -1951,6 +1952,21 @@ def main():
     
     parser.add_argument('--web-mode', action='store_true', help="Enable Web Server compatible output mode")
     parser.add_argument(
+        '--mcp',
+        action='store_true',
+        help="Shortcut for launching the MCP task from CLI.",
+    )
+    parser.add_argument(
+        '--mcp-stdio',
+        action='store_true',
+        help="Shortcut for launching the MCP task with stdio transport.",
+    )
+    parser.add_argument(
+        '--mcp-http',
+        action='store_true',
+        help="Shortcut for launching the MCP task with streamable-http transport.",
+    )
+    parser.add_argument(
         '--mcp-transport',
         default='stdio',
         choices=['stdio', 'streamable-http', 'streamable_http', 'http', 'sse'],
@@ -1963,6 +1979,37 @@ def main():
     parser.add_argument('--pre-lines', type=int, help="Context lines to include")
 
     args = parser.parse_args()
+
+    # CLI shortcut layer: allow `ainiee --mcp` to map onto the existing `mcp`
+    # task entry without duplicating any MCP runtime logic in the parser.
+    mcp_shortcut_flags = [
+        flag_name
+        for flag_name, enabled in (
+            ("--mcp", args.mcp),
+            ("--mcp-stdio", args.mcp_stdio),
+            ("--mcp-http", args.mcp_http),
+        )
+        if enabled
+    ]
+    if len(mcp_shortcut_flags) > 1:
+        parser.error(f"Only one MCP shortcut flag can be used at a time: {', '.join(mcp_shortcut_flags)}")
+
+    if mcp_shortcut_flags and args.task and args.task != 'mcp':
+        parser.error("MCP shortcut flags cannot be combined with a non-MCP task.")
+
+    if args.mcp_stdio and args.mcp_transport != 'stdio':
+        parser.error("--mcp-stdio cannot be combined with a different --mcp-transport value.")
+
+    if args.mcp_http and args.mcp_transport not in {'streamable-http', 'streamable_http', 'http'}:
+        parser.error("--mcp-http cannot be combined with a different --mcp-transport value.")
+
+    if args.mcp or args.mcp_stdio or args.mcp_http:
+        args.task = 'mcp'
+
+    if args.mcp_stdio:
+        args.mcp_transport = 'stdio'
+    elif args.mcp_http:
+        args.mcp_transport = 'streamable-http'
 
     cli = CLIMenu()
     exit_code = 0

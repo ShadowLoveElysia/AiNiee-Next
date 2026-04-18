@@ -70,6 +70,7 @@ dependencies = [
     "aiohttp-cors>=0.8.1",
     "fastapi>=0.128.0",
     "uvicorn[standard]>=0.40.0",
+    "mcp>=1.27.0",
 ]
 
 [project.scripts]

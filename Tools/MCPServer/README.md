@@ -11,7 +11,7 @@
 当前入口文件：
 
 - `Tools/MCPServer/runtime.py`
-  负责检查组件文件和必要 Python 依赖，并生成 `uv add ...` 安装建议
+  负责检查组件文件和必要 Python 依赖，并生成可直接执行的完整安装命令
 - `Tools/MCPServer/docs.py`
   负责生成 MCP 内置使用手册、工具目录、安全策略与验证清单
 - `Tools/MCPServer/server.py`
@@ -22,13 +22,19 @@
 推荐安装命令：
 
 ```bash
-uv add mcp
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp"
 ```
 
 如果本地缺少 WebServer 运行依赖，也可以一起补齐：
 
 ```bash
-uv add mcp fastapi uvicorn[standard] requests
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp" "fastapi" "uvicorn[standard]" "requests"
+```
+
+Linux / macOS 可使用：
+
+```bash
+UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi' 'uvicorn[standard]' 'requests'
 ```
 
 客户端接入示例：
@@ -47,6 +53,13 @@ codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_laun
 uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
 ```
 
+补充说明：
+
+- 部分 LLM 客户端会在自身启动时自动拉起配置好的 `stdio` MCP 进程
+- 现在如果 AiNiee 的 `streamable-http` MCP 已经在运行，新的 `stdio` 进程会先探测该端点，探测成功后直接复用已有服务，不再重复启动一套 MCP
+- 复用命中时，`stderr` 会打印一行提示：`AiNiee MCP reusing running service: http://127.0.0.1:端口/mcp`
+- 如果你确实需要禁用这层复用逻辑，可设置环境变量 `AINIEE_MCP_DISABLE_RUNNING_REUSE=1`
+
 3. `streamable-http` 路由接入
 
 ```text
@@ -55,7 +68,7 @@ uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --wi
 ```
 
 如果修改了 `mcp_server_port`，请同步更新客户端中的 MCP 路由配置。
-如果项目目录中的 `.venv` 混用了 Windows / WSL 两侧创建的环境，执行 `uv add` 前建议先重建 `.venv`。
+Windows 下如果项目目录中的 `.venv` 混用了 Windows / WSL 两侧创建的环境，上面的命令会直接改用 `.venv-win`，避免 `.venv\lib64` 冲突。
 
 LLM 客户端接入后，推荐先调用以下 MCP 说明工具，而不是猜测参数结构：
 

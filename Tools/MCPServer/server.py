@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import inspect
+import json
 import os
 import re
 import secrets
@@ -16,6 +17,10 @@ from typing import Any, Dict, List, Optional
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+RESOURCE_ROOT = os.path.join(PROJECT_ROOT, "Resource")
+ROOT_CONFIG_FILE = os.path.join(RESOURCE_ROOT, "config.json")
+PROFILES_PATH = os.path.join(RESOURCE_ROOT, "profiles")
 
 from Tools.MCPServer.runtime import inspect_mcp_runtime
 from Tools.MCPServer.docs import (
@@ -32,12 +37,93 @@ from Tools.MCPServer.security import (
 )
 
 
-DEFAULT_MCP_HOST = os.environ.get("AINIEE_MCP_HOST", "0.0.0.0")
-DEFAULT_MCP_PORT = int(os.environ.get("AINIEE_MCP_PORT", "8765"))
-DEFAULT_MCP_PATH = os.environ.get("AINIEE_MCP_PATH", "/mcp")
-DEFAULT_BACKEND_HOST = os.environ.get("AINIEE_MCP_BACKEND_HOST", "127.0.0.1")
-DEFAULT_BACKEND_PORT = int(os.environ.get("AINIEE_MCP_BACKEND_PORT", "18000"))
+def _safe_load_json(path: str) -> Dict[str, Any]:
+    """Load a JSON file when it exists, otherwise return an empty dict."""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_project_mcp_defaults() -> Dict[str, Any]:
+    """
+    Resolve MCP defaults from the active project profile when available.
+
+    This matters for stdio launchers: if the user changed `mcp_server_port` in
+    project settings, the launcher should probe that same running MCP service
+    instead of assuming the hard-coded default port.
+    """
+    root_config = _safe_load_json(ROOT_CONFIG_FILE)
+    active_profile = str(root_config.get("active_profile", "default") or "default")
+    profile_path = os.path.join(PROFILES_PATH, f"{active_profile}.json")
+    profile_config = _safe_load_json(profile_path)
+
+    merged = {}
+    merged.update(root_config)
+    merged.update(profile_config)
+    return merged
+
+
+def _resolve_int_setting(config: Dict[str, Any], key: str, fallback: int) -> int:
+    try:
+        value = config.get(key, fallback)
+        return int(value if value not in (None, "") else fallback)
+    except Exception:
+        return fallback
+
+
+PROJECT_MCP_DEFAULTS = _load_project_mcp_defaults()
+
+DEFAULT_MCP_HOST = os.environ.get(
+    "AINIEE_MCP_HOST",
+    str(PROJECT_MCP_DEFAULTS.get("mcp_server_host", "0.0.0.0") or "0.0.0.0"),
+)
+DEFAULT_MCP_PORT = int(
+    os.environ.get(
+        "AINIEE_MCP_PORT",
+        str(_resolve_int_setting(PROJECT_MCP_DEFAULTS, "mcp_server_port", 8765)),
+    )
+)
+DEFAULT_MCP_PATH = os.environ.get(
+    "AINIEE_MCP_PATH",
+    str(PROJECT_MCP_DEFAULTS.get("mcp_server_path", "/mcp") or "/mcp"),
+)
+DEFAULT_BACKEND_HOST = os.environ.get(
+    "AINIEE_MCP_BACKEND_HOST",
+    str(PROJECT_MCP_DEFAULTS.get("mcp_backend_host", "127.0.0.1") or "127.0.0.1"),
+)
+DEFAULT_BACKEND_PORT = int(
+    os.environ.get(
+        "AINIEE_MCP_BACKEND_PORT",
+        str(_resolve_int_setting(PROJECT_MCP_DEFAULTS, "mcp_backend_port", 18000)),
+    )
+)
 DEFAULT_MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
+
+
+def _t_from_host(host_cli: Any, key: str, default: str) -> str:
+    """Read an i18n string from the host CLI when available."""
+    i18n = getattr(host_cli, "i18n", None)
+    if i18n is None:
+        return default
+
+    try:
+        value = i18n.get(key)
+    except Exception:
+        return default
+
+    return default if not value or value == key else value
+
+
+def _tf_from_host(host_cli: Any, key: str, default: str, **kwargs: Any) -> str:
+    """Format a translated string with named placeholders."""
+    template = _t_from_host(host_cli, key, default)
+    try:
+        return template.format(**kwargs)
+    except Exception:
+        return default.format(**kwargs)
 
 
 class EmbeddedWebServerController:
@@ -100,7 +186,13 @@ class EmbeddedWebServerController:
             time.sleep(0.2)
 
         raise RuntimeError(
-            f"Embedded WebServer failed to start on {self.host}:{self.port}."
+            _tf_from_host(
+                self.host_cli,
+                "msg_mcp_embedded_web_start_failed",
+                "Embedded WebServer failed to start on {host}:{port}.",
+                host=self.host,
+                port=self.port,
+            )
         )
 
     def stop(self) -> None:
@@ -162,6 +254,195 @@ def _normalize_transport(transport: str) -> str:
         "stdio": "stdio",
     }
     return aliases.get(value, value)
+
+
+def _normalize_client_probe_host(host: str) -> str:
+    """Convert wildcard listen hosts into a concrete loopback address for client probes."""
+    value = (host or "").strip()
+    if value in {"", "0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    return value
+
+
+def _normalize_http_path(path: str) -> str:
+    value = (path or "/mcp").strip()
+    return value if value.startswith("/") else f"/{value}"
+
+
+def _build_mcp_service_url(host: str, port: int, path: str) -> str:
+    probe_host = _normalize_client_probe_host(host)
+    return f"http://{probe_host}:{port}{_normalize_http_path(path)}"
+
+
+def _write_startup_notice(message: str) -> None:
+    """Emit lightweight startup diagnostics to stderr without polluting MCP stdout."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _extract_probe_response_payload(response_text: str, content_type: str) -> Any:
+    """Decode either JSON or single-message SSE probe responses into a Python object."""
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type == "application/json":
+        return json.loads(response_text)
+
+    if normalized_type == "text/event-stream":
+        data_lines = []
+        for line in response_text.splitlines():
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            return json.loads("\n".join(data_lines))
+
+    raise ValueError(f"Unsupported MCP probe response content type: {content_type}")
+
+
+async def _probe_streamable_http_mcp(url: str) -> bool:
+    """
+    Verify that an existing HTTP endpoint is actually an MCP server.
+
+    We do a lightweight initialize round-trip instead of trusting only "port is
+    open", so unrelated services on the same port do not get treated as MCP.
+    This probe intentionally stays at raw HTTP level and skips the follow-up
+    `notifications/initialized` exchange, which avoids noisy SSE teardown logs
+    on the already-running MCP service.
+    """
+    import contextlib
+    import httpx
+    from mcp.types import LATEST_PROTOCOL_VERSION
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(2.0, read=2.0))
+    session_id = ""
+    try:
+        response = await client.post(
+            url,
+            headers={
+                "accept": "application/json, text/event-stream",
+                "content-type": "application/json",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": "ainiee-cli-reuse-probe",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": LATEST_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "ainiee-cli-reuse-probe",
+                        "version": "1.0.0",
+                    },
+                },
+            },
+        )
+        session_id = response.headers.get("mcp-session-id", "")
+        if response.status_code >= 400:
+            return False
+
+        data = _extract_probe_response_payload(
+            response.text,
+            response.headers.get("content-type", ""),
+        )
+        if not isinstance(data, dict):
+            return False
+
+        result = data.get("result")
+        if not isinstance(result, dict):
+            return False
+
+        protocol_version = result.get("protocolVersion")
+        server_info = result.get("serverInfo")
+        return bool(protocol_version and isinstance(server_info, dict) and server_info.get("name"))
+    except Exception:
+        return False
+    finally:
+        if session_id:
+            with contextlib.suppress(Exception):
+                await client.delete(url, headers={"mcp-session-id": session_id})
+        await client.aclose()
+
+
+async def _pipe_session_messages(source, sink, direction: str) -> None:
+    """Forward MCP SessionMessage objects between stdio and streamable-http transports."""
+    async for item in source:
+        if isinstance(item, Exception):
+            raise RuntimeError(f"MCP proxy stream error ({direction}): {item}") from item
+        await sink.send(item)
+
+
+async def _run_stdio_proxy_to_existing_mcp(url: str) -> None:
+    """
+    Bridge a stdio MCP client to an already running streamable-http MCP service.
+
+    Some LLM clients eagerly spawn the configured MCP process on startup. When an
+    AiNiee MCP HTTP service is already running, reusing it avoids duplicate
+    backend startup and keeps all clients attached to the same MCP runtime.
+    """
+    import anyio
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.server.stdio import stdio_server
+
+    async with stdio_server() as (local_read, local_write):
+        async with streamable_http_client(url, terminate_on_close=True) as (
+            remote_read,
+            remote_write,
+            _,
+        ):
+            async def bridge_with_cancel(source, sink, direction: str, cancel_scope) -> None:
+                try:
+                    await _pipe_session_messages(source, sink, direction)
+                finally:
+                    cancel_scope.cancel()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    bridge_with_cancel,
+                    local_read,
+                    remote_write,
+                    "stdio -> http",
+                    tg.cancel_scope,
+                )
+                tg.start_soon(
+                    bridge_with_cancel,
+                    remote_read,
+                    local_write,
+                    "http -> stdio",
+                    tg.cancel_scope,
+                )
+
+
+def is_reusable_mcp_service_running(host: str, port: int, path: str) -> bool:
+    """
+    Check whether a reusable streamable-http MCP service is already serving this route.
+
+    This is shared by the stdio launcher and the menu runtime bridge so both code
+    paths make the same decision about "already running" state.
+    """
+    reuse_url = _build_mcp_service_url(host, port, path)
+    probe_host = _normalize_client_probe_host(host)
+    if not _is_port_open(probe_host, port):
+        return False
+
+    import anyio
+
+    return bool(anyio.run(_probe_streamable_http_mcp, reuse_url))
+
+
+def _try_get_reusable_mcp_service_url(transport: str, host: str, port: int, path: str) -> str | None:
+    """
+    Return a reusable MCP HTTP endpoint for stdio launchers when one is already running.
+
+    Only stdio launchers reuse an existing MCP service. HTTP/SSE launches are
+    the service itself and should continue following their normal startup path.
+    """
+    if _normalize_transport(transport) != "stdio":
+        return None
+
+    if os.environ.get("AINIEE_MCP_DISABLE_RUNNING_REUSE", "").strip().lower() in {"1", "true", "yes"}:
+        return None
+
+    return _build_mcp_service_url(host, port, path)
 
 
 def _render_path_template(path_template: str, path_params: Optional[Dict[str, Any]] = None) -> str:
@@ -308,11 +589,22 @@ def _build_mcp_app(
     host: str,
     port: int,
     path: str,
+    host_cli: Any = None,
 ):
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
-        raise RuntimeError("Missing Python module 'mcp'. Install it with: uv add mcp") from exc
+        status = inspect_mcp_runtime(PROJECT_ROOT)
+        primary_install = status.get("primary_install_command") or "uv add mcp"
+        raise RuntimeError(
+            _tf_from_host(
+                host_cli,
+                "msg_mcp_missing_python_module_install",
+                "Missing Python module '{module_name}'. Suggested install: {command}",
+                module_name="mcp",
+                command=primary_install,
+            )
+        ) from exc
 
     mcp = FastMCP(
         "AiNiee CLI MCP",
@@ -464,10 +756,23 @@ def run_mcp_server(
     if not status.get("available"):
         primary_install = status.get("primary_install_command") or "uv add mcp"
         raise RuntimeError(
-            f"MCP runtime is not ready. Suggested install: {primary_install}"
+            _tf_from_host(
+                host_cli,
+                "msg_mcp_runtime_not_ready_install",
+                "MCP runtime is not ready. Suggested install: {command}",
+                command=primary_install,
+            )
         )
 
     transport = _normalize_transport(transport)
+    reusable_url = _try_get_reusable_mcp_service_url(transport, host, port, path)
+    if reusable_url is not None:
+        if is_reusable_mcp_service_running(host, port, path):
+            import anyio
+
+            _write_startup_notice(f"AiNiee MCP reusing running service: {reusable_url}")
+            return anyio.run(_run_stdio_proxy_to_existing_mcp, reusable_url)
+
     mcp_auth_token = DEFAULT_MCP_AUTH_TOKEN or secrets.token_urlsafe(32)
     backend = EmbeddedWebServerController(
         host=backend_host,
@@ -481,7 +786,7 @@ def run_mcp_server(
     atexit.register(backend.stop)
 
     api = AiNieeAPIClient(backend.base_url, mcp_auth_token=mcp_auth_token)
-    mcp_app = _build_mcp_app(api, backend.ws_module, host, port, path)
+    mcp_app = _build_mcp_app(api, backend.ws_module, host, port, path, host_cli=host_cli)
 
     try:
         return _invoke_fastmcp_run(mcp_app, transport, host, port, path)
