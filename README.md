@@ -216,6 +216,7 @@ uv run ainiee_cli.py mcp --mcp-transport stdio
 ## MCP 服务
 
 本项目提供可选的 MCP 服务模块，复用现有 WebServer 后端能力，并尽量覆盖全部 Web API 路由，以便在 MCP 客户端中获得接近 Web 面板的操作体验。
+任何支持 MCP `stdio` 或 `streamable-http` 的 LLM 客户端，都可以直接接入本项目，不需要额外读取项目源码或手动拼接 Web API。
 
 **启动方式：**
 1. 命令行直启：`uv run ainiee_cli.py mcp --mcp-transport stdio`
@@ -228,8 +229,50 @@ uv run ainiee_cli.py mcp --mcp-transport stdio
 - 菜单启动默认使用后台 `streamable-http` 模式，等待 3 秒后返回菜单
 - 如果修改了 `mcp_server_port`，请同步更新 MCP 客户端中的连接路由
 
-**客户端接入示例：**
-1. Codex 通过 `stdio` 直连，推荐直接使用项目内置 launcher：
+**直接接入 LLM 客户端：**
+1. 支持 `stdio` 的 MCP 客户端，可以直接把 AiNiee CLI 作为本地 MCP Server 接入。
+如果客户端使用 `command + args` 配置格式，可参考下面这个通用模板：
+
+```json
+{
+  "mcpServers": {
+    "ainiee-cli": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "H:\\小说\\AiNiee-CLI",
+        "--isolated",
+        "--no-project",
+        "--quiet",
+        "--with",
+        "mcp",
+        "--with",
+        "fastapi",
+        "--with",
+        "uvicorn[standard]",
+        "--with",
+        "requests",
+        "python",
+        "Tools/MCPServer/server.py",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+不同客户端的配置文件字段名可能略有差异，但核心信息通常就是 `command=uv` 加上上面的 `args`。
+上面的路径请替换成你自己的项目目录。Linux / macOS 可把 `H:\\小说\\AiNiee-CLI` 替换成 `/path/to/AiNiee-CLI`。
+
+2. 如果客户端只接受“原始命令”，可直接使用：
+
+```bash
+uv run --directory /path/to/AiNiee-CLI --isolated --no-project --quiet --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio
+```
+
+3. Codex 通过 `stdio` 直连时，推荐直接使用项目内置 launcher：
 
 ```bash
 codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
@@ -242,23 +285,39 @@ codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_laun
 startup_timeout_sec = 90
 ```
 
-2. 如果你想手写原始命令，推荐使用隔离模式，避免误碰项目 `.venv`：
+4. 支持 `streamable-http` 的 MCP 客户端，可以直接连接 AiNiee CLI 暴露出来的 MCP HTTP 路由。
+先启动：
 
 ```bash
-uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+uv run ainiee_cli.py mcp --mcp-transport streamable-http
 ```
 
-3. 支持 `streamable-http` 的 MCP 客户端，可直接连接菜单启动后的 HTTP 路由：
+或者在主菜单选择 **16. 启动 MCP 服务**。
+
+客户端侧如果使用 URL 配置格式，可参考：
+
+```json
+{
+  "mcpServers": {
+    "ainiee-cli": {
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+连接地址：
 
 ```text
 本机地址: http://127.0.0.1:8765/mcp
 局域网地址: http://<你的局域网IP>:8765/mcp
 ```
 
-4. Windows 项目路径示例：
+5. 如果启动 MCP 时提示缺少依赖，可以在项目根目录执行：
 
-```text
-H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
+```bash
+uv add mcp fastapi uvicorn requests
 ```
 
 如果你把 `mcp_server_port` 改成了其他值，上面的 `8765` 也要同步替换。
@@ -269,6 +328,8 @@ H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 - `get_mcp_security_policy`
 - `get_mcp_tool_catalog`
 - `get_mcp_validation_checklist`
+
+这 4 个工具会直接告诉 LLM 当前 MCP 暴露了哪些能力、参数如何组织、哪些接口受限，以及为什么不能绕过 MCP 直连 WebUI。
 
 **MCP 安全要求：**
 - LLM 严禁绕过 MCP，直接向 WebUI / localhost / 局域网端口发 HTTP 请求取数

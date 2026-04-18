@@ -216,6 +216,7 @@ This project includes a React-based Web Dashboard, now in stable release.
 ## MCP Server
 
 This project provides an optional MCP server module that reuses the existing WebServer backend and aims to cover the full Web API surface, so MCP clients can get an experience close to the Web dashboard.
+Any LLM client that supports MCP over `stdio` or `streamable-http` can connect to this project directly, without reading repository files or manually assembling Web API calls.
 
 **Startup Options:**
 1. Direct CLI: `uv run ainiee_cli.py mcp --mcp-transport stdio`
@@ -228,8 +229,50 @@ This project provides an optional MCP server module that reuses the existing Web
 - Menu startup uses background `streamable-http` mode and returns to the menu after 3 seconds
 - If you change `mcp_server_port`, update the MCP route in your client as well
 
-**Client integration examples:**
-1. Codex over `stdio`, preferably via the bundled launcher:
+**Direct LLM client integration:**
+1. MCP clients that support `stdio` can launch AiNiee CLI as a local MCP server.
+If your client uses a `command + args` configuration format, this generic template can be used as a reference:
+
+```json
+{
+  "mcpServers": {
+    "ainiee-cli": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "H:\\小说\\AiNiee-CLI",
+        "--isolated",
+        "--no-project",
+        "--quiet",
+        "--with",
+        "mcp",
+        "--with",
+        "fastapi",
+        "--with",
+        "uvicorn[standard]",
+        "--with",
+        "requests",
+        "python",
+        "Tools/MCPServer/server.py",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+Different clients may use slightly different field names, but the core idea is the same: `command=uv` plus the `args` shown above.
+Replace the path with your own project directory. On Linux / macOS, replace `H:\\小说\\AiNiee-CLI` with `/path/to/AiNiee-CLI`.
+
+2. If your client only accepts a raw command, use:
+
+```bash
+uv run --directory /path/to/AiNiee-CLI --isolated --no-project --quiet --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio
+```
+
+3. Codex over `stdio`, preferably via the bundled launcher:
 
 ```bash
 codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
@@ -242,23 +285,39 @@ If this is the first startup and dependencies are not cached yet, add a larger t
 startup_timeout_sec = 90
 ```
 
-2. If you prefer the raw command, use an isolated environment so the project `.venv` is not touched:
+4. MCP clients that support `streamable-http` can connect directly to the MCP HTTP route exposed by AiNiee CLI.
+Start it first with:
 
 ```bash
-uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+uv run ainiee_cli.py mcp --mcp-transport streamable-http
 ```
 
-3. MCP clients that support `streamable-http` can connect to the menu-started HTTP route directly:
+or from the main menu with **16. Start MCP Server**.
+
+If the client uses a URL-style configuration, this is a valid reference:
+
+```json
+{
+  "mcpServers": {
+    "ainiee-cli": {
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+Endpoints:
 
 ```text
 Local endpoint: http://127.0.0.1:8765/mcp
 LAN endpoint: http://<your-lan-ip>:8765/mcp
 ```
 
-4. Example Windows project path:
+5. If MCP startup reports missing dependencies, run this from the project root:
 
-```text
-H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
+```bash
+uv add mcp fastapi uvicorn requests
 ```
 
 If you change `mcp_server_port`, replace `8765` in the route above with the new port.
@@ -269,6 +328,8 @@ If the project `.venv` was created under another OS first, for example in WSL an
 - `get_mcp_security_policy`
 - `get_mcp_tool_catalog`
 - `get_mcp_validation_checklist`
+
+These four tools tell the LLM what MCP capabilities are available, how tool parameters are structured, which routes are restricted, and why bypassing MCP is forbidden.
 
 **MCP security requirements:**
 - The LLM must not bypass MCP by sending direct HTTP requests to the Web UI, localhost, or LAN ports
