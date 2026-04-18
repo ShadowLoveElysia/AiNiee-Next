@@ -3021,7 +3021,12 @@ def stop_server():
         _current_server.should_exit = True
         _current_server = None
 
-def run_server(host: str = "127.0.0.1", port: int = 8000, monitor_mode: bool = False):
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    monitor_mode: bool = False,
+    log_level: str = "info",
+):
     """Starts the FastAPI server in a separate thread."""
     global SYSTEM_MODE, _current_server
     SYSTEM_MODE = "monitor" if monitor_mode else "full"
@@ -3031,7 +3036,14 @@ def run_server(host: str = "127.0.0.1", port: int = 8000, monitor_mode: bool = F
     task_manager.internal_api_url = f"http://127.0.0.1:{port}"
     
     try:
-        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        # MCP stdio 模式需要绝对安静的 stdout，因此这里允许调用方下调 uvicorn 日志级别。
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            access_log=(log_level.lower() != "critical"),
+        )
         _current_server = StoppableServer(config)
 
         def server_task():

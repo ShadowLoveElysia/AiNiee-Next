@@ -33,11 +33,13 @@ class EmbeddedWebServerController:
         port: int,
         host_cli: Any = None,
         startup_timeout: float = 8.0,
+        log_level: str = "info",
     ):
         self.host = host
         self.port = port
         self.host_cli = host_cli
         self.startup_timeout = startup_timeout
+        self.log_level = log_level
         self.started_by_self = False
         self.thread = None
         self.ws_module = None
@@ -59,7 +61,12 @@ class EmbeddedWebServerController:
             except Exception:
                 pass
 
-        self.thread = ws_module.run_server(host=self.host, port=self.port, monitor_mode=False)
+        self.thread = ws_module.run_server(
+            host=self.host,
+            port=self.port,
+            monitor_mode=False,
+            log_level=self.log_level,
+        )
         self.started_by_self = self.thread is not None
 
         deadline = time.time() + self.startup_timeout
@@ -374,6 +381,7 @@ def run_mcp_server(
         host=backend_host,
         port=backend_port,
         host_cli=host_cli,
+        log_level="critical" if transport == "stdio" else "info",
     )
     # MCP 复用现有 WebServer 作为后端宿主，避免再维护一套平行业务层。
     backend.start()
