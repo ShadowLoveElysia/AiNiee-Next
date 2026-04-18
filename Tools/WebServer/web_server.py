@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import secrets
 import threading
 import subprocess
 import time
@@ -15,7 +16,7 @@ try:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request
     from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, JSONResponse
     from pydantic import BaseModel
 except ImportError:
     # This error will be caught and handled in ainiee_cli.py
@@ -31,13 +32,16 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from Tools.MCPServer.security import (
+    MCP_AUTH_HEADER,
     MCP_SECRET_PLACEHOLDER,
+    WEB_SESSION_COOKIE_NAME,
     contains_redacted_secret,
     is_mcp_request,
     restore_redacted_json_text,
     restore_redacted_secrets,
     sanitize_data_for_mcp,
     sanitize_json_text_for_mcp,
+    strip_mcp_security_metadata,
 )
 
 # --- Global State & Task Management ---
@@ -543,8 +547,75 @@ PROFILES_PATH = os.path.join(RESOURCE_PATH, "profiles")
 RULES_PROFILES_PATH = os.path.join(RESOURCE_PATH, "rules_profiles")
 ROOT_CONFIG_FILE = os.path.join(RESOURCE_PATH, "config.json")
 WEB_SERVER_PATH = os.path.join(PROJECT_ROOT, "Tools", "WebServer")
+WEB_SESSION_TOKEN = os.environ.get("AINIEE_WEB_SESSION_TOKEN", "") or secrets.token_urlsafe(32)
+MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
+SENSITIVE_API_PREFIXES = (
+    "/api/config",
+    "/api/profiles",
+    "/api/rules_profiles",
+    "/api/queue",
+)
 
 # --- Helper Functions ---
+
+
+def _is_sensitive_api_path(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in SENSITIVE_API_PREFIXES)
+
+
+def _has_valid_web_session(request: Request) -> bool:
+    return request.cookies.get(WEB_SESSION_COOKIE_NAME, "") == WEB_SESSION_TOKEN
+
+
+def _has_valid_mcp_auth(request: Request) -> bool:
+    if not is_mcp_request(request):
+        return False
+    if not MCP_AUTH_TOKEN:
+        return False
+    return request.headers.get(MCP_AUTH_HEADER, "") == MCP_AUTH_TOKEN
+
+
+def _ensure_sensitive_api_access(request: Request):
+    """
+    Sensitive API routes must come from a browser session cookie or the MCP bridge token.
+
+    This is not meant to be a full user login system; it is a runtime channel gate that
+    prevents bare unauthenticated HTTP requests from bypassing MCP or the Web UI.
+    """
+    if _has_valid_web_session(request) or _has_valid_mcp_auth(request):
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Sensitive API access requires a valid Web UI session or MCP bridge token. "
+            "Direct unauthenticated HTTP bypass is not allowed."
+        ),
+    )
+
+
+@app.middleware("http")
+async def web_session_middleware(request: Request, call_next):
+    """
+    Issue a same-origin browser session cookie for the Web UI and guard sensitive API routes.
+    """
+    if request.url.path.startswith("/api/") and _is_sensitive_api_path(request.url.path):
+        try:
+            _ensure_sensitive_api_access(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    response = await call_next(request)
+
+    if not request.url.path.startswith("/api/"):
+        response.set_cookie(
+            key=WEB_SESSION_COOKIE_NAME,
+            value=WEB_SESSION_TOKEN,
+            httponly=True,
+            samesite="lax",
+        )
+
+    return response
 
 def get_config_mode():
     """Checks if the config is in 'profile' mode or 'legacy' single-file mode."""
@@ -653,7 +724,7 @@ async def get_version():
         return {"version": "V0.0.0 (Read Error)"}
 
 @app.post("/api/config")
-async def save_config(config: AppConfig, request: Optional[Request] = None):
+async def save_config(config: AppConfig, request: Request):
     """
     Saves the provided JSON to the active configuration file (settings only).
     """
@@ -668,6 +739,7 @@ async def save_config(config: AppConfig, request: Optional[Request] = None):
 
     try:
         config_dict = config.model_dump(exclude_unset=True) if hasattr(config, 'model_dump') else config.dict(exclude_unset=True)
+        config_dict = strip_mcp_security_metadata(config_dict)
 
         # Filter out rule data to prevent corruption/desync
         settings_only = {k: v for k, v in config_dict.items() if k not in rule_keys}
@@ -698,13 +770,15 @@ async def save_config(config: AppConfig, request: Optional[Request] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write to config file: {e}")
 
-@app.get("/api/config")
-async def get_config(request: Optional[Request] = None):
+def _load_active_config_payload() -> Dict[str, Any]:
     """
-    Returns the content of the active configuration merged with active rules.
+    Load the active settings profile and rules profile into one merged payload.
+
+    This helper is intentionally request-agnostic so internal Web handlers can
+    reuse the merged config without needing to fake an HTTP Request object.
     """
     global _config_cache
-    
+
     mode, root_config = get_config_mode()
     current_profile_name = root_config.get("active_profile", "default")
     current_rules_name = root_config.get("active_rules_profile", "default")
@@ -755,6 +829,15 @@ async def get_config(request: Optional[Request] = None):
         loaded_config["response_check_switch"] = default_check_switch
 
     _config_cache[cache_key] = loaded_config
+    return loaded_config
+
+
+@app.get("/api/config")
+async def get_config(request: Request):
+    """
+    Returns the content of the active configuration merged with active rules.
+    """
+    loaded_config = _load_active_config_payload()
 
     if is_mcp_request(request):
         return sanitize_data_for_mcp(loaded_config, path="/api/config")
@@ -788,7 +871,7 @@ def save_config_generic(key: str, value: Any):
 
 @app.get("/api/glossary", response_model=List[GlossaryItem])
 async def get_glossary():
-    config = await get_config()
+    config = _load_active_config_payload()
     return config.get("prompt_dictionary_data", [])
 
 @app.post("/api/glossary")
@@ -847,7 +930,7 @@ async def retry_term_translation(request: TermRetryRequest):
         from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 
         # 1. Load configuration
-        config = await get_config()
+        config = _load_active_config_payload()
         task_config = TaskConfig()
         task_config.load_config_from_dict(config)
         
@@ -926,7 +1009,7 @@ Translation|Note"""
 
 @app.get("/api/exclusion", response_model=List[ExclusionItem])
 async def get_exclusion():
-    config = await get_config()
+    config = _load_active_config_payload()
     return config.get("exclusion_list_data", [])
 
 @app.post("/api/exclusion")
@@ -938,7 +1021,7 @@ async def save_exclusion(items: List[ExclusionItem]):
 
 @app.get("/api/characterization", response_model=List[CharacterizationItem])
 async def get_characterization():
-    config = await get_config()
+    config = _load_active_config_payload()
     return config.get("characterization_data", [])
 
 @app.post("/api/characterization")
@@ -948,7 +1031,7 @@ async def save_characterization(items: List[CharacterizationItem]):
 
 @app.get("/api/world_building", response_model=StringContent)
 async def get_world_building():
-    config = await get_config()
+    config = _load_active_config_payload()
     return {"content": config.get("world_building_content", "")}
 
 @app.post("/api/world_building")
@@ -958,7 +1041,7 @@ async def save_world_building(data: StringContent):
 
 @app.get("/api/writing_style", response_model=StringContent)
 async def get_writing_style():
-    config = await get_config()
+    config = _load_active_config_payload()
     return {"content": config.get("writing_style_content", "")}
 
 @app.post("/api/writing_style")
@@ -968,7 +1051,7 @@ async def save_writing_style(data: StringContent):
 
 @app.get("/api/translation_example", response_model=List[TranslationExampleItem])
 async def get_translation_example():
-    config = await get_config()
+    config = _load_active_config_payload()
     return config.get("translation_example_data", [])
 
 @app.post("/api/translation_example")
@@ -1422,7 +1505,7 @@ async def save_prompt_content(category: str, filename: str, data: Dict[str, str]
         raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
 
 @app.post("/api/rules_profiles/switch")
-async def switch_rules_profile(request: RulesProfileSwitchRequest, http_request: Optional[Request] = None):
+async def switch_rules_profile(request: RulesProfileSwitchRequest, http_request: Request):
     global _config_cache
     profile_name = request.profile
     
@@ -1445,7 +1528,7 @@ async def switch_rules_profile(request: RulesProfileSwitchRequest, http_request:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/profiles/switch")
-async def switch_profile(request: ProfileSwitchRequest, http_request: Optional[Request] = None):
+async def switch_profile(request: ProfileSwitchRequest, http_request: Request):
     """
     Switches the active profile, returns the new active config, and invalidates caches.
     """
@@ -1687,7 +1770,7 @@ async def run_task(payload: TaskPayload):
         cm = get_cache_manager()
         if hasattr(cm, 'project') and cm.project and getattr(cm, 'save_to_file_require_flag', False):
             # 获取输出路径（优先使用 payload 里的，如果没有则从当前配置读）
-            output_path = payload.output_path or (await get_config()).get("label_output_path")
+            output_path = payload.output_path or _load_active_config_payload().get("label_output_path")
             if output_path:
                 cm.save_to_file_require_path = output_path
                 cm.save_to_file()
@@ -1745,7 +1828,7 @@ async def upload_file(file: UploadFile = File(...), policy: str = "default"):
         files.sort(key=lambda x: x[1]) # Oldest first
         
         # 2. Get Limit
-        config = await get_config()
+        config = _load_active_config_payload()
         limit = config.get("temp_file_limit", 10)
         count = len(files)
         
@@ -2670,7 +2753,7 @@ def get_queue_manager():
         raise HTTPException(status_code=500, detail="QueueManager not available")
 
 @app.get("/api/queue")
-async def get_queue(request: Optional[Request] = None):
+async def get_queue(request: Request):
     """Get all tasks in the queue with accurate processing status"""
     try:
         qm = get_queue_manager()
@@ -2743,7 +2826,7 @@ async def get_queue(request: Optional[Request] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/queue")
-async def add_to_queue(item: QueueTaskItem, request: Optional[Request] = None):
+async def add_to_queue(item: QueueTaskItem, request: Request):
     """Add a new task to the queue"""
     try:
         if is_mcp_request(request) and item.api_key == MCP_SECRET_PLACEHOLDER:
@@ -2802,7 +2885,7 @@ async def remove_from_queue(index: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/queue/{index}")
-async def update_queue_item(index: int, item: QueueTaskItem, request: Optional[Request] = None):
+async def update_queue_item(index: int, item: QueueTaskItem, request: Request):
     """Update a task in the queue"""
     try:
         qm = get_queue_manager()
@@ -2928,7 +3011,7 @@ async def edit_queue_file():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/queue/raw")
-async def get_queue_raw(request: Optional[Request] = None):
+async def get_queue_raw(request: Request):
     """Get raw queue JSON content"""
     try:
         qm = get_queue_manager()
@@ -2950,7 +3033,7 @@ async def get_queue_raw(request: Optional[Request] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/queue/raw")
-async def save_queue_raw(request: QueueRawRequest, http_request: Optional[Request] = None):
+async def save_queue_raw(request: QueueRawRequest, http_request: Request):
     """Save raw queue JSON content"""
     try:
         qm = get_queue_manager()

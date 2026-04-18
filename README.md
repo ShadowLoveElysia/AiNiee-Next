@@ -274,7 +274,9 @@ H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 - LLM 严禁绕过 MCP，直接向 WebUI / localhost / 局域网端口发 HTTP 请求取数
 - LLM 只能通过 MCP 工具访问项目能力
 - MCP 读取到的 `api_key` / `access_key` / `secret_key` 会被脱敏
+- MCP 读取敏感配置时会额外返回 `_mcp_security_notice`，明确说明这是权限限制，并禁止通过其他渠道绕过获取
 - 脱敏占位符不是可用密钥，也不能当真实值写回配置或队列
+- 敏感 Web API 路由要求有效的 Web UI 会话 cookie 或 MCP bridge token，裸 HTTP 直连会被拒绝
 
 完整的客户端说明文档见：
 - `Tools/MCPServer/MCP_CLIENT_GUIDE.md`

@@ -5,6 +5,7 @@ import atexit
 import inspect
 import os
 import re
+import secrets
 import socket
 import sys
 import time
@@ -24,6 +25,7 @@ from Tools.MCPServer.docs import (
     load_mcp_manual,
 )
 from Tools.MCPServer.security import (
+    MCP_AUTH_HEADER,
     MCP_CALLER_HEADER,
     MCP_CALLER_VALUE,
     sanitize_data_for_mcp,
@@ -35,6 +37,7 @@ DEFAULT_MCP_PORT = int(os.environ.get("AINIEE_MCP_PORT", "8765"))
 DEFAULT_MCP_PATH = os.environ.get("AINIEE_MCP_PATH", "/mcp")
 DEFAULT_BACKEND_HOST = os.environ.get("AINIEE_MCP_BACKEND_HOST", "127.0.0.1")
 DEFAULT_BACKEND_PORT = int(os.environ.get("AINIEE_MCP_BACKEND_PORT", "18000"))
+DEFAULT_MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
 
 
 class EmbeddedWebServerController:
@@ -45,12 +48,14 @@ class EmbeddedWebServerController:
         host_cli: Any = None,
         startup_timeout: float = 8.0,
         log_level: str = "info",
+        mcp_auth_token: str = "",
     ):
         self.host = host
         self.port = port
         self.host_cli = host_cli
         self.startup_timeout = startup_timeout
         self.log_level = log_level
+        self.mcp_auth_token = mcp_auth_token
         self.started_by_self = False
         self.thread = None
         self.ws_module = None
@@ -60,6 +65,9 @@ class EmbeddedWebServerController:
         return f"http://{self.host}:{self.port}"
 
     def start(self) -> None:
+        if self.mcp_auth_token:
+            os.environ["AINIEE_MCP_AUTH_TOKEN"] = self.mcp_auth_token
+
         if _is_port_open(self.host, self.port):
             return
 
@@ -105,9 +113,10 @@ class EmbeddedWebServerController:
 
 
 class AiNieeAPIClient:
-    def __init__(self, base_url: str, timeout: float = 20.0):
+    def __init__(self, base_url: str, timeout: float = 20.0, mcp_auth_token: str = ""):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.mcp_auth_token = mcp_auth_token
 
     def request(
         self,
@@ -124,7 +133,10 @@ class AiNieeAPIClient:
             url=f"{self.base_url}{path}",
             params=params,
             json=payload,
-            headers={MCP_CALLER_HEADER: MCP_CALLER_VALUE},
+            headers={
+                MCP_CALLER_HEADER: MCP_CALLER_VALUE,
+                MCP_AUTH_HEADER: self.mcp_auth_token,
+            },
             timeout=self.timeout,
         )
 
@@ -386,7 +398,10 @@ def _build_mcp_app(
                 f"{api.base_url}/api/files/upload",
                 params={"policy": policy},
                 files={"file": (source.name, handle)},
-                headers={MCP_CALLER_HEADER: MCP_CALLER_VALUE},
+                headers={
+                    MCP_CALLER_HEADER: MCP_CALLER_VALUE,
+                    MCP_AUTH_HEADER: api.mcp_auth_token,
+                },
                 timeout=api.timeout,
             )
 
@@ -453,17 +468,19 @@ def run_mcp_server(
         )
 
     transport = _normalize_transport(transport)
+    mcp_auth_token = DEFAULT_MCP_AUTH_TOKEN or secrets.token_urlsafe(32)
     backend = EmbeddedWebServerController(
         host=backend_host,
         port=backend_port,
         host_cli=host_cli,
         log_level="critical" if transport == "stdio" else "info",
+        mcp_auth_token=mcp_auth_token,
     )
     # MCP 复用现有 WebServer 作为后端宿主，避免再维护一套平行业务层。
     backend.start()
     atexit.register(backend.stop)
 
-    api = AiNieeAPIClient(backend.base_url)
+    api = AiNieeAPIClient(backend.base_url, mcp_auth_token=mcp_auth_token)
     mcp_app = _build_mcp_app(api, backend.ws_module, host, port, path)
 
     try:

@@ -274,7 +274,9 @@ If the project `.venv` was created under another OS first, for example in WSL an
 - The LLM must not bypass MCP by sending direct HTTP requests to the Web UI, localhost, or LAN ports
 - The LLM must use MCP tools only for AiNiee operations
 - `api_key` / `access_key` / `secret_key` are redacted on MCP reads
+- MCP reads of sensitive config also return `_mcp_security_notice`, explicitly stating that the restriction is permission-based and that bypassing through any other channel is forbidden
 - A redacted placeholder is not a usable secret and must not be written back as if it were real
+- Sensitive Web API routes require a valid Web UI session cookie or MCP bridge token, so bare unauthenticated HTTP bypass requests are rejected
 
 Full client-facing guide:
 - `Tools/MCPServer/MCP_CLIENT_GUIDE.md`

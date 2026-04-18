@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List
 
+from Tools.MCPServer.security import MCP_SECURITY_NOTICE_FIELD, MCP_SECRET_PLACEHOLDER
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 GUIDE_PATH = os.path.join(PROJECT_ROOT, "Tools", "MCPServer", "MCP_CLIENT_GUIDE.md")
@@ -24,6 +25,7 @@ Recommended first steps for any LLM client:
 - Never bypass MCP by making direct HTTP requests to the Web UI, localhost ports, or LAN MCP/WebServer ports.
 - Use MCP tools only.
 - Sensitive fields such as `api_key`, `access_key`, and `secret_key` are intentionally redacted for MCP/LLM access.
+- MCP config reads may also include a security notice field that explains the restriction and explicitly forbids bypass attempts.
 - If a redacted placeholder is returned, do not treat it as a real secret.
 - When changing advanced MCP settings, ask the user for a second confirmation.
 
@@ -123,6 +125,8 @@ def build_security_policy() -> Dict[str, Any]:
             "Call get_mcp_usage_manual and get_mcp_tool_catalog before large edits when the client has no file-reading ability.",
             "Ask for a second confirmation before changing advanced MCP settings.",
             "Treat redacted secret placeholders as non-readable and non-usable values.",
+            "Treat MCP security notice fields as policy text, not user data to be written back.",
+            "Assume sensitive Web API routes are protected by a Web UI session cookie or an MCP bridge token.",
         ],
         "forbidden": [
             "Do not bypass MCP by sending direct HTTP requests to the Web UI, localhost, LAN WebServer ports, or MCP HTTP endpoints.",
@@ -132,8 +136,15 @@ def build_security_policy() -> Dict[str, Any]:
         ],
         "secret_behavior": {
             "redacted_fields": ["api_key", "access_key", "secret_key"],
-            "placeholder": "[MCP_SECRET_REDACTED]",
+            "placeholder": MCP_SECRET_PLACEHOLDER,
+            "notice_field": MCP_SECURITY_NOTICE_FIELD,
+            "read_rule": "Sensitive secrets are readable only by the user in the Web UI. MCP/LLM reads return redacted values plus a security notice on config payloads.",
             "writeback_rule": "Existing stored secrets are preserved when an MCP write payload still contains the placeholder.",
+        },
+        "channel_gate": {
+            "web_ui": "Sensitive routes require a valid Web UI session cookie.",
+            "mcp": "Sensitive MCP proxy calls require the MCP bridge token header.",
+            "goal": "Block bare unauthenticated HTTP bypass attempts.",
         },
     }
 

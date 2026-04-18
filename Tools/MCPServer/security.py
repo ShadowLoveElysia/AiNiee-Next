@@ -7,9 +7,22 @@ from typing import Any, Optional
 # MCP 通过内部 Web API 访问项目能力时，会带上这个调用来源标记。
 MCP_CALLER_HEADER = "X-AiNiee-Caller"
 MCP_CALLER_VALUE = "mcp"
+MCP_AUTH_HEADER = "X-AiNiee-Mcp-Auth"
+WEB_SESSION_COOKIE_NAME = "ainiee_web_session"
 
 # 对 LLM 暴露时统一使用固定占位符，避免泄漏真实密钥的任何片段。
 MCP_SECRET_PLACEHOLDER = "[MCP_SECRET_REDACTED]"
+MCP_SECURITY_NOTICE_FIELD = "_mcp_security_notice"
+MCP_CONFIG_NOTICE_PATHS = {
+    "/api/config",
+}
+MCP_SECRET_ACCESS_NOTICE = (
+    "权限限制：LLM 客户端无权读取用户的 API Key / Access Key / Secret Key。"
+    "为了安全，这些敏感数据仅允许用户本人在 Web 端查看，禁止通过 MCP、"
+    "直连 HTTP、本地文件、日志、缓存或任何其他渠道绕过获取。 "
+    "Permission restriction: LLM clients cannot read user secrets. "
+    "The user may view them only in the Web UI, and bypassing via any other channel is forbidden."
+)
 MCP_SENSITIVE_FIELDS = {
     "api_key",
     "access_key",
@@ -35,7 +48,13 @@ def is_mcp_request(request: Any) -> bool:
     return header_value == MCP_CALLER_VALUE
 
 
-def sanitize_data_for_mcp(data: Any, *, path: str = "", field_name: Optional[str] = None) -> Any:
+def sanitize_data_for_mcp(
+    data: Any,
+    *,
+    path: str = "",
+    field_name: Optional[str] = None,
+    inject_notice: bool = True,
+) -> Any:
     """Recursively redact secret fields before data is returned to MCP / LLM clients."""
     normalized_field = _normalize_field_name(field_name)
 
@@ -43,14 +62,27 @@ def sanitize_data_for_mcp(data: Any, *, path: str = "", field_name: Optional[str
         return _redact_secret_value(data)
 
     if isinstance(data, dict):
-        return {
-            key: sanitize_data_for_mcp(value, path=path, field_name=key)
+        sanitized = {
+            key: sanitize_data_for_mcp(
+                value,
+                path=path,
+                field_name=key,
+                inject_notice=False,
+            )
             for key, value in data.items()
         }
+        if inject_notice and _should_attach_notice(path, sanitized):
+            sanitized[MCP_SECURITY_NOTICE_FIELD] = MCP_SECRET_ACCESS_NOTICE
+        return sanitized
 
     if isinstance(data, list):
         return [
-            sanitize_data_for_mcp(item, path=path, field_name=field_name)
+            sanitize_data_for_mcp(
+                item,
+                path=path,
+                field_name=field_name,
+                inject_notice=False,
+            )
             for item in data
         ]
 
@@ -164,6 +196,28 @@ def restore_redacted_json_text(content: str, current_content: str = "") -> str:
 
 def _normalize_field_name(field_name: Optional[str]) -> str:
     return str(field_name or "").strip().lower()
+
+
+def strip_mcp_security_metadata(data: Any) -> Any:
+    """Remove MCP-only advisory metadata before persisting user data back to disk."""
+    if isinstance(data, dict):
+        return {
+            key: strip_mcp_security_metadata(value)
+            for key, value in data.items()
+            if key != MCP_SECURITY_NOTICE_FIELD
+        }
+
+    if isinstance(data, list):
+        return [
+            strip_mcp_security_metadata(item)
+            for item in data
+        ]
+
+    return data
+
+
+def _should_attach_notice(path: str, data: Any) -> bool:
+    return path in MCP_CONFIG_NOTICE_PATHS and contains_redacted_secret(data)
 
 
 def _redact_secret_value(value: Any) -> Any:
