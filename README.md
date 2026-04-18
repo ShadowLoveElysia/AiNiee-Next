@@ -170,8 +170,13 @@ uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese 
 uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 ```
 
+**MCP 服务示例：**
+```bash
+uv run ainiee_cli.py mcp --mcp-transport stdio
+```
+
 **主要参数：**
-- `translate` / `polish` / `export` / `queue`: 任务类型
+- `translate` / `polish` / `export` / `queue` / `mcp`: 任务类型
 - `-o, --output`: 输出路径
 - `-p, --profile`: 配置 Profile 名称
 - `-s, --source`: 源语言
@@ -184,6 +189,7 @@ uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 - `--model`: 模型名称
 - `--api-url`: API 地址
 - `--api-key`: API 密钥
+- `--mcp-transport`: MCP 传输模式，可选 `stdio` / `streamable-http` / `sse`
 
 ---
 
@@ -204,6 +210,22 @@ uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 - 插件中心：启用/禁用 RAG 等高级功能
 
 > **开发说明**：Web 控制面板已稳定运行，但功能相对 TUI 模式较少。本项目以 CLI/TUI 交互为核心开发方向，Web 端功能更新将在后续版本中逐步跟进。
+
+---
+
+## MCP 服务
+
+本项目提供可选的 MCP 服务模块，复用现有 WebServer 后端能力，并尽量覆盖全部 Web API 路由，以便在 MCP 客户端中获得接近 Web 面板的操作体验。
+
+**启动方式：**
+1. 命令行直启：`uv run ainiee_cli.py mcp --mcp-transport stdio`
+2. 主菜单启动：进入主菜单后选择 **16. 启动 MCP 服务**
+
+**说明：**
+- MCP 服务是可选组件，缺失时不会影响主程序其他功能
+- 每次启动 MCP 前都会检查必要组件与依赖
+- 若缺少依赖，程序会提示可执行的 `uv add ...` 命令
+- 菜单启动默认使用后台 `streamable-http` 模式，等待 3 秒后返回菜单
 
 ---
 

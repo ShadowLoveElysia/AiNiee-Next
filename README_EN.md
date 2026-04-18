@@ -170,8 +170,13 @@ uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese 
 uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 ```
 
+**MCP Server Example:**
+```bash
+uv run ainiee_cli.py mcp --mcp-transport stdio
+```
+
 **Main Arguments:**
-- `translate` / `polish` / `export` / `queue`: Task type
+- `translate` / `polish` / `export` / `queue` / `mcp`: Task type
 - `-o, --output`: Output path
 - `-p, --profile`: Configuration profile name
 - `-s, --source`: Source language
@@ -184,6 +189,7 @@ uv run ainiee_cli.py queue --queue-file my_queue.json --yes
 - `--model`: Model name
 - `--api-url`: API URL
 - `--api-key`: API Key
+- `--mcp-transport`: MCP transport mode, supports `stdio` / `streamable-http` / `sse`
 
 ---
 
@@ -204,6 +210,22 @@ This project includes a React-based Web Dashboard, now in stable release.
 - Plugin Center: Enable/disable RAG and other features
 
 > **Development Note**: The Web Dashboard is now stable, but has fewer features compared to TUI mode. This project focuses on CLI/TUI interaction as the core development direction. Web features will be gradually updated in future releases.
+
+---
+
+## MCP Server
+
+This project provides an optional MCP server module that reuses the existing WebServer backend and aims to cover the full Web API surface, so MCP clients can get an experience close to the Web dashboard.
+
+**Startup Options:**
+1. Direct CLI: `uv run ainiee_cli.py mcp --mcp-transport stdio`
+2. Main menu: open the main menu and select **16. Start MCP Server**
+
+**Notes:**
+- The MCP server is optional and does not affect the main process when missing
+- Required components and Python dependencies are checked on every MCP startup
+- If dependencies are missing, the program shows suggested `uv add ...` commands
+- Menu startup uses background `streamable-http` mode and returns to the menu after 3 seconds
 
 ---
 

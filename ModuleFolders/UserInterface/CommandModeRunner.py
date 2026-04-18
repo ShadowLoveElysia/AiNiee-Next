@@ -20,6 +20,12 @@ class CommandModeRunner:
         self.host = host
 
     def run(self, args):
+        if args.task == "mcp":
+            # MCP 命令行模式交给专用桥接层处理，保持 ainiee_cli.py 只做委托。
+            return self.host.mcp_runtime_bridge.run_mcp_server_from_command(
+                transport=getattr(args, "mcp_transport", "stdio"),
+            )
+
         if args.profile:
             self.host.root_config["active_profile"] = args.profile
             self.host.save_config(save_root=True)
@@ -41,9 +47,12 @@ class CommandModeRunner:
 
         if args.task == "queue":
             self._run_queue(args)
-            return
+            return 0
 
         if args.task in task_map:
+            if not args.input_path:
+                console.print("[red]Error: input_path is required for this task.[/red]")
+                return 2
             if args.task == "all_in_one":
                 self._run_all_in_one(args)
             else:
@@ -54,13 +63,19 @@ class CommandModeRunner:
                     non_interactive=args.non_interactive,
                     web_mode=args.web_mode,
                 )
-            return
+            return 0
 
         if args.task == "export":
+            if not args.input_path:
+                console.print("[red]Error: input_path is required for export.[/red]")
+                return 2
             self.host.run_export_only(
                 target_path=args.input_path,
                 non_interactive=args.non_interactive,
             )
+            return 0
+
+        return 0
 
     def _apply_config_overrides(self, args):
         if args.source_lang:

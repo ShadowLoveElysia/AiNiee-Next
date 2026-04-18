@@ -77,6 +77,7 @@ class CLIMenu:
         self._plugin_settings_menu_handler = None
         self._crash_handler = None
         self._web_runtime_bridge = None
+        self._mcp_runtime_bridge = None
         self._command_mode_runner = None
         self._export_flow = None
         self._profile_menu_handler = None
@@ -99,6 +100,7 @@ class CLIMenu:
         signal.signal(signal.SIGINT, self.signal_handler)
         self.task_running, self.original_print = False, Base.print
         self.web_server_thread = None
+        self.mcp_server_process = None
 
         # 操作记录器 (必须在 _check_web_server_dist 之前初始化，因为 display_banner 会使用它)
         self.operation_logger = OperationLogger()
@@ -294,6 +296,14 @@ class CLIMenu:
         return self._web_runtime_bridge
 
     @property
+    def mcp_runtime_bridge(self):
+        if self._mcp_runtime_bridge is None:
+            from ModuleFolders.UserInterface.MCPRuntimeBridge import MCPRuntimeBridge
+
+            self._mcp_runtime_bridge = MCPRuntimeBridge(self)
+        return self._mcp_runtime_bridge
+
+    @property
     def command_mode_runner(self):
         if self._command_mode_runner is None:
             from ModuleFolders.UserInterface.CommandModeRunner import CommandModeRunner
@@ -433,7 +443,7 @@ class CLIMenu:
         return self.web_runtime_bridge.host_run_queue()
 
     def run_non_interactive(self, args):
-        self.command_mode_runner.run(args)
+        return self.command_mode_runner.run(args)
 
 
     def _migrate_and_load_profiles(self):
@@ -798,13 +808,15 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server"]
-            colors = ["green", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta"]
+            menus = ["start_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server"]
+            colors = ["green", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta"]
             
             for i, (m, c) in enumerate(zip(menus, colors)): 
                 label = i18n.get(f"menu_{m}")
                 if m == "start_web_server" and label == f"menu_{m}":
                     label = "Start Web Server" # Fallback if not in json
+                if m == "start_mcp_server" and label == f"menu_{m}":
+                    label = "Start MCP Server"
                 if m == "task_queue" and label == f"menu_{m}":
                     label = i18n.get("menu_task_queue")
                 if m == "start_all_in_one" and label == f"menu_{m}":
@@ -816,7 +828,7 @@ class CLIMenu:
             console.print("\n")
 
             # 记录用户操作
-            menu_names = ["退出", "开始翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器"]
+            menu_names = ["退出", "开始翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器"]
             if choice < len(menu_names):
                 self.operation_logger.log(f"主菜单 -> {menu_names[choice]}", "MENU")
 
@@ -836,7 +848,8 @@ class CLIMenu:
                 self.qa_menu,
                 self.update_manager.start_update,
                 lambda: self.update_manager.setup_web_server(manual=True),
-                self.start_web_server
+                self.start_web_server,
+                self.start_mcp_server,
             ]
             actions[choice]()
 
@@ -1890,6 +1903,9 @@ class CLIMenu:
     def start_web_server(self):
         self.web_runtime_bridge.start_web_server()
 
+    def start_mcp_server(self):
+        self.mcp_runtime_bridge.start_mcp_server()
+
     def _get_profiles_list(self, profiles_dir):
         if not os.path.exists(profiles_dir): return []
         return [f.replace(".json", "") for f in os.listdir(profiles_dir) if f.endswith(".json")]
@@ -1904,7 +1920,7 @@ def main():
     parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')
 
     # 核心任务参数
-    parser.add_argument('task', nargs='?', choices=['translate', 'polish', 'export', 'all_in_one', 'queue'], help=i18n.get('help_task'))
+    parser.add_argument('task', nargs='?', choices=['translate', 'polish', 'export', 'all_in_one', 'queue', 'mcp'], help=i18n.get('help_task'))
     parser.add_argument('input_path', nargs='?', help=i18n.get('help_input'))
     
     # 路径与环境
@@ -1934,6 +1950,12 @@ def main():
     parser.add_argument('--failover', choices=['on', 'off'], help="Enable or disable API failover")
     
     parser.add_argument('--web-mode', action='store_true', help="Enable Web Server compatible output mode")
+    parser.add_argument(
+        '--mcp-transport',
+        default='stdio',
+        choices=['stdio', 'streamable-http', 'streamable_http', 'http', 'sse'],
+        help="MCP transport mode when task is 'mcp'",
+    )
 
     # 文本处理逻辑
     parser.add_argument('--lines', type=int, help="Lines per request (Line Mode)")
@@ -1943,17 +1965,20 @@ def main():
     args = parser.parse_args()
 
     cli = CLIMenu()
+    exit_code = 0
     try:
-        if args.task and args.input_path:
-            cli.run_non_interactive(args)
+        # 命令行任务统一委托给 CommandModeRunner，由它自己决定参数校验。
+        if args.task:
+            exit_code = cli.run_non_interactive(args) or 0
         else:
             cli.main_menu()
     except KeyboardInterrupt:
-        pass
+        exit_code = 130
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
         cli.handle_crash(error_msg)
+        exit_code = 1
     finally:
         # Final cleanup for WebServer and its subtasks
         try:
@@ -1961,7 +1986,7 @@ def main():
             ws_module.stop_server()
         except:
             pass
-        sys.exit(0)
+        sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()
