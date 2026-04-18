@@ -17,7 +17,9 @@ REQUIRED_MODULE_SPECS = {
 
 REQUIRED_COMPONENT_FILES = (
     "__init__.py",
+    "docs.py",
     "runtime.py",
+    "security.py",
     "server.py",
 )
 

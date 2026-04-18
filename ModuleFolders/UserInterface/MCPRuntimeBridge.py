@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 from rich.console import Console
 from rich.panel import Panel
 
+from Tools.MCPServer.docs import get_startup_hint_text
 from Tools.MCPServer.runtime import format_runtime_status_lines, inspect_mcp_runtime
 
 
@@ -51,6 +52,7 @@ class MCPRuntimeBridge:
                     f"Local: {self.get_mcp_local_endpoint()}\n"
                     f"Network: {self.get_mcp_network_endpoint()}\n\n"
                     f"{self._get_route_update_notice()}\n\n"
+                    f"{self._get_llm_guide_notice()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
                 border_style="green",
@@ -90,6 +92,7 @@ class MCPRuntimeBridge:
                     f"Network: {self.get_mcp_network_endpoint()}\n"
                     f"Backend: http://{self._get_backend_host()}:{self._get_backend_port()}\n\n"
                     f"{self._get_route_update_notice()}\n\n"
+                    f"{self._get_llm_guide_notice()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
                 border_style="green",
@@ -118,6 +121,7 @@ class MCPRuntimeBridge:
                 f"Expected local: {self.get_mcp_local_endpoint()}\n"
                 f"Expected network: {self.get_mcp_network_endpoint()}\n\n"
                 f"{self._get_route_update_notice()}\n\n"
+                f"{self._get_llm_guide_notice()}\n\n"
                 f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
             ),
             border_style="yellow",
@@ -338,6 +342,10 @@ class MCPRuntimeBridge:
             "msg_mcp_route_update_notice",
             "注意：如果修改了 MCP 服务端口，请同步更新 Codex 等客户端中的 MCP 路由配置。",
         )
+
+    def _get_llm_guide_notice(self) -> str:
+        """Return the startup hint that points operators to the self-describing MCP tools."""
+        return get_startup_hint_text()
 
     def _t(self, key: str, default: str) -> str:
         i18n = self.i18n

@@ -264,6 +264,21 @@ H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 If you change `mcp_server_port`, replace `8765` in the route above with the new port.
 If the project `.venv` was created under another OS first, for example in WSL and then reused from Windows, recreate `.venv` before running `uv add` to avoid `lib64` / symlink related errors.
 
+**Recommended first MCP calls for LLM clients:**
+- `get_mcp_usage_manual`
+- `get_mcp_security_policy`
+- `get_mcp_tool_catalog`
+- `get_mcp_validation_checklist`
+
+**MCP security requirements:**
+- The LLM must not bypass MCP by sending direct HTTP requests to the Web UI, localhost, or LAN ports
+- The LLM must use MCP tools only for AiNiee operations
+- `api_key` / `access_key` / `secret_key` are redacted on MCP reads
+- A redacted placeholder is not a usable secret and must not be written back as if it were real
+
+Full client-facing guide:
+- `Tools/MCPServer/MCP_CLIENT_GUIDE.md`
+
 ---
 
 ## Architecture

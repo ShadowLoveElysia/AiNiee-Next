@@ -264,6 +264,21 @@ H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
 如果你把 `mcp_server_port` 改成了其他值，上面的 `8765` 也要同步替换。
 如果项目目录里的 `.venv` 曾经在另一套系统下创建过，例如 WSL 生成后又在 Windows 下执行 `uv add`，建议先重建 `.venv`，否则容易出现 `lib64` / 符号链接相关报错。
 
+**LLM 客户端建议首轮调用：**
+- `get_mcp_usage_manual`
+- `get_mcp_security_policy`
+- `get_mcp_tool_catalog`
+- `get_mcp_validation_checklist`
+
+**MCP 安全要求：**
+- LLM 严禁绕过 MCP，直接向 WebUI / localhost / 局域网端口发 HTTP 请求取数
+- LLM 只能通过 MCP 工具访问项目能力
+- MCP 读取到的 `api_key` / `access_key` / `secret_key` 会被脱敏
+- 脱敏占位符不是可用密钥，也不能当真实值写回配置或队列
+
+完整的客户端说明文档见：
+- `Tools/MCPServer/MCP_CLIENT_GUIDE.md`
+
 ---
 
 ## 架构说明

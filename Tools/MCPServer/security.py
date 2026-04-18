@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Optional
+
+
+# MCP 通过内部 Web API 访问项目能力时，会带上这个调用来源标记。
+MCP_CALLER_HEADER = "X-AiNiee-Caller"
+MCP_CALLER_VALUE = "mcp"
+
+# 对 LLM 暴露时统一使用固定占位符，避免泄漏真实密钥的任何片段。
+MCP_SECRET_PLACEHOLDER = "[MCP_SECRET_REDACTED]"
+MCP_SENSITIVE_FIELDS = {
+    "api_key",
+    "access_key",
+    "secret_key",
+}
+
+# 这些接口把 JSON 当字符串返回，需要额外尝试解析后再递归脱敏。
+JSON_TEXT_PATHS = {
+    "/api/queue/raw",
+}
+
+
+def is_mcp_request(request: Any) -> bool:
+    """Return whether the current HTTP request originates from the MCP bridge."""
+    if request is None:
+        return False
+
+    try:
+        header_value = str(request.headers.get(MCP_CALLER_HEADER, "")).strip().lower()
+    except Exception:
+        return False
+
+    return header_value == MCP_CALLER_VALUE
+
+
+def sanitize_data_for_mcp(data: Any, *, path: str = "", field_name: Optional[str] = None) -> Any:
+    """Recursively redact secret fields before data is returned to MCP / LLM clients."""
+    normalized_field = _normalize_field_name(field_name)
+
+    if normalized_field in MCP_SENSITIVE_FIELDS:
+        return _redact_secret_value(data)
+
+    if isinstance(data, dict):
+        return {
+            key: sanitize_data_for_mcp(value, path=path, field_name=key)
+            for key, value in data.items()
+        }
+
+    if isinstance(data, list):
+        return [
+            sanitize_data_for_mcp(item, path=path, field_name=field_name)
+            for item in data
+        ]
+
+    if isinstance(data, str) and path in JSON_TEXT_PATHS:
+        parsed = _try_parse_json_text(data)
+        if parsed is not None:
+            sanitized = sanitize_data_for_mcp(parsed, path=path)
+            return _dump_json_text(sanitized)
+
+    return data
+
+
+def restore_redacted_secrets(new_data: Any, current_data: Any = None, *, field_name: Optional[str] = None) -> Any:
+    """
+    Replace MCP placeholders with the currently stored secrets before saving.
+
+    This prevents a round-trip like "read sanitized config -> edit one field -> save full config"
+    from accidentally overwriting real keys with the redacted placeholder.
+    """
+    normalized_field = _normalize_field_name(field_name)
+
+    if normalized_field in MCP_SENSITIVE_FIELDS:
+        if new_data == MCP_SECRET_PLACEHOLDER:
+            # 如果当前不存在旧值，就保留占位符，让上层保存逻辑明确拒绝这次写入。
+            return current_data if current_data not in (None, "") else MCP_SECRET_PLACEHOLDER
+
+        if isinstance(new_data, list):
+            current_list = current_data if isinstance(current_data, list) else []
+            return [
+                restore_redacted_secrets(
+                    item,
+                    current_list[index] if index < len(current_list) else None,
+                    field_name=field_name,
+                )
+                for index, item in enumerate(new_data)
+            ]
+
+        return new_data
+
+    if isinstance(new_data, dict):
+        current_dict = current_data if isinstance(current_data, dict) else {}
+        return {
+            key: restore_redacted_secrets(value, current_dict.get(key), field_name=key)
+            for key, value in new_data.items()
+        }
+
+    if isinstance(new_data, list):
+        current_list = current_data if isinstance(current_data, list) else []
+        return [
+            restore_redacted_secrets(
+                item,
+                current_list[index] if index < len(current_list) else None,
+                field_name=field_name,
+            )
+            for index, item in enumerate(new_data)
+        ]
+
+    return new_data
+
+
+def contains_redacted_secret(data: Any, *, field_name: Optional[str] = None) -> bool:
+    """Detect whether redacted placeholders are still present after restoration."""
+    normalized_field = _normalize_field_name(field_name)
+
+    if normalized_field in MCP_SENSITIVE_FIELDS:
+        if data == MCP_SECRET_PLACEHOLDER:
+            return True
+
+        if isinstance(data, list):
+            return any(
+                contains_redacted_secret(item, field_name=field_name)
+                for item in data
+            )
+
+        return False
+
+    if isinstance(data, dict):
+        return any(
+            contains_redacted_secret(value, field_name=key)
+            for key, value in data.items()
+        )
+
+    if isinstance(data, list):
+        return any(
+            contains_redacted_secret(item, field_name=field_name)
+            for item in data
+        )
+
+    return False
+
+
+def sanitize_json_text_for_mcp(content: str) -> str:
+    """Sanitize serialized JSON text, preserving plain text when parsing is not possible."""
+    parsed = _try_parse_json_text(content)
+    if parsed is None:
+        return content
+
+    return _dump_json_text(sanitize_data_for_mcp(parsed))
+
+
+def restore_redacted_json_text(content: str, current_content: str = "") -> str:
+    """Restore placeholder secrets inside serialized JSON text from the current stored content."""
+    parsed = _try_parse_json_text(content)
+    if parsed is None:
+        return content
+
+    current_parsed = _try_parse_json_text(current_content)
+    restored = restore_redacted_secrets(parsed, current_parsed)
+    return _dump_json_text(restored)
+
+
+def _normalize_field_name(field_name: Optional[str]) -> str:
+    return str(field_name or "").strip().lower()
+
+
+def _redact_secret_value(value: Any) -> Any:
+    if value in (None, "", []):
+        return value
+
+    if isinstance(value, list):
+        return [
+            _redact_secret_value(item)
+            for item in value
+        ]
+
+    return MCP_SECRET_PLACEHOLDER
+
+
+def _try_parse_json_text(content: Any) -> Optional[Any]:
+    if not isinstance(content, str):
+        return None
+
+    stripped = content.lstrip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+
+    try:
+        return json.loads(content)
+    except Exception:
+        return None
+
+
+def _dump_json_text(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=4)

@@ -17,6 +17,17 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from Tools.MCPServer.runtime import inspect_mcp_runtime
+from Tools.MCPServer.docs import (
+    build_security_policy,
+    build_tool_catalog,
+    build_validation_checklist,
+    load_mcp_manual,
+)
+from Tools.MCPServer.security import (
+    MCP_CALLER_HEADER,
+    MCP_CALLER_VALUE,
+    sanitize_data_for_mcp,
+)
 
 
 DEFAULT_MCP_HOST = os.environ.get("AINIEE_MCP_HOST", "0.0.0.0")
@@ -113,6 +124,7 @@ class AiNieeAPIClient:
             url=f"{self.base_url}{path}",
             params=params,
             json=payload,
+            headers={MCP_CALLER_HEADER: MCP_CALLER_VALUE},
             timeout=self.timeout,
         )
 
@@ -124,7 +136,8 @@ class AiNieeAPIClient:
         if response.status_code >= 400:
             raise RuntimeError(f"{response.status_code} {path}: {data}")
 
-        return data
+        # 再做一层兜底脱敏，避免未来新增接口忘记在 WebServer 里声明 MCP 侧限制。
+        return sanitize_data_for_mcp(data, path=path)
 
 
 def _normalize_transport(transport: str) -> str:
@@ -168,6 +181,10 @@ def _sanitize_tool_name(method: str, path: str) -> str:
     return f"api_{method.lower()}_{normalized}"
 
 
+def _is_public_api_route(path: str) -> bool:
+    return path.startswith("/api/") and not path.startswith("/api/internal/")
+
+
 def _extract_api_routes(ws_module) -> List[Dict[str, str]]:
     routes: List[Dict[str, str]] = []
     seen = set()
@@ -176,7 +193,7 @@ def _extract_api_routes(ws_module) -> List[Dict[str, str]]:
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", None)
 
-        if not path.startswith("/api/") or not methods:
+        if not _is_public_api_route(path) or not methods:
             continue
 
         for method in sorted(methods):
@@ -200,15 +217,26 @@ def _extract_api_routes(ws_module) -> List[Dict[str, str]]:
     return routes
 
 
-def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, ws_module) -> None:
+def _normalize_public_api_path(path: str) -> str:
+    normalized = path if path.startswith("/") else f"/{path}"
+    if not _is_public_api_route(normalized):
+        raise ValueError(
+            "Only public /api/* routes are available through MCP. "
+            "Internal routes and direct WebUI bypass paths are not allowed."
+        )
+    return normalized
+
+
+def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str, str]]) -> None:
     # 自动把 WebServer 的 JSON API 映射成 MCP tools，尽量保持 Web 与 MCP 能力面对齐。
-    for route_meta in _extract_api_routes(ws_module):
+    for route_meta in routes:
         if route_meta["path"] == "/api/files/upload":
             continue
 
         method = route_meta["method"]
         path = route_meta["path"]
         tool_name = route_meta["tool_name"]
+        route_category = path.strip("/").split("/")[1] if "/" in path.strip("/") else "misc"
 
         def make_route_tool(route_method: str, route_path: str, route_tool_name: str):
             def route_tool(
@@ -232,7 +260,10 @@ def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, ws_module) -> None:
             route_tool.__name__ = route_tool_name
             route_tool.__doc__ = (
                 f"Proxy WebServer route {_method_display(route_method)} {route_path}. "
-                "Use path_params for templated segments, query for URL params, body for JSON payload."
+                f"Category: {route_category}. "
+                "Use path_params for templated segments, query for URL params, body for JSON payload. "
+                "Call get_mcp_tool_catalog for structured examples. "
+                "Do not bypass MCP by making direct WebUI or localhost HTTP requests."
             )
             return route_tool
 
@@ -278,10 +309,50 @@ def _build_mcp_app(
         streamable_http_path=path,
     )
 
+    routes = _extract_api_routes(ws_module)
+
+    @mcp.tool()
+    def get_mcp_usage_manual(section: str = "all") -> str:
+        """
+        Read the built-in MCP usage manual.
+
+        Call this first when the MCP client cannot inspect repository files.
+        It also states that the model must not bypass MCP by sending direct WebUI HTTP requests.
+        """
+        return load_mcp_manual(section)
+
+    @mcp.tool()
+    def get_mcp_security_policy() -> Dict[str, Any]:
+        """
+        Read the MCP security policy.
+
+        This explicitly forbids bypassing MCP with direct WebUI / localhost / LAN HTTP requests
+        and explains how secret redaction behaves.
+        """
+        return build_security_policy()
+
+    @mcp.tool()
+    def get_mcp_tool_catalog(category: str = "all", include_examples: bool = True) -> Dict[str, Any]:
+        """
+        Read the structured MCP tool catalog with route groups, call patterns, and examples.
+
+        Recommended before using many tools in clients that do not support source inspection.
+        """
+        return build_tool_catalog(routes, category=category, include_examples=include_examples)
+
+    @mcp.tool()
+    def get_mcp_validation_checklist() -> Dict[str, Any]:
+        """
+        Read the four MCP security validation scenarios.
+
+        Use this to validate config/queue redaction and placeholder writeback protection.
+        """
+        return build_validation_checklist()
+
     @mcp.tool()
     def list_web_api_routes() -> List[Dict[str, str]]:
-        """List all WebServer API routes that are proxied into MCP tools."""
-        return _extract_api_routes(ws_module)
+        """List all public WebServer API routes exposed through MCP. Use get_mcp_tool_catalog for detailed usage."""
+        return routes
 
     @mcp.tool()
     def call_web_api(
@@ -291,8 +362,12 @@ def _build_mcp_app(
         body: Optional[Any] = None,
         confirm_advanced_change: bool = False,
     ) -> Any:
-        """Raw escape hatch for any WebServer API route."""
-        normalized_path = path if path.startswith("/") else f"/{path}"
+        """
+        Raw escape hatch for a public /api/* route when no named MCP tool is enough.
+
+        Never use external direct HTTP requests to bypass MCP protections. Internal routes are blocked.
+        """
+        normalized_path = _normalize_public_api_path(path)
         _ensure_advanced_change_confirmed(normalized_path, body, confirm_advanced_change)
         return api.request(method.upper(), normalized_path, params=query, payload=body)
 
@@ -311,6 +386,7 @@ def _build_mcp_app(
                 f"{api.base_url}/api/files/upload",
                 params={"policy": policy},
                 files={"file": (source.name, handle)},
+                headers={MCP_CALLER_HEADER: MCP_CALLER_VALUE},
                 timeout=api.timeout,
             )
 
@@ -322,9 +398,9 @@ def _build_mcp_app(
         if response.status_code >= 400:
             raise RuntimeError(f"{response.status_code} /api/files/upload: {data}")
 
-        return data
+        return sanitize_data_for_mcp(data, path="/api/files/upload")
 
-    _register_route_proxy_tools(mcp, api, ws_module)
+    _register_route_proxy_tools(mcp, api, routes)
 
     return mcp
 

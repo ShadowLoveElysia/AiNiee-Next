@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 # --- Pre-emptive Import for FastAPI & Pydantic ---
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query
+    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
@@ -29,6 +29,16 @@ TEMP_EDIT_PATH = os.path.join(PROJECT_ROOT, "output", "temp_edit") # Define draf
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+from Tools.MCPServer.security import (
+    MCP_SECRET_PLACEHOLDER,
+    contains_redacted_secret,
+    is_mcp_request,
+    restore_redacted_json_text,
+    restore_redacted_secrets,
+    sanitize_data_for_mcp,
+    sanitize_json_text_for_mcp,
+)
 
 # --- Global State & Task Management ---
 
@@ -566,6 +576,18 @@ def get_active_rules_profile_path() -> str:
     os.makedirs(RULES_PROFILES_PATH, exist_ok=True)
     return os.path.join(RULES_PROFILES_PATH, f"{rules_profile}.json")
 
+
+def _ensure_no_mcp_secret_placeholder(data: Any, context: str):
+    """Reject writes that still contain unresolved MCP redacted placeholders."""
+    if contains_redacted_secret(data):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{context} still contains MCP redacted secret placeholders. "
+                "Ask the user to provide a new secret explicitly before saving."
+            ),
+        )
+
 def save_rule_generic(key: str, value: Any):
     """Helper to save a specific rule key to the active RULES profile."""
     global _config_cache
@@ -631,7 +653,7 @@ async def get_version():
         return {"version": "V0.0.0 (Read Error)"}
 
 @app.post("/api/config")
-async def save_config(config: AppConfig):
+async def save_config(config: AppConfig, request: Optional[Request] = None):
     """
     Saves the provided JSON to the active configuration file (settings only).
     """
@@ -659,6 +681,11 @@ async def save_config(config: AppConfig):
             except:
                 pass
 
+        # MCP 读取配置时会看到脱敏后的占位符，这里写回前要恢复当前已保存的真实密钥。
+        if is_mcp_request(request):
+            settings_only = restore_redacted_secrets(settings_only, current_config)
+            _ensure_no_mcp_secret_placeholder(settings_only, "Config payload")
+
         # Merge new settings into existing config
         current_config.update(settings_only)
 
@@ -672,7 +699,7 @@ async def save_config(config: AppConfig):
         raise HTTPException(status_code=500, detail=f"Failed to write to config file: {e}")
 
 @app.get("/api/config")
-async def get_config():
+async def get_config(request: Optional[Request] = None):
     """
     Returns the content of the active configuration merged with active rules.
     """
@@ -728,6 +755,10 @@ async def get_config():
         loaded_config["response_check_switch"] = default_check_switch
 
     _config_cache[cache_key] = loaded_config
+
+    if is_mcp_request(request):
+        return sanitize_data_for_mcp(loaded_config, path="/api/config")
+
     return loaded_config
 
 def save_config_generic(key: str, value: Any):
@@ -1391,7 +1422,7 @@ async def save_prompt_content(category: str, filename: str, data: Dict[str, str]
         raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
 
 @app.post("/api/rules_profiles/switch")
-async def switch_rules_profile(request: RulesProfileSwitchRequest):
+async def switch_rules_profile(request: RulesProfileSwitchRequest, http_request: Optional[Request] = None):
     global _config_cache
     profile_name = request.profile
     
@@ -1409,12 +1440,12 @@ async def switch_rules_profile(request: RulesProfileSwitchRequest):
             json.dump(root_config, f, indent=4, ensure_ascii=False)
         
         _config_cache.clear()
-        return await get_config()
+        return await get_config(http_request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/profiles/switch")
-async def switch_profile(request: ProfileSwitchRequest):
+async def switch_profile(request: ProfileSwitchRequest, http_request: Optional[Request] = None):
     """
     Switches the active profile, returns the new active config, and invalidates caches.
     """
@@ -1454,6 +1485,9 @@ async def switch_profile(request: ProfileSwitchRequest):
             }
             if "response_check_switch" not in new_active_config or not isinstance(new_active_config.get("response_check_switch"), dict):
                 new_active_config["response_check_switch"] = default_check_switch
+            if is_mcp_request(http_request):
+                return sanitize_data_for_mcp(new_active_config, path="/api/config")
+
             return new_active_config
             
     except Exception as e:
@@ -2636,7 +2670,7 @@ def get_queue_manager():
         raise HTTPException(status_code=500, detail="QueueManager not available")
 
 @app.get("/api/queue")
-async def get_queue():
+async def get_queue(request: Optional[Request] = None):
     """Get all tasks in the queue with accurate processing status"""
     try:
         qm = get_queue_manager()
@@ -2701,14 +2735,23 @@ async def get_queue():
                 "last_activity_time": getattr(task, "last_activity_time", None)
             }
             tasks.append(task_dict)
+        if is_mcp_request(request):
+            return sanitize_data_for_mcp(tasks, path="/api/queue")
+
         return tasks
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/queue")
-async def add_to_queue(item: QueueTaskItem):
+async def add_to_queue(item: QueueTaskItem, request: Optional[Request] = None):
     """Add a new task to the queue"""
     try:
+        if is_mcp_request(request) and item.api_key == MCP_SECRET_PLACEHOLDER:
+            raise HTTPException(
+                status_code=400,
+                detail="A redacted MCP secret placeholder cannot be used as a new queue API key.",
+            )
+
         qm = get_queue_manager()
         from ModuleFolders.Service.TaskQueue.QueueManager import QueueTaskItem as QueueTaskItemImpl
 
@@ -2759,7 +2802,7 @@ async def remove_from_queue(index: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/queue/{index}")
-async def update_queue_item(index: int, item: QueueTaskItem):
+async def update_queue_item(index: int, item: QueueTaskItem, request: Optional[Request] = None):
     """Update a task in the queue"""
     try:
         qm = get_queue_manager()
@@ -2767,6 +2810,10 @@ async def update_queue_item(index: int, item: QueueTaskItem):
             raise HTTPException(status_code=400, detail="Invalid task index")
 
         task = qm.tasks[index]
+
+        if is_mcp_request(request) and item.api_key == MCP_SECRET_PLACEHOLDER:
+            item.api_key = getattr(task, "api_key", "")
+
         task.task_type = item.task_type
         task.input_path = item.input_path
         if item.output_path:
@@ -2881,7 +2928,7 @@ async def edit_queue_file():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/queue/raw")
-async def get_queue_raw():
+async def get_queue_raw(request: Optional[Request] = None):
     """Get raw queue JSON content"""
     try:
         qm = get_queue_manager()
@@ -2895,26 +2942,50 @@ async def get_queue_raw():
                     content = f.read()
             except FileNotFoundError:
                 content = "[]"
+        if is_mcp_request(request):
+            return {"content": sanitize_json_text_for_mcp(content)}
+
         return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/queue/raw")
-async def save_queue_raw(request: QueueRawRequest):
+async def save_queue_raw(request: QueueRawRequest, http_request: Optional[Request] = None):
     """Save raw queue JSON content"""
     try:
         qm = get_queue_manager()
+        content_to_save = request.content
+
+        if is_mcp_request(http_request):
+            current_content = "[]"
+            if hasattr(qm, 'get_queue_json'):
+                current_content = qm.get_queue_json()
+            else:
+                try:
+                    with open(qm.queue_file, 'r', encoding='utf-8') as f:
+                        current_content = f.read()
+                except FileNotFoundError:
+                    current_content = "[]"
+
+            content_to_save = restore_redacted_json_text(content_to_save, current_content)
+            try:
+                parsed_content = json.loads(content_to_save)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON format")
+
+            _ensure_no_mcp_secret_placeholder(parsed_content, "Queue raw content")
+
         if hasattr(qm, 'load_from_json'):
-            qm.load_from_json(request.content)
+            qm.load_from_json(content_to_save)
         else:
             # Fallback: save to file directly and reload
             try:
                 import rapidjson as json
                 # Validate JSON first
-                json.loads(request.content)
+                json.loads(content_to_save)
                 # Save to file
                 with open(qm.queue_file, 'w', encoding='utf-8') as f:
-                    f.write(request.content)
+                    f.write(content_to_save)
                 # Reload tasks
                 qm.load_tasks()
             except json.JSONDecodeError:
