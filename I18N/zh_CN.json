@@ -726,6 +726,8 @@
         "msg_using_current_config": "使用当前配置",
         "setting_webserver_port": "WebServer 端口",
         "setting_webserver_port_desc": "WebServer 服务监听的端口号 (1-65535)",
+        "setting_mcp_server_port": "MCP 服务端口",
+        "setting_mcp_server_port_desc": "MCP 服务监听的端口号 (1-65535)。修改后，MCP 客户端中的服务路由通常也需要同步调整。",
         "menu_ai_proofread": "AI自主校对",
         "menu_view_proofread_report": "查看校对报告",
         "proofread_start_current": "开始校对（当前项目）",

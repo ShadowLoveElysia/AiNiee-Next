@@ -684,6 +684,8 @@
         "msg_using_current_config": "現在の設定を使用",
         "setting_webserver_port": "WebServerポート",
         "setting_webserver_port_desc": "WebServerのポート番号 (1-65535)",
+        "setting_mcp_server_port": "MCP サービスポート",
+        "setting_mcp_server_port_desc": "MCP サービスが待ち受けるポート番号 (1-65535)。変更後は、MCP クライアント側の接続ルートも通常は更新が必要です。",
         "menu_ai_proofread": "AI校正",
         "menu_view_proofread_report": "校正レポートを表示",
         "proofread_start_current": "校正を開始（現在のプロジェクト）",

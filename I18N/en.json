@@ -704,6 +704,8 @@
         "msg_using_current_config": "Using current config",
         "setting_webserver_port": "WebServer Port",
         "setting_webserver_port_desc": "Port number for WebServer (1-65535)",
+        "setting_mcp_server_port": "MCP Server Port",
+        "setting_mcp_server_port_desc": "Port number for the MCP server (1-65535). After changing it, the MCP route in your client usually needs to be updated as well.",
         "menu_ai_proofread": "AI Proofreading",
         "menu_view_proofread_report": "View Proofread Reports",
         "proofread_start_current": "Start Proofreading (Current Project)",

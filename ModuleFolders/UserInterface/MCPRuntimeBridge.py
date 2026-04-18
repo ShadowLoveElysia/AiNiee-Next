@@ -48,7 +48,8 @@ class MCPRuntimeBridge:
                 self._t("msg_mcp_server_already_running", "MCP服务已在后台运行。"),
                 (
                     f"Transport: streamable-http\n"
-                    f"Endpoint: {self.get_mcp_http_endpoint()}\n\n"
+                    f"Local: {self.get_mcp_local_endpoint()}\n"
+                    f"Network: {self.get_mcp_network_endpoint()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
                 border_style="green",
@@ -79,13 +80,13 @@ class MCPRuntimeBridge:
 
         setattr(self.host, "mcp_server_process", process)
 
-        endpoint = self.get_mcp_http_endpoint()
-        if self._wait_for_port(self._get_mcp_host(), self._get_mcp_port(), timeout=3.0):
+        if self._wait_for_port(self._get_probe_host(), self._get_mcp_port(), timeout=3.0):
             self._show_status_panel(
                 self._t("msg_mcp_server_started", "MCP服务已启动。"),
                 (
                     f"Transport: streamable-http\n"
-                    f"Endpoint: {endpoint}\n"
+                    f"Local: {self.get_mcp_local_endpoint()}\n"
+                    f"Network: {self.get_mcp_network_endpoint()}\n"
                     f"Backend: http://{self._get_backend_host()}:{self._get_backend_port()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
@@ -112,7 +113,8 @@ class MCPRuntimeBridge:
             self._t("msg_mcp_server_starting_bg", "MCP服务正在后台继续启动。"),
             (
                 f"Transport: streamable-http\n"
-                f"Expected endpoint: {endpoint}\n\n"
+                f"Expected local: {self.get_mcp_local_endpoint()}\n"
+                f"Expected network: {self.get_mcp_network_endpoint()}\n\n"
                 f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
             ),
             border_style="yellow",
@@ -172,10 +174,16 @@ class MCPRuntimeBridge:
         if process is not None and process.poll() is not None:
             setattr(self.host, "mcp_server_process", None)
 
-        return self._is_port_open(self._get_mcp_host(), self._get_mcp_port())
+        return self._is_port_open(self._get_probe_host(), self._get_mcp_port())
 
     def get_mcp_http_endpoint(self) -> str:
-        return f"http://{self._get_mcp_host()}:{self._get_mcp_port()}{self._get_mcp_path()}"
+        return self.get_mcp_local_endpoint()
+
+    def get_mcp_local_endpoint(self) -> str:
+        return f"http://127.0.0.1:{self._get_mcp_port()}{self._get_mcp_path()}"
+
+    def get_mcp_network_endpoint(self) -> str:
+        return f"http://{self._detect_local_ip()}:{self._get_mcp_port()}{self._get_mcp_path()}"
 
     def _get_mcp_process(self) -> Optional[subprocess.Popen]:
         process = getattr(self.host, "mcp_server_process", None)
@@ -193,7 +201,7 @@ class MCPRuntimeBridge:
         return default
 
     def _get_mcp_host(self) -> str:
-        return str(self._get_config_value("mcp_server_host", "127.0.0.1"))
+        return str(self._get_config_value("mcp_server_host", "0.0.0.0"))
 
     def _get_mcp_port(self) -> int:
         try:
@@ -306,6 +314,20 @@ class MCPRuntimeBridge:
                 return sock.connect_ex((host, port)) == 0
         except Exception:
             return False
+
+    def _get_probe_host(self) -> str:
+        host = self._get_mcp_host()
+        return "127.0.0.1" if host == "0.0.0.0" else host
+
+    def _detect_local_ip(self) -> str:
+        local_ip = "127.0.0.1"
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("8.8.8.8", 80))
+                local_ip = sock.getsockname()[0]
+        except Exception:
+            pass
+        return local_ip
 
     def _t(self, key: str, default: str) -> str:
         i18n = self.i18n

@@ -66,6 +66,7 @@ DEFAULT_CONFIG = {
     "enable_task_notification": True,
     "exclude_rule_str": "",
     "recent_projects": [],
+    "mcp_server_port": 8765,
     "label_output_path": "",
     "polishing_output_path": "",
     "platforms": {
