@@ -27,6 +27,23 @@ uv add mcp
 uv add mcp fastapi uvicorn[standard] requests
 ```
 
+客户端接入示例：
+
+1. Codex `stdio` 接入
+
+```bash
+codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+2. `streamable-http` 路由接入
+
+```text
+本机地址: http://127.0.0.1:8765/mcp
+局域网地址: http://<你的局域网IP>:8765/mcp
+```
+
+如果修改了 `mcp_server_port`，请同步更新客户端中的 MCP 路由配置。
+
 暂定支持的 MCP 工具能力：
 
 - 读取版本与系统模式

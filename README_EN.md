@@ -226,6 +226,29 @@ This project provides an optional MCP server module that reuses the existing Web
 - Required components and Python dependencies are checked on every MCP startup
 - If dependencies are missing, the program shows suggested `uv add ...` commands
 - Menu startup uses background `streamable-http` mode and returns to the menu after 3 seconds
+- If you change `mcp_server_port`, update the MCP route in your client as well
+
+**Client integration examples:**
+1. Codex over `stdio`:
+
+```bash
+codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+2. MCP clients that support `streamable-http` can connect to the menu-started HTTP route directly:
+
+```text
+Local endpoint: http://127.0.0.1:8765/mcp
+LAN endpoint: http://<your-lan-ip>:8765/mcp
+```
+
+3. Example Windows project path:
+
+```text
+H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
+```
+
+If you change `mcp_server_port`, replace `8765` in the route above with the new port.
 
 ---
 

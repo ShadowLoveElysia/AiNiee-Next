@@ -205,6 +205,16 @@ class SettingsMenuBuilder:
             console.print(f"[yellow]⚠ {self.i18n.get('warning_dependency_not_met').format(dep_name)}[/yellow]")
             return None
 
+        # MCP 端口会影响外部 MCP 客户端的连接地址，先给用户明确提示再继续输入。
+        if key == "mcp_server_port":
+            console.print(
+                Panel(
+                    f"[bold yellow]{self.i18n.get('warning_mcp_port_route_sync')}[/bold yellow]",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+
         # 高级配置需要二次确认
         if self.requires_confirmation(key):
             console.print(f"[yellow]⚠ {self.i18n.get('warning_advanced_setting')}[/yellow]")

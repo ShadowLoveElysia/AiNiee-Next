@@ -50,6 +50,7 @@ class MCPRuntimeBridge:
                     f"Transport: streamable-http\n"
                     f"Local: {self.get_mcp_local_endpoint()}\n"
                     f"Network: {self.get_mcp_network_endpoint()}\n\n"
+                    f"{self._get_route_update_notice()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
                 border_style="green",
@@ -88,6 +89,7 @@ class MCPRuntimeBridge:
                     f"Local: {self.get_mcp_local_endpoint()}\n"
                     f"Network: {self.get_mcp_network_endpoint()}\n"
                     f"Backend: http://{self._get_backend_host()}:{self._get_backend_port()}\n\n"
+                    f"{self._get_route_update_notice()}\n\n"
                     f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
                 ),
                 border_style="green",
@@ -115,6 +117,7 @@ class MCPRuntimeBridge:
                 f"Transport: streamable-http\n"
                 f"Expected local: {self.get_mcp_local_endpoint()}\n"
                 f"Expected network: {self.get_mcp_network_endpoint()}\n\n"
+                f"{self._get_route_update_notice()}\n\n"
                 f"{self._t('msg_mcp_menu_returning', '3 秒后返回菜单界面...')}"
             ),
             border_style="yellow",
@@ -328,6 +331,13 @@ class MCPRuntimeBridge:
         except Exception:
             pass
         return local_ip
+
+    def _get_route_update_notice(self) -> str:
+        """Return the route reminder shown in the menu-facing HTTP startup panels."""
+        return self._t(
+            "msg_mcp_route_update_notice",
+            "注意：如果修改了 MCP 服务端口，请同步更新 Codex 等客户端中的 MCP 路由配置。",
+        )
 
     def _t(self, key: str, default: str) -> str:
         i18n = self.i18n

@@ -226,6 +226,29 @@ uv run ainiee_cli.py mcp --mcp-transport stdio
 - 每次启动 MCP 前都会检查必要组件与依赖
 - 若缺少依赖，程序会提示可执行的 `uv add ...` 命令
 - 菜单启动默认使用后台 `streamable-http` 模式，等待 3 秒后返回菜单
+- 如果修改了 `mcp_server_port`，请同步更新 MCP 客户端中的连接路由
+
+**客户端接入示例：**
+1. Codex 通过 `stdio` 直连：
+
+```bash
+codex mcp add ainiee-cli --env UV_CACHE_DIR=/tmp/uv-cache -- uv run --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+```
+
+2. 支持 `streamable-http` 的 MCP 客户端，可直接连接菜单启动后的 HTTP 路由：
+
+```text
+本机地址: http://127.0.0.1:8765/mcp
+局域网地址: http://<你的局域网IP>:8765/mcp
+```
+
+3. Windows 项目路径示例：
+
+```text
+H:\小说\AiNiee-CLI\Tools\MCPServer\server.py
+```
+
+如果你把 `mcp_server_port` 改成了其他值，上面的 `8765` 也要同步替换。
 
 ---
 
