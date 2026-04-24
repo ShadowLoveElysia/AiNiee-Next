@@ -36,6 +36,47 @@ class AsyncOpenaiRequester(Base):
     def __init__(self) -> None:
         super().__init__()
 
+    def _is_deepseek_request(self, platform_config: dict, model_name: str) -> bool:
+        target_platform = str(platform_config.get("target_platform") or "").strip().lower()
+        api_url = str(platform_config.get("api_url") or "").strip().lower()
+        normalized_model = str(model_name or "").strip().lower()
+        return (
+            target_platform == "deepseek"
+            or normalized_model.startswith("deepseek")
+            or "deepseek" in api_url
+        )
+
+    def _merge_extra_body(self, request_body: dict, extra_body: dict, nested: bool = False) -> None:
+        if not extra_body or not isinstance(extra_body, dict):
+            return
+
+        if nested:
+            merged = request_body.get("extra_body", {})
+            if not isinstance(merged, dict):
+                merged = {}
+            merged.update(extra_body)
+            request_body["extra_body"] = merged
+        else:
+            request_body.update(extra_body)
+
+    def _apply_deepseek_compatibility(self, request_body: dict, platform_config: dict) -> None:
+        think_switch = bool(platform_config.get("think_switch"))
+        think_depth = platform_config.get("think_depth")
+        use_sdk = bool(platform_config.get("use_openai_sdk", False))
+
+        thinking = {
+            "type": "enabled" if think_switch else "disabled",
+        }
+        if think_switch and think_depth not in (None, "", 0, "0"):
+            thinking["reasoning_effort"] = think_depth
+
+        if use_sdk:
+            self._merge_extra_body(request_body, {"thinking": thinking}, nested=True)
+        else:
+            request_body["thinking"] = thinking
+
+        request_body.pop("reasoning_effort", None)
+
     @classmethod
     async def get_session(cls) -> aiohttp.ClientSession:
         """获取或创建全局 aiohttp 会话（连接池）"""
@@ -233,6 +274,8 @@ class AsyncOpenaiRequester(Base):
             think_switch = platform_config.get("think_switch")
             think_depth = platform_config.get("think_depth")
             enable_stream = platform_config.get("enable_stream_api", True)
+            use_sdk = platform_config.get("use_openai_sdk", False)
+            is_deepseek = self._is_deepseek_request(platform_config, model_name)
 
             # 插入系统消息
             if system_prompt:
@@ -249,8 +292,11 @@ class AsyncOpenaiRequester(Base):
                 "messages": messages,
             }
 
-            if extra_body and isinstance(extra_body, dict):
-                request_body.update(extra_body)
+            self._merge_extra_body(
+                request_body,
+                extra_body,
+                nested=is_deepseek and use_sdk,
+            )
 
             if temperature != 1:
                 request_body["temperature"] = temperature
@@ -260,11 +306,10 @@ class AsyncOpenaiRequester(Base):
                 request_body["presence_penalty"] = presence_penalty
             if frequency_penalty != 0:
                 request_body["frequency_penalty"] = frequency_penalty
-            if think_switch:
+            if think_switch and not is_deepseek:
                 request_body["reasoning_effort"] = think_depth
-
-            # 读取请求模式开关
-            use_sdk = platform_config.get("use_openai_sdk", False)
+            if is_deepseek:
+                self._apply_deepseek_compatibility(request_body, platform_config)
 
             if use_sdk:
                 # ===== OpenAI SDK 模式 =====

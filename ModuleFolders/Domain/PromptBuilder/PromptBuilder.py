@@ -757,6 +757,53 @@ class PromptBuilder(Base):
 
         return profile
 
+    def build_translation_consistency_instruction(config: TaskConfig) -> str:
+        if config.target_language in ("chinese_simplified", "chinese_traditional"):
+            return (
+                "\n###翻译一致性增强模式\n"
+                "- 你必须通过工具调用提交结果，不能直接输出普通回复。\n"
+                "- 工具中的 translation 字段必须只包含最终译文，并用 <textarea>...</textarea> 包裹。\n"
+                "- story_summary 字段必须返回截至当前批次的累计剧情梗概。\n"
+                "- character_info 字段必须返回截至当前批次的累计人物信息、称呼、关系与状态变化。\n"
+                "- 如果本批次没有新增信息，也要返回整理后的累计版本，不要留空。"
+            )
+
+        return (
+            "\n### Translation Consistency Enhancement Mode\n"
+            "- You must submit the result via the provided tool call instead of a normal assistant reply.\n"
+            "- The translation field must contain only the final translation wrapped in <textarea>...</textarea>.\n"
+            "- The story_summary field must return the cumulative story summary up to the current batch.\n"
+            "- The character_info field must return cumulative character notes, naming, relationships, and status changes.\n"
+            "- If this batch adds nothing new, still return the consolidated cumulative version instead of leaving it empty."
+        )
+
+    def build_translation_consistency_context(config: TaskConfig, consistency_context: dict | None) -> str:
+        if not consistency_context:
+            return ""
+
+        story_summary = str(consistency_context.get("story_summary") or "").strip()
+        character_info = str(consistency_context.get("character_info") or "").strip()
+
+        if not story_summary and not character_info:
+            return ""
+
+        if config.target_language in ("chinese_simplified", "chinese_traditional"):
+            profile = "\n###连续性参考（来自前文已翻译内容，仅供保持译名和叙事一致）"
+            if story_summary:
+                profile += f"\n####累计剧情梗概\n{story_summary}"
+            if character_info:
+                profile += f"\n####累计人物信息\n{character_info}"
+            profile += "\n"
+            return profile
+
+        profile = "\n### Continuity Reference (from previous translated batches, keep naming and narrative consistent)"
+        if story_summary:
+            profile += f"\n#### Cumulative Story Summary\n{story_summary}"
+        if character_info:
+            profile += f"\n#### Cumulative Character Notes\n{character_info}"
+        profile += "\n"
+        return profile
+
     # 构建用户示例前文
     def build_userExamplePrefix(config: TaskConfig) -> str:
         # 根据中文开关构建
@@ -809,7 +856,15 @@ class PromptBuilder(Base):
 
 
     # 生成信息结构 - 通用
-    def generate_prompt(config, source_text_dict: dict, previous_text_list: list[str], source_lang, rag_context: str = "", source_context_text_list: list[str] = None) -> tuple[list[dict], str, list[str]]:
+    def generate_prompt(
+        config,
+        source_text_dict: dict,
+        previous_text_list: list[str],
+        source_lang,
+        rag_context: str = "",
+        source_context_text_list: list[str] = None,
+        consistency_context: dict | None = None,
+    ) -> tuple[list[dict], str, list[str]]:
         # 储存指令
         messages = []
         # 储存额外日志
@@ -829,6 +884,17 @@ class PromptBuilder(Base):
             else:
                 system += f"\n\n### Relevant Historical Context (for reference):\n{rag_context}\n"
             extra_log.append(f"RAG Context added:\n{rag_context}")
+
+        if getattr(config, "translation_consistency_enhancement", False):
+            consistency_instruction = PromptBuilder.build_translation_consistency_instruction(config)
+            if consistency_instruction:
+                system += consistency_instruction
+                extra_log.append(consistency_instruction)
+
+            consistency_reference = PromptBuilder.build_translation_consistency_context(config, consistency_context)
+            if consistency_reference:
+                system += consistency_reference
+                extra_log.append(consistency_reference)
 
         # 如果开启术语表
         if config.prompt_dictionary_switch == True:
@@ -925,7 +991,7 @@ class PromptBuilder(Base):
 
         # 构建预输入回复信息
         switch_C = config.translation_prompt_selection["last_selected_id"] in (PromptBuilderEnum.COT, PromptBuilderEnum.COMMON)
-        if switch_A and switch_C:
+        if switch_A and switch_C and not getattr(config, "translation_consistency_enhancement", False):
             fol_prompt = PromptBuilder.build_modelResponsePrefix(config)
             messages.append({"role": "assistant", "content": fol_prompt})
 

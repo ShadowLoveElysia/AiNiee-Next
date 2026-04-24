@@ -1056,86 +1056,265 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
     masterToc = []
     defaultCss = griseoEpub.EpubItem(uid="master_style", file_name="style/master.css", media_type="text/css", content="img { max-width: 100%; }")
     griseoEpubBook.add_item(defaultCss)
+
+    def suNormalizeSourcePath(pathValue):
+        if pathValue is None:
+            return ''
+        try:
+            pathText = str(pathValue)
+        except Exception:
+            pathText = ''
+        pathText = pathText.replace('\\', '/')
+        try:
+            pathText = urllib.parse.unquote(pathText)
+        except Exception:
+            pass
+        normalizedPath = posixpath.normpath(pathText)
+        if normalizedPath == '.':
+            return ''
+        if normalizedPath.startswith('/'):
+            normalizedPath = normalizedPath.lstrip('/')
+        return normalizedPath
+
+    def suSanitizePathSegment(pathSegment):
+        if pathSegment == '..':
+            return '__up__'
+        cleanedSegment = re.sub(r'[^A-Za-z0-9._-]+', '_', pathSegment.strip())
+        if cleanedSegment in ('', '.', '..'):
+            return 'item'
+        return cleanedSegment
+
+    def suSanitizeItemId(itemId):
+        cleanedId = re.sub(r'[^A-Za-z0-9._-]+', '_', str(itemId or 'item'))
+        if not cleanedId:
+            return 'item'
+        return cleanedId
+
+    def suRegisterPathMapping(pathMapping, originalPath, newPath):
+        candidates = set()
+        if originalPath is not None:
+            rawPath = str(originalPath).replace('\\', '/')
+            candidates.add(rawPath)
+            try:
+                candidates.add(urllib.parse.unquote(rawPath))
+            except Exception:
+                pass
+        normalizedPath = suNormalizeSourcePath(originalPath)
+        if normalizedPath:
+            candidates.add(normalizedPath)
+            candidates.add(normalizedPath.lstrip('/'))
+        for candidate in candidates:
+            if candidate and candidate != '.':
+                pathMapping[candidate] = newPath
+
+    def suLookupMappedPath(pathMapping, sourcePath):
+        candidates = []
+        if sourcePath is not None:
+            rawPath = str(sourcePath).replace('\\', '/')
+            candidates.append(rawPath)
+            try:
+                candidates.append(urllib.parse.unquote(rawPath))
+            except Exception:
+                pass
+        normalizedPath = suNormalizeSourcePath(sourcePath)
+        if normalizedPath:
+            candidates.extend([normalizedPath, normalizedPath.lstrip('/')])
+        for candidate in candidates:
+            if candidate in pathMapping:
+                return pathMapping[candidate]
+        return None
+
+    def suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping):
+        if not linkUrl:
+            return linkUrl
+
+        parsedUrl = urllib.parse.urlsplit(linkUrl)
+        if parsedUrl.scheme or parsedUrl.netloc or linkUrl.startswith(('#', 'data:', 'mailto:', 'tel:', 'javascript:')):
+            return linkUrl
+
+        sourceLinkPath = parsedUrl.path or ''
+        if not sourceLinkPath:
+            return linkUrl
+
+        currentSourceDir = posixpath.dirname(suNormalizeSourcePath(currentSourcePath))
+        try:
+            resolvedSourcePath = suNormalizeSourcePath(posixpath.join(currentSourceDir, sourceLinkPath))
+        except Exception:
+            return linkUrl
+
+        remappedTargetPath = suLookupMappedPath(pathMapping, resolvedSourcePath)
+        if not remappedTargetPath:
+            return linkUrl
+
+        currentTargetDir = posixpath.dirname(currentTargetPath) or '.'
+        try:
+            newRelativePath = posixpath.relpath(remappedTargetPath, currentTargetDir)
+        except Exception:
+            newRelativePath = remappedTargetPath
+
+        encodedPath = urllib.parse.quote(newRelativePath, safe='/-._~')
+        return urllib.parse.urlunsplit(('', '', encodedPath, parsedUrl.query, parsedUrl.fragment))
+
+    def suRewriteHtmlLinks(contentString, currentSourcePath, currentTargetPath, pathMapping):
+        def suReplaceAttr(match):
+            attrName = match.group(1)
+            quoteChar = match.group(2)
+            linkUrl = match.group(3)
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            return f'{attrName}={quoteChar}{remappedUrl}{quoteChar}'
+
+        return re.sub(r'((?:xlink:)?href|src|poster)=([\'"])(.*?)\2', suReplaceAttr, contentString, flags=re.IGNORECASE)
+
+    def suRewriteCssLinks(contentBytes, currentSourcePath, currentTargetPath, pathMapping):
+        try:
+            cssText = contentBytes.decode('utf-8')
+        except UnicodeDecodeError:
+            cssText = contentBytes.decode('utf-8', errors='ignore')
+
+        def suNormalizeCssValue(rawValue):
+            strippedValue = rawValue.strip()
+            quoteChar = ''
+            linkUrl = strippedValue
+            if len(strippedValue) >= 2 and strippedValue[0] == strippedValue[-1] and strippedValue[0] in ('"', "'"):
+                quoteChar = strippedValue[0]
+                linkUrl = strippedValue[1:-1]
+            return quoteChar, linkUrl
+
+        def suReplaceCssUrl(match):
+            quoteChar, linkUrl = suNormalizeCssValue(match.group(1))
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            if remappedUrl == linkUrl:
+                return match.group(0)
+            if quoteChar:
+                return f"url({quoteChar}{remappedUrl}{quoteChar})"
+            return f"url({remappedUrl})"
+
+        def suReplaceCssImport(match):
+            prefix = match.group(1)
+            quoteChar = match.group(2)
+            linkUrl = match.group(3)
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            if remappedUrl == linkUrl:
+                return match.group(0)
+            return f"{prefix}{quoteChar}{remappedUrl}{quoteChar}"
+
+        cssText = re.sub(r'url\(\s*([^)]+?)\s*\)', suReplaceCssUrl, cssText, flags=re.IGNORECASE)
+        cssText = re.sub(r'(@import\s+)([\'"])(.*?)\2', suReplaceCssImport, cssText, flags=re.IGNORECASE)
+        return cssText.encode('utf-8')
+
+    def suIsNavigationDocument(item):
+        if item.get_type() == mobiusEbookLib.ITEM_NAVIGATION:
+            return True
+
+        itemNameLower = str(item.get_name() or '').lower()
+        if item.media_type == 'application/x-dtbncx+xml' or itemNameLower.endswith(('.ncx', '.opf')):
+            return True
+
+        if item.get_type() != mobiusEbookLib.ITEM_DOCUMENT:
+            return False
+
+        try:
+            documentText = item.get_content().decode('utf-8', errors='ignore')
+        except Exception:
+            return False
+
+        if re.search(r'<nav\b[^>]*epub:type\s*=\s*["\'][^"\']*\btoc\b', documentText, flags=re.IGNORECASE):
+            return True
+        if re.search(r'<body\b[^>]*epub:type\s*=\s*["\'][^"\']*\bfrontmatter\b', documentText, flags=re.IGNORECASE) and re.search(r'<nav\b', documentText, flags=re.IGNORECASE):
+            return True
+        return False
+
     for bookIndex, epubPath in enumerate(villVTqdm(epubFiles, desc="Merging EPUBs")):
         try:
             sourceEpubBook = griseoEpub.read_epub(epubPath)
-            bookPrefix = f"b{bookIndex}_"
-            sourceManifest = {}
+            bookPrefix = f"b{bookIndex}"
             sourceFilenameMap = {}
+            itemTargetPathMap = {}
+            usedTargetPaths = set()
+
+            def suBuildSafeTargetPath(originalPath):
+                normalizedSourcePath = suNormalizeSourcePath(originalPath)
+                pathSegments = [segment for segment in normalizedSourcePath.split('/') if segment not in ('', '.')]
+                if not pathSegments:
+                    pathSegments = ['item']
+                safeSegments = [suSanitizePathSegment(segment) for segment in pathSegments]
+                baseTargetPath = posixpath.join(bookPrefix, *safeSegments)
+                candidateTargetPath = baseTargetPath
+                pathStem, pathExt = posixpath.splitext(baseTargetPath)
+                duplicateIndex = 1
+                while candidateTargetPath in usedTargetPaths:
+                    if pathExt:
+                        candidateTargetPath = f"{pathStem}_{duplicateIndex}{pathExt}"
+                    else:
+                        candidateTargetPath = f"{baseTargetPath}_{duplicateIndex}"
+                    duplicateIndex += 1
+                usedTargetPaths.add(candidateTargetPath)
+                return candidateTargetPath
+
+            copiedItems = []
             for item in sourceEpubBook.get_items():
-                if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT or item.get_type() == mobiusEbookLib.ITEM_NAVIGATION: continue
-                newId = bookPrefix + item.get_id()
-                newFilename = bookPrefix + item.get_name()
-                newItem = griseoEpub.EpubItem(uid=newId, file_name=newFilename, media_type=item.media_type, content=item.get_content())
+                if suIsNavigationDocument(item):
+                    continue
+                copiedItems.append(item)
+            for item in copiedItems:
+                itemTargetPathMap[item.get_id()] = suBuildSafeTargetPath(item.get_name())
+                suRegisterPathMapping(sourceFilenameMap, item.get_name(), itemTargetPathMap[item.get_id()])
+
+            copiedDocumentMap = {}
+            for item in copiedItems:
+                newId = f"{bookPrefix}_{suSanitizeItemId(item.get_id())}"
+                newFilename = itemTargetPathMap[item.get_id()]
+                itemContent = item.get_content()
+
+                if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT:
+                    contentStr = itemContent.decode('utf-8', errors='ignore')
+                    contentStr = suRewriteHtmlLinks(contentStr, item.get_name(), newFilename, sourceFilenameMap)
+                    newItem = griseoEpub.EpubHtml(uid=newId, file_name=newFilename, media_type=item.media_type, content=contentStr.encode('utf-8'), lang=languageCode)
+                    copiedDocumentMap[item.get_id()] = newItem
+                else:
+                    if item.media_type == 'text/css' or newFilename.lower().endswith('.css'):
+                        itemContent = suRewriteCssLinks(itemContent, item.get_name(), newFilename, sourceFilenameMap)
+                    newItem = griseoEpub.EpubItem(uid=newId, file_name=newFilename, media_type=item.media_type, content=itemContent)
+
                 griseoEpubBook.add_item(newItem)
-                sourceManifest[item.get_id()] = newItem
-                sourceFilenameMap[item.get_name()] = newFilename
+
             bookTitleClean = os.path.splitext(os.path.basename(epubPath))[0]
             try:
                 metaTitles = sourceEpubBook.get_metadata('DC', 'title')
                 if metaTitles: bookTitleClean = metaTitles[0][0]
             except: pass
+
             for itemId, linear in sourceEpubBook.spine:
-                item = sourceEpubBook.get_item_with_id(itemId)
-                if not item: continue
-                if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT:
-                    newId = bookPrefix + item.get_id()
-                    newFilename = bookPrefix + item.get_name()
-                    contentStr = item.get_content().decode('utf-8', errors='ignore')
-                    
-                    def suReplaceLink(match):
-                        attrName = match.group(1)
-                        quoteChar = match.group(2)
-                        linkUrl = match.group(3)
-                        if linkUrl.startswith(('http:', 'https:', 'mailto:', 'data:', '#')): return match.group(0)
-                        
-                        try: decodedLink = urllib.parse.unquote(linkUrl)
-                        except: decodedLink = linkUrl
-
-                        currentPath = item.get_name()
-                        currentDir = posixpath.dirname(currentPath)
-                        try:
-                            absLink = posixpath.normpath(posixpath.join(currentDir, decodedLink))
-                        except: return match.group(0)
-                        if absLink in sourceFilenameMap:
-                            newTarget = sourceFilenameMap[absLink]
-                            newCurrentPath = newFilename
-                            newCurrentDir = posixpath.dirname(newCurrentPath)
-                            newRelLink = posixpath.relpath(newTarget, newCurrentDir)
-                            encodedNewLink = urllib.parse.quote(newRelLink)
-                            return f'{attrName}={quoteChar}{encodedNewLink}{quoteChar}'
-                        return match.group(0)
-
-                    contentStr = re.sub(r'(src|href)=([\'"])(.*?)\2', suReplaceLink, contentStr)
-
-                    newDoc = griseoEpub.EpubHtml(uid=newId, file_name=newFilename, media_type=item.media_type, content=contentStr.encode('utf-8'), lang=languageCode)
-                    griseoEpubBook.add_item(newDoc)
+                newDoc = copiedDocumentMap.get(itemId)
+                if newDoc:
                     spineList.append(newDoc)
-                    sourceFilenameMap[item.get_name()] = newFilename
+
             def suProcessToc(tocItems):
                 processedToc = []
                 for item in tocItems:
                     if isinstance(item, (list, tuple)):
                         processedToc.append((suProcessToc([item[0]])[0], suProcessToc(item[1])))
                     elif isinstance(item, griseoEpub.Link):
-                        oldHref = item.href
-                        if '#' in oldHref:
-                            baseHref, anchor = oldHref.split('#', 1)
-                            newBaseHref = sourceFilenameMap.get(baseHref, baseHref)
-                            newHref = f"{newBaseHref}#{anchor}"
-                        else:
-                            newHref = sourceFilenameMap.get(oldHref, oldHref)
+                        oldHref = item.href or ''
+                        parsedHref = urllib.parse.urlsplit(oldHref)
+                        newHref = oldHref
+                        if parsedHref.path:
+                            newBaseHref = suLookupMappedPath(sourceFilenameMap, parsedHref.path)
+                            if newBaseHref:
+                                encodedBaseHref = urllib.parse.quote(newBaseHref, safe='/-._~')
+                                newHref = urllib.parse.urlunsplit(('', '', encodedBaseHref, parsedHref.query, parsedHref.fragment))
                         processedToc.append(griseoEpub.Link(newHref, item.title, bookPrefix + (item.uid or '')))
                     elif isinstance(item, griseoEpub.Section):
                         oldHref = item.href
                         newHref = None
                         if oldHref:
-                            if '#' in oldHref:
-                                baseHref, anchor = oldHref.split('#', 1)
-                                newBaseHref = sourceFilenameMap.get(baseHref, baseHref)
-                                newHref = f"{newBaseHref}#{anchor}"
-                            else:
-                                newHref = sourceFilenameMap.get(oldHref, oldHref)
+                            parsedHref = urllib.parse.urlsplit(oldHref)
+                            newHref = oldHref
+                            if parsedHref.path:
+                                newBaseHref = suLookupMappedPath(sourceFilenameMap, parsedHref.path)
+                                if newBaseHref:
+                                    encodedBaseHref = urllib.parse.quote(newBaseHref, safe='/-._~')
+                                    newHref = urllib.parse.urlunsplit(('', '', encodedBaseHref, parsedHref.query, parsedHref.fragment))
                         processedToc.append(griseoEpub.Section(item.title, newHref))
                 return processedToc
             if flat_merge:

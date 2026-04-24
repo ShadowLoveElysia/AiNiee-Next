@@ -53,6 +53,11 @@ class TranslatorTask(Base):
         self.affix_whitespace_storage = {}
         # 原文上下文数据（用于上下文增强）
         self.source_context_items = []
+        self._prepared = False
+        self.consistency_context_provider = None
+        self.consistency_state_updater = None
+        self.consistency_context = {}
+        self._pending_consistency_update = None
 
 
     # 设置缓存数据
@@ -67,6 +72,12 @@ class TranslatorTask(Base):
     def set_source_context_items(self, source_context_items: list[CacheItem]) -> None:
         self.source_context_items = source_context_items
 
+    def set_consistency_context_provider(self, provider) -> None:
+        self.consistency_context_provider = provider
+
+    def set_consistency_state_updater(self, updater) -> None:
+        self.consistency_state_updater = updater
+
     # 消息构建预处理
     def prepare(self, target_platform: str) -> None:
 
@@ -75,6 +86,14 @@ class TranslatorTask(Base):
 
         # 生成原文上下文文本列表（用于上下文增强）
         self.source_context_text_list = [v.source_text for v in self.source_context_items]
+
+        if callable(self.consistency_context_provider):
+            try:
+                self.consistency_context = self.consistency_context_provider() or {}
+            except Exception:
+                self.consistency_context = {}
+        else:
+            self.consistency_context = {}
 
         # 生成原文文本字典
         self.source_text_dict = {str(i): v.source_text for i, v in enumerate(self.items)}
@@ -126,16 +145,59 @@ class TranslatorTask(Base):
                 self.previous_text_list,
                 self.source_lang,
                 self.rag_context,
-                self.source_context_text_list
+                self.source_context_text_list,
+                self.consistency_context,
             )
 
         # 预估 Token 消费
         self.request_tokens_consume = Tokener.calculate_tokens(self,self.messages,self.system_prompt,)
+        self._prepared = True
 
 
     # 启动任务
     def start(self) -> dict:
+        if not self._prepared:
+            self.prepare(self.config.target_platform)
         return self.unit_translation_task()
+
+    def _build_translation_consistency_tools(self) -> list[dict]:
+        if self.config.target_language in ("chinese_simplified", "chinese_traditional"):
+            description = "提交本轮译文，以及截至当前批次整理后的累计剧情梗概和累计人物信息。必须调用一次。"
+            translation_desc = "最终译文，必须完整包裹在 <textarea>...</textarea> 中，只保留译文正文和编号，不要附加说明。"
+            story_desc = "截至当前批次的累计剧情梗概，概括关键事件、场景推进和关系变化。"
+            character_desc = "截至当前批次的累计人物信息，记录姓名、身份、关系、称呼、口癖、状态变化和译名约定。"
+        else:
+            description = "Submit the current translation plus cumulative story summary and cumulative character notes. This tool must be called exactly once."
+            translation_desc = "Final translation wrapped in <textarea>...</textarea>. Keep only the numbered translation content without extra commentary."
+            story_desc = "Cumulative story summary up to the current batch, including key events, scene progression, and relationship changes."
+            character_desc = "Cumulative character notes up to the current batch, including names, roles, relationships, naming choices, verbal traits, and status changes."
+
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "submit_translation_consistency",
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "translation": {"type": "string", "description": translation_desc},
+                            "story_summary": {"type": "string", "description": story_desc},
+                            "character_info": {"type": "string", "description": character_desc},
+                        },
+                        "required": ["translation", "story_summary", "character_info"],
+                    },
+                },
+            }
+        ]
+
+    def _normalize_translation_from_tool(self, translation: str) -> str:
+        translation_text = str(translation or "").strip()
+        if not translation_text:
+            return ""
+        if "<textarea" in translation_text.lower():
+            return translation_text
+        return f"<textarea>\n{translation_text}\n</textarea>"
 
 
     # 单请求翻译任务
@@ -243,14 +305,57 @@ class TranslatorTask(Base):
             platform_config = self.config.get_platform_configuration("translationReq")
             current_api = platform_config.get("target_platform", "Unknown")
             is_local = current_api.lower() in ["localllm", "sakura", "murasaki"]
+            consistency_enabled = bool(getattr(self.config, "translation_consistency_enhancement", False))
+            error_msg = ""
 
             # 2. 发起请求
-            requester = LLMRequester()
-            skip, status_tag, error_msg, p_tokens, c_tokens = requester.sent_request(
-                self.messages,
-                self.system_prompt,
-                platform_config
-            )
+            if consistency_enabled:
+                if platform_config.get("api_format") != "OpenAI":
+                    skip = True
+                    status_tag = "UNSUPPORTED_TOOL_CALLS"
+                    error_msg = "翻译一致性增强仅支持 OpenAI 兼容的 Tool Calls 接口。"
+                    p_tokens = 0
+                    c_tokens = 0
+                else:
+                    from ModuleFolders.Infrastructure.LLMRequester.OpenaiRequester import OpenaiRequester
+
+                    tool_requester = OpenaiRequester()
+                    skip, status_tag, tool_result, p_tokens, c_tokens = tool_requester.request_openai_tool_call(
+                        self.messages,
+                        self.system_prompt,
+                        platform_config,
+                        self._build_translation_consistency_tools(),
+                        "submit_translation_consistency",
+                    )
+
+                    if skip:
+                        error_msg = str(tool_result or "")
+                    elif isinstance(tool_result, dict):
+                        response_content = self._normalize_translation_from_tool(tool_result.get("translation", ""))
+                        if not response_content:
+                            skip = True
+                            status_tag = "TOOL_CALL_EMPTY_TRANSLATION"
+                            error_msg = "工具调用成功，但 translation 字段为空。"
+                        else:
+                            response_think = status_tag
+                            prompt_tokens = p_tokens
+                            completion_tokens = c_tokens
+                            self._pending_consistency_update = {
+                                "story_summary": str(tool_result.get("story_summary") or "").strip(),
+                                "character_info": str(tool_result.get("character_info") or "").strip(),
+                            }
+                            break
+                    else:
+                        skip = True
+                        status_tag = "TOOL_CALL_PARSE_ERROR"
+                        error_msg = "工具调用返回内容无法解析为结构化数据。"
+            else:
+                requester = LLMRequester()
+                skip, status_tag, error_msg, p_tokens, c_tokens = requester.sent_request(
+                    self.messages,
+                    self.system_prompt,
+                    platform_config
+                )
 
             # 3. 处理失败
             if skip:
@@ -307,11 +412,6 @@ class TranslatorTask(Base):
             # 赋值并跳出循环进行后续处理
             response_content = error_msg # 这里的 error_msg 实际上是 response_content，因为 LLMRequester 返回签名是 (skip, think, content...)
             response_think = status_tag # status_tag 实际上是 think
-            # 修正变量名映射:
-            # Original: skip, response_think, response_content, prompt_tokens, completion_tokens
-            # Current:  skip, status_tag,     error_msg,        p_tokens,      c_tokens
-            # If skip=False: status_tag=think, error_msg=content
-            
             prompt_tokens = p_tokens
             completion_tokens = c_tokens
             break 
@@ -438,6 +538,15 @@ class TranslatorTask(Base):
                     item.model = self.config.model
                     item.translated_text = response
                     item.translation_status = TranslationStatus.TRANSLATED
+
+            if self._pending_consistency_update and callable(self.consistency_state_updater):
+                try:
+                    self.consistency_state_updater(
+                        self._pending_consistency_update.get("story_summary", ""),
+                        self._pending_consistency_update.get("character_info", ""),
+                    )
+                except Exception as e:
+                    self.warning(f"[{self.task_id}] Failed to update consistency memory: {e}")
 
             # 打印成功日志
             if Base.work_status != Base.STATUS.STOPING:

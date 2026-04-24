@@ -162,6 +162,15 @@ export const Settings: React.FC = () => {
         }
     }
 
+    if (field === 'translation_consistency_enhancement') {
+        setConfig({
+            ...config,
+            [field]: value,
+            user_thread_counts: value ? 1 : config.user_thread_counts,
+        });
+        return;
+    }
+
     setConfig({ ...config, [field]: value });
   };
   
@@ -319,22 +328,30 @@ export const Settings: React.FC = () => {
       return <div className="p-12 text-center text-slate-500 animate-pulse">Loading Configuration...</div>;
   }
 
-    const Toggle = ({ field, label, desc }: { field: keyof AppConfig, label: string, desc?: string }) => {
+    const Toggle = ({ field, label, desc, disabled = false }: { field: keyof AppConfig, label: string, desc?: string, disabled?: boolean }) => {
       return (
-        <div className="flex items-center justify-between p-3 border border-slate-700 rounded-lg bg-slate-900/30">
+        <div className={`flex items-center justify-between p-3 border rounded-lg ${disabled ? 'border-slate-800 bg-slate-900/10 opacity-60' : 'border-slate-700 bg-slate-900/30'}`}>
           <div className="mr-4">
             <h4 className="text-slate-200 font-medium text-sm">{label}</h4>
             {desc && <p className="text-xs text-slate-500">{desc}</p>}
           </div>
           <button
-            onClick={() => handleChange(field, !config[field])}
-            className={`transition-all duration-300 ${config[field] ? getThemeColorClass() : 'text-slate-600'}`}
+            onClick={() => !disabled && handleChange(field, !config[field])}
+            disabled={disabled}
+            className={`transition-all duration-300 ${disabled ? 'cursor-not-allowed text-slate-700' : config[field] ? getThemeColorClass() : 'text-slate-600'}`}
           >
             {config[field] ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
           </button>
         </div>
       );
     };
+
+  const isConsistencyEnabled = !!config.translation_consistency_enhancement;
+  const deepSeekRecommendedModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
+  const activePlatformKey = config.target_platform || '';
+  const activePlatformConfig = config.platforms?.[activePlatformKey] || {};
+  const isAnthropicThinking = activePlatformConfig.api_format === 'Anthropic';
+  const isDeepSeekThinking = activePlatformKey.toLowerCase() === 'deepseek';
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
       <div className="flex justify-between items-center sticky top-0 bg-background/95 backdrop-blur z-20 py-4 border-b border-slate-800">
@@ -459,8 +476,16 @@ export const Settings: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-400 uppercase">{t('setting_thread_count')}</label>
-              <input type="number" value={config.user_thread_counts} onChange={(e) => handleChange('user_thread_counts', parseInt(e.target.value))}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm" />
+              <input
+                type="number"
+                value={isConsistencyEnabled ? 1 : config.user_thread_counts}
+                onChange={(e) => handleChange('user_thread_counts', parseInt(e.target.value))}
+                disabled={isConsistencyEnabled}
+                className={`w-full border rounded-lg p-2.5 text-sm ${isConsistencyEnabled ? 'bg-slate-900/30 border-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-900 border-slate-700 text-slate-200 focus:border-primary'}`}
+              />
+              {isConsistencyEnabled && (
+                <p className="text-[10px] text-yellow-400">{t('msg_thread_locked_by_consistency')}</p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-400 uppercase">{t('setting_request_timeout')}</label>
@@ -522,6 +547,24 @@ export const Settings: React.FC = () => {
                         <label className="text-xs font-semibold text-slate-400 uppercase">{t('label_model')}</label>
                         <input type="text" value={config.model} onChange={(e) => handleChange('model', e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm" />
+                        {config.target_platform?.toLowerCase() === 'deepseek' && (
+                            <div className="mt-2 p-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-300">{t('ui_deepseek_recommended_models')}</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {deepSeekRecommendedModels.map(modelName => (
+                                        <button
+                                            key={modelName}
+                                            type="button"
+                                            onClick={() => handleChange('model', modelName)}
+                                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-colors ${config.model === modelName ? 'border-cyan-300 bg-cyan-300/20 text-cyan-200' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'}`}
+                                        >
+                                            {modelName}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="mt-2 text-[10px] text-slate-400">{t('ui_deepseek_recommended_models_desc')}</p>
+                            </div>
+                        )}
                     </div>
                     <div className="col-span-1 md:col-span-2 space-y-2">
                         <label className="text-xs font-semibold text-slate-400 uppercase">{t('label_key')}</label>
@@ -615,7 +658,7 @@ export const Settings: React.FC = () => {
                                         <label className="text-xs font-semibold text-slate-400 uppercase">
                                             {t('menu_api_think_depth')}
                                         </label>
-                                        {config.platforms[config.target_platform]?.api_format === 'Anthropic' ? (
+                                        {isAnthropicThinking || isDeepSeekThinking ? (
                                             <select
                                                 value={config.think_depth || 'low'}
                                                 onChange={(e) => {
@@ -637,6 +680,7 @@ export const Settings: React.FC = () => {
                                                 <option value="low">Low</option>
                                                 <option value="medium">Medium</option>
                                                 <option value="high">High</option>
+                                                {isDeepSeekThinking && <option value="max">Max</option>}
                                             </select>
                                         ) : (
                                             <input
@@ -815,6 +859,12 @@ export const Settings: React.FC = () => {
                   <input type="number" value={config.pre_line_counts ?? 3} onChange={(e) => handleChange('pre_line_counts', parseInt(e.target.value) || 0)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm" />
                </div>
+
+               {isConsistencyEnabled && !config.tokens_limit_switch && (
+                 <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                   <p className="text-[11px] text-amber-300">{t('ui_consistency_lines_recommend')}</p>
+                 </div>
+               )}
              </div>
           </div>
         )}
@@ -832,6 +882,11 @@ export const Settings: React.FC = () => {
             <Toggle field="translation_example_switch" label={t('feature_translation_example_switch')} />
             <Toggle field="few_shot_and_example_switch" label={t('feature_few_shot_and_example_switch')} />
             <Toggle field="auto_process_text_code_segment" label={t('feature_auto_process_text_code_segment')} />
+            <Toggle
+              field="translation_consistency_enhancement"
+              label={t('setting_translation_consistency_enhancement')}
+              desc={t('setting_translation_consistency_enhancement_desc')}
+            />
 
             {/* AI Proofread Settings */}
             <div className="col-span-2 border-t border-slate-700 pt-4 mt-2">

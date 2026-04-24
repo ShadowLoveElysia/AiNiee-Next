@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from pathlib import Path
 from rich.console import Console
@@ -10,6 +11,20 @@ console = Console()
 class FileSelector:
     def __init__(self, i18n):
         self.i18n = i18n
+
+    @staticmethod
+    def _sanitize_console_text(value):
+        text = str(value)
+        encoding = (
+            getattr(getattr(console, "file", None), "encoding", None)
+            or getattr(sys.stdout, "encoding", None)
+            or "utf-8"
+        )
+        try:
+            text.encode(encoding)
+            return text
+        except UnicodeEncodeError:
+            return text.encode(encoding, errors="replace").decode(encoding)
 
     def select_path(self, start_path=".", select_file=True, select_dir=False):
         current_path = Path(start_path).resolve()
@@ -23,7 +38,10 @@ class FileSelector:
                 continue
 
             console.clear()
-            table = Table(title=f"Current Path: {current_path}", show_header=True)
+            table = Table(
+                title=self._sanitize_console_text(f"Current Path: {current_path}"),
+                show_header=True,
+            )
             table.add_column("Index", style="dim", width=5)
             table.add_column("Type", width=6)
             table.add_column("Name", style="bright_white")
@@ -31,12 +49,22 @@ class FileSelector:
             display_list = []
 
             # Parent directory (返回上一级)
-            table.add_row("0", self.i18n.get("file_type_dir") or "DIR", self.i18n.get("file_selector_parent") or "..")
+            table.add_row(
+                "0",
+                self._sanitize_console_text(self.i18n.get("file_type_dir") or "DIR"),
+                self._sanitize_console_text(self.i18n.get("file_selector_parent") or ".."),
+            )
             display_list.append(current_path.parent)
 
             # Current directory selection
             if select_dir:
-                table.add_row("1", self.i18n.get("file_type_dir") or "DIR", f"{self.i18n.get('file_selector_select_current') or 'Select this directory'} -> '{current_path.name}'")
+                table.add_row(
+                    "1",
+                    self._sanitize_console_text(self.i18n.get("file_type_dir") or "DIR"),
+                    self._sanitize_console_text(
+                        f"{self.i18n.get('file_selector_select_current') or 'Select this directory'} -> '{current_path.name}'"
+                    ),
+                )
                 display_list.append(current_path)
 
             idx_offset = len(display_list)
@@ -65,7 +93,11 @@ class FileSelector:
                 if not select_file and not is_dir:
                     continue
 
-                table.add_row(str(i + idx_offset), entry_type, entry.name)
+                table.add_row(
+                    str(i + idx_offset),
+                    self._sanitize_console_text(entry_type),
+                    self._sanitize_console_text(entry.name),
+                )
                 display_list.append(Path(entry.path))
             
             console.print(table)

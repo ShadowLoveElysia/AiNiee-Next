@@ -154,9 +154,6 @@ class EmbeddedWebServerController:
         if self.mcp_auth_token:
             os.environ["AINIEE_MCP_AUTH_TOKEN"] = self.mcp_auth_token
 
-        if _is_port_open(self.host, self.port):
-            return
-
         import Tools.WebServer.web_server as ws_module
 
         self.ws_module = ws_module
@@ -165,6 +162,9 @@ class EmbeddedWebServerController:
                 self.host_cli.web_runtime_bridge._configure_web_handlers(ws_module)
             except Exception:
                 pass
+
+        if _is_port_open(self.host, self.port):
+            return
 
         self.thread = ws_module.run_server(
             host=self.host,
@@ -242,6 +242,42 @@ class AiNieeAPIClient:
 
         # 再做一层兜底脱敏，避免未来新增接口忘记在 WebServer 里声明 MCP 侧限制。
         return sanitize_data_for_mcp(data, path=path)
+
+
+def _patch_streamable_http_shutdown_for_windows() -> None:
+    """
+    Reduce noisy ASGI shutdown errors for active MCP SSE streams on Windows.
+
+    When the operator stops the streamable-http MCP server while a client still
+    has an active GET/POST stream pair, uvicorn can log
+    "ASGI callable returned without completing response" during teardown. We
+    patch the session manager at runtime so active transports are explicitly
+    terminated before the upstream task group is cancelled.
+    """
+    if os.name != "nt":
+        return
+
+    import contextlib
+
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+    if getattr(StreamableHTTPSessionManager.run, "__ainiee_shutdown_patch__", False):
+        return
+
+    original_run = StreamableHTTPSessionManager.run
+
+    @contextlib.asynccontextmanager
+    async def patched_run(self):
+        async with original_run(self):
+            try:
+                yield
+            finally:
+                for transport in list(getattr(self, "_server_instances", {}).values()):
+                    with contextlib.suppress(Exception):
+                        await transport.terminate()
+
+    patched_run.__ainiee_shutdown_patch__ = True
+    StreamableHTTPSessionManager.run = patched_run
 
 
 def _normalize_transport(transport: str) -> str:
@@ -363,10 +399,38 @@ async def _probe_streamable_http_mcp(url: str) -> bool:
         await client.aclose()
 
 
+def _is_expected_proxy_disconnect(exc: BaseException) -> bool:
+    """
+    Treat common transport teardown errors as a normal client disconnect.
+
+    On Windows, short-lived MCP clients may close their stdio pipe or HTTP
+    stream before every async task has fully unwound. Those disconnects are
+    expected during tool discovery and should not become noisy tracebacks.
+    """
+    if exc.__class__.__name__ in {"ClosedResourceError", "BrokenResourceError", "EndOfStream"}:
+        return True
+
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError, EOFError)):
+        return True
+
+    cause = getattr(exc, "__cause__", None)
+    return isinstance(cause, BaseException) and _is_expected_proxy_disconnect(cause)
+
+
+async def _close_stream_safely(stream) -> None:
+    """Close an anyio stream without surfacing teardown noise during proxy shutdown."""
+    try:
+        await stream.aclose()
+    except Exception:
+        pass
+
+
 async def _pipe_session_messages(source, sink, direction: str) -> None:
     """Forward MCP SessionMessage objects between stdio and streamable-http transports."""
     async for item in source:
         if isinstance(item, Exception):
+            if _is_expected_proxy_disconnect(item):
+                return
             raise RuntimeError(f"MCP proxy stream error ({direction}): {item}") from item
         await sink.send(item)
 
@@ -389,27 +453,31 @@ async def _run_stdio_proxy_to_existing_mcp(url: str) -> None:
             remote_write,
             _,
         ):
-            async def bridge_with_cancel(source, sink, direction: str, cancel_scope) -> None:
+            async def bridge_local_to_remote() -> None:
                 try:
-                    await _pipe_session_messages(source, sink, direction)
+                    await _pipe_session_messages(local_read, remote_write, "stdio -> http")
+                except Exception as exc:
+                    if not _is_expected_proxy_disconnect(exc):
+                        raise
                 finally:
+                    # Let the HTTP transport unwind naturally so terminate_on_close
+                    # can send DELETE /mcp instead of forcing a TCP reset.
+                    await _close_stream_safely(remote_write)
+
+            async def bridge_remote_to_local(cancel_scope) -> None:
+                try:
+                    await _pipe_session_messages(remote_read, local_write, "http -> stdio")
+                except Exception as exc:
+                    if not _is_expected_proxy_disconnect(exc):
+                        raise
+                finally:
+                    await _close_stream_safely(local_write)
+                    await _close_stream_safely(remote_write)
                     cancel_scope.cancel()
 
             async with anyio.create_task_group() as tg:
-                tg.start_soon(
-                    bridge_with_cancel,
-                    local_read,
-                    remote_write,
-                    "stdio -> http",
-                    tg.cancel_scope,
-                )
-                tg.start_soon(
-                    bridge_with_cancel,
-                    remote_read,
-                    local_write,
-                    "http -> stdio",
-                    tg.cancel_scope,
-                )
+                tg.start_soon(bridge_local_to_remote)
+                tg.start_soon(bridge_remote_to_local, tg.cancel_scope)
 
 
 def is_reusable_mcp_service_running(host: str, port: int, path: str) -> bool:
@@ -592,6 +660,7 @@ def _build_mcp_app(
     host_cli: Any = None,
 ):
     try:
+        _patch_streamable_http_shutdown_for_windows()
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
         status = inspect_mcp_runtime(PROJECT_ROOT)

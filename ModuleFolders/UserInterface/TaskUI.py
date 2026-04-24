@@ -369,7 +369,10 @@ class TaskUI:
             if is_queue_mode:
                 hotkeys = self._get_i18n("label_shortcuts_queue")
             else:
-                hotkeys = self._get_i18n("label_shortcuts")
+                if self.parent_cli and self.parent_cli.config.get("translation_consistency_enhancement", False):
+                    hotkeys = self._get_i18n("label_shortcuts_consistency")
+                else:
+                    hotkeys = self._get_i18n("label_shortcuts")
 
             diagnostic_hint = ""
             if self.parent_cli and getattr(self.parent_cli, '_show_diagnostic_hint', False):

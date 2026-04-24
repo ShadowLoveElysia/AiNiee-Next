@@ -60,6 +60,7 @@ export const ElysiaTheme: React.FC<{ active: boolean }> = ({ active }) => {
       window.addEventListener('mouseleave', clearTrail);
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => {
+        document.documentElement.classList.remove('elysia-mode');
         window.removeEventListener('click', handleClick);
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('blur', clearTrail);

@@ -2,11 +2,6 @@
 import threading
 from typing import Dict, Any
 import httpx
-from openai import OpenAI
-import anthropic
-import boto3
-import cohere
-from google import genai
 import json
 
 
@@ -74,7 +69,7 @@ class LLMClientFactory:
             "X-Requested-With": "XMLHttpRequest"
         }
 
-    def get_openai_client(self, config: Dict[str, Any]) -> OpenAI:
+    def get_openai_client(self, config: Dict[str, Any]) -> Any:
         """获取OpenAI客户端"""
         # 展示需要到的配置项
         api_key = config.get("api_key")
@@ -82,7 +77,7 @@ class LLMClientFactory:
         key = ("openai", api_url, api_key)
         return self._get_cached_client(key, lambda: self._create_openai_client(config, api_key))
 
-    def get_openai_client_local(self, config: Dict[str, Any]) -> OpenAI:
+    def get_openai_client_local(self, config: Dict[str, Any]) -> Any:
         """获取OpenAI客户端"""
         api_key = config.get("api_key")
         if not api_key:
@@ -91,7 +86,7 @@ class LLMClientFactory:
         key = ("openai_local", api_url, api_key)
         return self._get_cached_client(key, lambda: self._create_openai_client(config, api_key, trust_env=False))
 
-    def get_openai_client_sakura(self, config: Dict[str, Any]) -> OpenAI:
+    def get_openai_client_sakura(self, config: Dict[str, Any]) -> Any:
         """获取OpenAI客户端"""
         api_key = config.get("api_key")
         if not api_key:
@@ -100,14 +95,14 @@ class LLMClientFactory:
         key = ("openai_sakura", api_url, api_key)
         return self._get_cached_client(key, lambda: self._create_openai_client(config, api_key, trust_env=False))
 
-    def get_anthropic_client(self, config: Dict[str, Any]) -> anthropic.Anthropic:
+    def get_anthropic_client(self, config: Dict[str, Any]) -> Any:
         """获取Anthropic客户端"""
         api_key = config.get("api_key")
         api_url = config.get("api_url")
         key = ("anthropic", api_url, api_key)
         return self._get_cached_client(key, lambda: self._create_anthropic_client(config))
 
-    def get_anthropic_bedrock(self, config: Dict[str, Any]) -> anthropic.AnthropicBedrock:
+    def get_anthropic_bedrock(self, config: Dict[str, Any]) -> Any:
         """获取AnthropicBedrock客户端"""
         region = config.get("region")
         access_key = config.get("access_key")
@@ -123,14 +118,14 @@ class LLMClientFactory:
         key = ("boto3_bedrock", region, access_key, secret_key)
         return self._get_cached_client(key, lambda: self._create_boto3_bedrock(config))
 
-    def get_cohere_client(self, config: Dict[str, Any]) -> cohere.ClientV2:
+    def get_cohere_client(self, config: Dict[str, Any]) -> Any:
         """获取Cohere客户端"""
         api_key = config.get("api_key")
         api_url = config.get("api_url")
         key = ("cohere", api_url, api_key)
         return self._get_cached_client(key, lambda: self._create_cohere_client(config))
 
-    def get_google_client(self, config: Dict[str, Any]) -> genai.Client:
+    def get_google_client(self, config: Dict[str, Any]) -> Any:
         """获取Google AI客户端"""
         api_key = config.get("api_key")
         api_url = config.get("api_url")
@@ -149,6 +144,8 @@ class LLMClientFactory:
 
     # 各种客户端创建函数
     def _create_openai_client(self, config, api_key, trust_env=True):
+        from openai import OpenAI
+
         return OpenAI(
             base_url=config.get("api_url"),
             api_key=api_key,
@@ -157,6 +154,8 @@ class LLMClientFactory:
         )
 
     def _create_anthropic_client(self, config):
+        import anthropic
+
         return anthropic.Anthropic(
             base_url=config.get("api_url"),
             api_key=config.get("api_key"),
@@ -165,6 +164,8 @@ class LLMClientFactory:
         )
 
     def _create_anthropic_bedrock(self, config):
+        import anthropic
+
         return anthropic.AnthropicBedrock(
             aws_region=config.get("region"),
             aws_access_key=config.get("access_key"),
@@ -173,6 +174,8 @@ class LLMClientFactory:
         )
 
     def _create_boto3_bedrock(self, config):
+        import boto3
+
         return boto3.client(
             "bedrock-runtime",
             region_name=config.get("region"),
@@ -181,6 +184,8 @@ class LLMClientFactory:
         )
 
     def _create_cohere_client(self, config):
+        import cohere
+
         return cohere.ClientV2(
             base_url=config.get("api_url"),
             api_key=config.get("api_key"),
@@ -189,6 +194,8 @@ class LLMClientFactory:
         )
 
     def _create_google_client(self, config):
+        from google import genai
+
         api_key = config.get("api_key")
         api_url = config.get("api_url")
         extra_body = config.get("extra_body")

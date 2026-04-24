@@ -506,6 +506,8 @@ class APIManager:
             elif choice == 7:
                 if api_format == "Anthropic":
                     val = Prompt.ask(self.i18n.get("prompt_think_depth_claude"), choices=["low", "medium", "high"], default=str(think_dp) if think_dp in ["low", "medium", "high"] else "low")
+                elif tp == "deepseek":
+                    val = Prompt.ask(self.i18n.get("prompt_think_depth"), choices=["low", "medium", "high", "max"], default=str(think_dp) if think_dp in ["low", "medium", "high", "max"] else "low")
                 else:
                     val = Prompt.ask(self.i18n.get("prompt_think_depth"), choices=["minimal", "low", "medium", "high"], default=str(think_dp) if think_dp in ["minimal", "low", "medium", "high"] else "low")
                 self.config["think_depth"] = val

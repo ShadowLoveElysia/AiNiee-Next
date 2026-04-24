@@ -1,4 +1,5 @@
 import hashlib
+import json
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
@@ -9,6 +10,49 @@ from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import Provid
 class OpenaiRequester(Base):
     def __init__(self) -> None:
         pass
+
+    def _is_deepseek_request(self, platform_config: dict, model_name: str) -> bool:
+        target_platform = str(platform_config.get("target_platform") or "").strip().lower()
+        api_url = str(platform_config.get("api_url") or "").strip().lower()
+        normalized_model = str(model_name or "").strip().lower()
+        return (
+            target_platform == "deepseek"
+            or normalized_model.startswith("deepseek")
+            or "deepseek" in api_url
+        )
+
+    def _merge_extra_body(self, request_body: dict, extra_body: dict, nested: bool = False) -> None:
+        if not extra_body or not isinstance(extra_body, dict):
+            return
+
+        if nested:
+            merged = request_body.get("extra_body", {})
+            if not isinstance(merged, dict):
+                merged = {}
+            merged.update(extra_body)
+            request_body["extra_body"] = merged
+        else:
+            request_body.update(extra_body)
+
+    def _apply_deepseek_compatibility(self, request_body: dict, platform_config: dict, tool_mode: bool = False) -> None:
+        think_switch = bool(platform_config.get("think_switch"))
+        think_depth = platform_config.get("think_depth")
+        use_sdk = bool(platform_config.get("use_openai_sdk", False))
+
+        thinking = {
+            "type": "enabled" if think_switch else "disabled",
+        }
+        if think_switch and think_depth not in (None, "", 0, "0"):
+            thinking["reasoning_effort"] = think_depth
+
+        if use_sdk:
+            self._merge_extra_body(request_body, {"thinking": thinking}, nested=True)
+        else:
+            request_body["thinking"] = thinking
+
+        request_body.pop("reasoning_effort", None)
+        if tool_mode:
+            request_body.pop("tool_choice", None)
 
     def _get_api_cache_key(self, api_url: str, model_name: str) -> str:
         """生成API缓存键，基于URL和模型名"""
@@ -138,6 +182,99 @@ class OpenaiRequester(Base):
 
         return False, response_think, response_content, int(prompt_tokens), int(completion_tokens)
 
+    def _parse_tool_call_response_sdk(self, response, expected_tool_name: str) -> tuple[str, dict]:
+        message = response.choices[0].message
+        response_content = message.content or ""
+
+        response_think = ""
+        if response_content and "</think>" in response_content:
+            splited = response_content.split("</think>")
+            response_think = splited[0].removeprefix("<think>").replace("\n\n", "\n")
+        else:
+            response_think = getattr(message, "reasoning_content", "") or ""
+
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not tool_calls:
+            raise ValueError("Tool call required but no tool_calls were returned.")
+
+        for tool_call in tool_calls:
+            function = getattr(tool_call, "function", None)
+            tool_name = getattr(function, "name", "")
+            arguments = getattr(function, "arguments", "") or ""
+            if tool_name != expected_tool_name:
+                continue
+
+            if isinstance(arguments, dict):
+                return response_think, arguments
+
+            parsed_arguments = json.loads(arguments)
+            if not isinstance(parsed_arguments, dict):
+                raise ValueError("Tool call arguments must be a JSON object.")
+            return response_think, parsed_arguments
+
+        raise ValueError(f"Expected tool '{expected_tool_name}' was not called.")
+
+    def _parse_tool_call_response_json(self, response_json: dict, expected_tool_name: str) -> tuple[str, dict]:
+        message = response_json["choices"][0]["message"]
+        response_content = message.get("content", "") or ""
+
+        response_think = ""
+        if response_content and "</think>" in response_content:
+            splited = response_content.split("</think>")
+            response_think = splited[0].removeprefix("<think>").replace("\n\n", "\n")
+        else:
+            response_think = message.get("reasoning_content", "") or ""
+
+        tool_calls = message.get("tool_calls", []) or []
+        if not tool_calls:
+            raise ValueError("Tool call required but no tool_calls were returned.")
+
+        for tool_call in tool_calls:
+            function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+            tool_name = function.get("name", "")
+            arguments = function.get("arguments", "") or ""
+            if tool_name != expected_tool_name:
+                continue
+
+            if isinstance(arguments, dict):
+                return response_think, arguments
+
+            parsed_arguments = json.loads(arguments)
+            if not isinstance(parsed_arguments, dict):
+                raise ValueError("Tool call arguments must be a JSON object.")
+            return response_think, parsed_arguments
+
+        raise ValueError(f"Expected tool '{expected_tool_name}' was not called.")
+
+    def _do_tool_call_request(
+        self,
+        api_url: str,
+        api_key: str,
+        request_body: dict,
+        request_timeout: int,
+        expected_tool_name: str,
+    ) -> tuple[bool, str, dict, int, int]:
+        import httpx
+
+        auth_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+        with httpx.Client(timeout=request_timeout) as http_client:
+            resp = http_client.post(api_url, json=request_body, headers=auth_headers)
+
+            if resp.status_code != 200:
+                raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+
+            response_json = resp.json()
+
+        response_think, tool_payload = self._parse_tool_call_response_json(response_json, expected_tool_name)
+        prompt_tokens = response_json.get("usage", {}).get("prompt_tokens", 0)
+        completion_tokens = response_json.get("usage", {}).get("completion_tokens", 0)
+        return False, response_think, tool_payload, int(prompt_tokens), int(completion_tokens)
+
     # 发起请求
     def request_openai(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
         try:
@@ -152,6 +289,8 @@ class OpenaiRequester(Base):
             think_switch = platform_config.get("think_switch")
             think_depth = platform_config.get("think_depth")
             enable_stream = platform_config.get("enable_stream_api", True)
+            use_sdk = platform_config.get("use_openai_sdk", False)
+            is_deepseek = self._is_deepseek_request(platform_config, model_name)
 
             # 插入系统消息
             if system_prompt:
@@ -171,8 +310,11 @@ class OpenaiRequester(Base):
                 "messages": messages,
             }
 
-            if extra_body and isinstance(extra_body, dict):
-                request_body.update(extra_body)
+            self._merge_extra_body(
+                request_body,
+                extra_body,
+                nested=is_deepseek and use_sdk,
+            )
 
             if temperature != 1:
                 request_body["temperature"] = temperature
@@ -182,11 +324,10 @@ class OpenaiRequester(Base):
                 request_body["presence_penalty"] = presence_penalty
             if frequency_penalty != 0:
                 request_body["frequency_penalty"] = frequency_penalty
-            if think_switch:
+            if think_switch and not is_deepseek:
                 request_body["reasoning_effort"] = think_depth
-
-            # 读取请求模式开关
-            use_sdk = platform_config.get("use_openai_sdk", False)
+            if is_deepseek:
+                self._apply_deepseek_compatibility(request_body, platform_config)
 
             if use_sdk:
                 # ===== OpenAI SDK 模式 =====
@@ -251,5 +392,99 @@ class OpenaiRequester(Base):
                           e if self.is_debug() else None)
             else:
                 self.print(f"[dim]Request aborted due to stop signal: {e}[/dim]")
+
+            return True, error_type, str(e), 0, 0
+
+    def request_openai_tool_call(
+        self,
+        messages,
+        system_prompt,
+        platform_config,
+        tools: list[dict],
+        tool_name: str,
+    ) -> tuple[bool, str, dict | str, int, int]:
+        try:
+            model_name = platform_config.get("model_name")
+            request_timeout = platform_config.get("request_timeout", 60)
+            temperature = platform_config.get("temperature", 1.0)
+            top_p = platform_config.get("top_p", 1.0)
+            presence_penalty = platform_config.get("presence_penalty", 0)
+            frequency_penalty = platform_config.get("frequency_penalty", 0)
+            extra_body = platform_config.get("extra_body", {})
+            think_switch = platform_config.get("think_switch")
+            think_depth = platform_config.get("think_depth")
+            use_sdk = platform_config.get("use_openai_sdk", False)
+            is_deepseek = self._is_deepseek_request(platform_config, model_name)
+
+            if system_prompt:
+                messages = [{"role": "system", "content": system_prompt}] + list(messages)
+            else:
+                messages = list(messages)
+
+            if model_name and "deepseek" in model_name.lower():
+                if messages and isinstance(messages[-1], dict) and messages[-1].get("role") != "user":
+                    messages = messages[:-1]
+
+            request_body = {
+                "model": model_name,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": {"type": "function", "function": {"name": tool_name}},
+            }
+
+            self._merge_extra_body(
+                request_body,
+                extra_body,
+                nested=is_deepseek and use_sdk,
+            )
+
+            if temperature != 1:
+                request_body["temperature"] = temperature
+            if top_p != 1:
+                request_body["top_p"] = top_p
+            if presence_penalty != 0:
+                request_body["presence_penalty"] = presence_penalty
+            if frequency_penalty != 0:
+                request_body["frequency_penalty"] = frequency_penalty
+            if think_switch and not is_deepseek:
+                request_body["reasoning_effort"] = think_depth
+            if is_deepseek:
+                self._apply_deepseek_compatibility(request_body, platform_config, tool_mode=True)
+
+            if use_sdk and not is_deepseek:
+                client = LLMClientFactory().get_openai_client(platform_config)
+                response = client.chat.completions.create(
+                    timeout=request_timeout,
+                    **request_body,
+                )
+
+                response_think, tool_payload = self._parse_tool_call_response_sdk(response, tool_name)
+                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+                completion_tokens = response.usage.completion_tokens if response.usage else 0
+                return False, response_think, tool_payload, int(prompt_tokens), int(completion_tokens)
+
+            api_url = platform_config.get("api_url").rstrip("/")
+            if platform_config.get("auto_complete", False) and not api_url.endswith("/chat/completions"):
+                api_url = f"{api_url}/chat/completions"
+            api_key = platform_config.get("api_key")
+            return self._do_tool_call_request(api_url, api_key, request_body, request_timeout, tool_name)
+
+        except Exception as e:
+            error_str = str(e)
+            error_type_enum, _ = ErrorClassifier.classify(error_str)
+            if error_type_enum == ErrorType.HARD_ERROR:
+                error_type = "API_FAIL"
+            elif error_type_enum == ErrorType.SOFT_ERROR:
+                error_type = "API_FAIL"
+            else:
+                error_type = "TOOL_CALL_FAIL"
+
+            if Base.work_status != Base.STATUS.STOPING:
+                api_url = platform_config.get("api_url", "Unknown URL")
+                model_name = platform_config.get("model_name", "Unknown Model")
+                self.error(
+                    f"Tool-call request error ({error_type}) [URL: {api_url}, Model: {model_name}] ... {e}",
+                    e if self.is_debug() else None,
+                )
 
             return True, error_type, str(e), 0, 0

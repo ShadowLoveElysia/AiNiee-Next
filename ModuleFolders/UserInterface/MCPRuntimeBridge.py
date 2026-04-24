@@ -100,6 +100,8 @@ class MCPRuntimeBridge:
             console.print(
                 f"\n[yellow]{self._t('msg_mcp_stopping_returning', '正在停止 MCP 服务并返回菜单...')}[/yellow]"
             )
+            # Let uvicorn finish flushing shutdown logs before the TUI redraws the menu.
+            time.sleep(3)
             return True
         except Exception as exc:
             self._show_runtime_error(

@@ -1,14 +1,3 @@
-﻿from ModuleFolders.Infrastructure.LLMRequester.SakuraRequester import SakuraRequester
-from ModuleFolders.Infrastructure.LLMRequester.MurasakiRequester import MurasakiRequester
-from ModuleFolders.Infrastructure.LLMRequester.LocalLLMRequester import LocalLLMRequester
-from ModuleFolders.Infrastructure.LLMRequester.CohereRequester import CohereRequester
-from ModuleFolders.Infrastructure.LLMRequester.GoogleRequester import GoogleRequester
-from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
-from ModuleFolders.Infrastructure.LLMRequester.AmazonbedrockRequester import AmazonbedrockRequester
-from ModuleFolders.Infrastructure.LLMRequester.OpenaiRequester import OpenaiRequester
-from ModuleFolders.Infrastructure.LLMRequester.DashscopeRequester import DashscopeRequester
-
-
 class LLMRequester:
     def __init__(self) -> None:
         pass
@@ -88,6 +77,8 @@ class LLMRequester:
             request_messages = self._clone_messages(base_messages)
 
             if target_platform == "sakura":
+                from ModuleFolders.Infrastructure.LLMRequester.SakuraRequester import SakuraRequester
+
                 sakura_requester = SakuraRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = sakura_requester.request_sakura(
                     request_messages,
@@ -95,6 +86,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "murasaki":
+                from ModuleFolders.Infrastructure.LLMRequester.MurasakiRequester import MurasakiRequester
+
                 murasaki_requester = MurasakiRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = murasaki_requester.request_murasaki(
                     request_messages,
@@ -102,6 +95,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "LocalLLM":
+                from ModuleFolders.Infrastructure.LLMRequester.LocalLLMRequester import LocalLLMRequester
+
                 local_llm_requester = LocalLLMRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = local_llm_requester.request_LocalLLM(
                     request_messages,
@@ -109,6 +104,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "cohere":
+                from ModuleFolders.Infrastructure.LLMRequester.CohereRequester import CohereRequester
+
                 cohere_requester = CohereRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = cohere_requester.request_cohere(
                     request_messages,
@@ -116,6 +113,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "google" or (target_platform.startswith("custom_platform_") and api_format == "Google"):
+                from ModuleFolders.Infrastructure.LLMRequester.GoogleRequester import GoogleRequester
+
                 google_requester = GoogleRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = google_requester.request_google(
                     request_messages,
@@ -123,6 +122,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "anthropic" or (target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
+                from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
+
                 anthropic_requester = AnthropicRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = anthropic_requester.request_anthropic(
                     request_messages,
@@ -130,6 +131,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "amazonbedrock":
+                from ModuleFolders.Infrastructure.LLMRequester.AmazonbedrockRequester import AmazonbedrockRequester
+
                 amazonbedrock_requester = AmazonbedrockRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = amazonbedrock_requester.request_amazonbedrock(
                     request_messages,
@@ -137,6 +140,8 @@ class LLMRequester:
                     platform_config,
                 )
             elif target_platform == "dashscope":
+                from ModuleFolders.Infrastructure.LLMRequester.DashscopeRequester import DashscopeRequester
+
                 dashscope_requester = DashscopeRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = dashscope_requester.request_openai(
                     request_messages,
@@ -144,6 +149,8 @@ class LLMRequester:
                     platform_config,
                 )
             else:
+                from ModuleFolders.Infrastructure.LLMRequester.OpenaiRequester import OpenaiRequester
+
                 openai_requester = OpenaiRequester()
                 skip, response_think, response_content, prompt_tokens, completion_tokens = openai_requester.request_openai(
                     request_messages,

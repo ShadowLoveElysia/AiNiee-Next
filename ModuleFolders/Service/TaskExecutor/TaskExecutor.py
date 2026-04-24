@@ -54,6 +54,12 @@ class TaskExecutor(Base):
         self.api_pipeline = []
         self.current_api_index = 0
         self.current_mode = None
+
+        self._translation_consistency_lock = threading.RLock()
+        self.translation_consistency_state = {
+            "story_summary": "",
+            "character_info": "",
+        }
         
         # Concurrency Control for Mission Control
         self._concurrency_lock = threading.Lock()
@@ -143,6 +149,27 @@ class TaskExecutor(Base):
             )
         except Exception:
             pass
+
+    def reset_translation_consistency_state(self) -> None:
+        with self._translation_consistency_lock:
+            self.translation_consistency_state = {
+                "story_summary": "",
+                "character_info": "",
+            }
+
+    def get_translation_consistency_state_snapshot(self) -> dict:
+        with self._translation_consistency_lock:
+            return dict(self.translation_consistency_state)
+
+    def update_translation_consistency_state(self, story_summary: str, character_info: str) -> None:
+        with self._translation_consistency_lock:
+            story_summary = str(story_summary or "").strip()
+            character_info = str(character_info or "").strip()
+
+            if story_summary:
+                self.translation_consistency_state["story_summary"] = story_summary
+            if character_info:
+                self.translation_consistency_state["character_info"] = character_info
 
     def _execute_tasks_async(self, tasks_list):
         """异步执行模式：使用 aiohttp 处理高并发请求"""
@@ -458,6 +485,7 @@ class TaskExecutor(Base):
         self.current_mode = current_mode
         self.session_input_path = data.get("session_input_path")
         self.session_output_path = data.get("session_output_path")
+        self.reset_translation_consistency_state()
 
         # 翻译任务
         if current_mode == TaskType.TRANSLATION:
@@ -490,6 +518,17 @@ class TaskExecutor(Base):
 
             # 配置翻译平台信息
             self.config.prepare_for_translation(TaskType.TRANSLATION)
+
+            if getattr(self.config, "translation_consistency_enhancement", False):
+                if getattr(self.config, "enable_async_mode", False):
+                    self.warning("翻译一致性增强模式将关闭异步执行，改为同步单线程顺序处理 ...")
+                    self.config.enable_async_mode = False
+
+                self.info("翻译一致性增强已启用：当前任务将强制使用 Tool Calls 和记忆回灌，线程数锁定为 1 ...")
+                if self.config.target_platform == "deepseek" and bool(getattr(self.config, "think_switch", False)):
+                    self.warning("DeepSeek 在一致性增强模式下将临时关闭 thinking，以确保 Tool Calls 可以正常执行 ...")
+                if not self.config.tokens_limit_switch and self.config.lines_limit < 200:
+                    self.warning("建议将单次翻译行数提高到 200-400 行，以减少一致性增强带来的额外提示词往返 ...")
 
             # 配置请求限制器
             self.request_limiter.set_limit(
@@ -616,7 +655,11 @@ class TaskExecutor(Base):
                     task.set_items(chunk)  # 传入该任务待翻译原文
                     task.set_previous_items(previous_chunk)  # 传入该任务待翻译原文的上文
                     task.set_source_context_items(source_context)  # 传入原文上下文（用于上下文增强）
-                    task.prepare(self.config.target_platform)  # 预先构建消息列表
+                    if getattr(self.config, "translation_consistency_enhancement", False):
+                        task.set_consistency_context_provider(self.get_translation_consistency_state_snapshot)
+                        task.set_consistency_state_updater(self.update_translation_consistency_state)
+                    else:
+                        task.prepare(self.config.target_platform)  # 预先构建消息列表
                     tasks_list.append(task)
                 self.info(f"已经生成全部翻译任务 ...")
                 self.print("")
