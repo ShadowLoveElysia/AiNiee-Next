@@ -513,6 +513,42 @@ export const DataService = {
         return data;
     },
 
+    async detectMangaPage(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/detect`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to detect manga page');
+        return data;
+    },
+
+    async ocrMangaPage(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/ocr`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to OCR manga page');
+        return data;
+    },
+
+    async inpaintMangaPage(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/inpaint`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to inpaint manga page');
+        return data;
+    },
+
+    async renderMangaPage(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/render`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to render manga page');
+        return data;
+    },
+
     async translateSelectedMangaPages(projectId: string, pageIds: string[]): Promise<MangaJob> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/batch/translate`, {
             method: 'POST',
@@ -527,6 +563,23 @@ export const DataService = {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to translate selected manga pages');
+        return data;
+    },
+
+    async planSelectedMangaPages(projectId: string, pageIds: string[]): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/batch/typesetting-plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                page_ids: pageIds,
+                generate_text_blocks: true,
+                auto_inpaint: false,
+                auto_render: false,
+                auto_export: false
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to generate manga text block plans');
         return data;
     },
 

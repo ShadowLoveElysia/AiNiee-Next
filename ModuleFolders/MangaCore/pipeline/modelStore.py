@@ -7,6 +7,13 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
+from ModuleFolders.MangaCore.bridge.providerAdapter import (
+    download_runtime_assets,
+    get_detect_runtime_ids,
+    get_inpaint_runtime_id,
+    get_ocr_runtime_id,
+    get_runtime_asset_status,
+)
 from ModuleFolders.MangaCore.pipeline.modelCatalog import MangaModelPackage, get_model_package, list_model_packages
 
 
@@ -37,7 +44,10 @@ class MangaModelStore:
         package = get_model_package(model_id)
         record = self._read_record(model_id)
         snapshot_path = Path(record.get("snapshot_path", "")) if record.get("snapshot_path") else None
-        available = bool(snapshot_path and snapshot_path.exists())
+        runtime_status = get_runtime_asset_status(model_id, self.root_dir)
+        if not snapshot_path and runtime_status.available and runtime_status.storage_path:
+            snapshot_path = Path(runtime_status.storage_path)
+        available = bool(snapshot_path and snapshot_path.exists()) or runtime_status.available
         payload = package.to_dict()
         payload.update(
             {
@@ -47,6 +57,9 @@ class MangaModelStore:
                 "snapshot_path": str(snapshot_path) if snapshot_path else "",
                 "downloaded_at": str(record.get("downloaded_at", "")),
                 "revision": str(record.get("revision", "")),
+                "runtime_supported": runtime_status.supported,
+                "runtime_assets_path": runtime_status.storage_path,
+                "runtime_engine_id": runtime_status.runtime_engine_id,
             }
         )
         return payload
@@ -78,6 +91,14 @@ class MangaModelStore:
 
     def download(self, model_id: str) -> dict[str, object]:
         package = get_model_package(model_id)
+        runtime_status = download_runtime_assets(model_id, self.root_dir)
+        if runtime_status is not None and runtime_status.available:
+            return self.register_downloaded_snapshot(
+                model_id,
+                runtime_status.storage_path,
+                revision=f"runtime:{runtime_status.runtime_engine_id}",
+            )
+
         self.huggingface_cache_dir().mkdir(parents=True, exist_ok=True)
         snapshot_path = snapshot_download(
             repo_id=package.repo_id,
@@ -114,24 +135,25 @@ def build_engine_status(config_snapshot: dict[str, object] | None = None) -> dic
     detect_id = str(snapshot.get("manga_detect_engine") or "comic-text-bubble-detector")
     segment_id = str(snapshot.get("manga_segment_engine") or "comic-text-detector")
     inpaint_id = str(snapshot.get("manga_inpaint_engine") or "aot-inpainting")
+    detector_runtime_id, segmenter_runtime_id = get_detect_runtime_ids(detect_id, segment_id, store.root_dir)
 
     return {
         "ocr": {
             "configured_engine_id": ocr_id,
-            "runtime_engine_id": "rapidocr-onnxruntime",
+            "runtime_engine_id": get_ocr_runtime_id(ocr_id, store.root_dir),
             "package": store.get_status(ocr_id),
         },
         "detect": {
             "configured_detector_id": detect_id,
             "configured_segmenter_id": segment_id,
-            "runtime_detector_id": "heuristic-grouping",
-            "runtime_segmenter_id": "pil-mask-rasterizer",
+            "runtime_detector_id": detector_runtime_id,
+            "runtime_segmenter_id": segmenter_runtime_id,
             "detector_package": store.get_status(detect_id),
             "segmenter_package": store.get_status(segment_id),
         },
         "inpaint": {
             "configured_engine_id": inpaint_id,
-            "runtime_engine_id": "opencv-telea/pil-fallback",
+            "runtime_engine_id": get_inpaint_runtime_id(inpaint_id, store.root_dir),
             "package": store.get_status(inpaint_id),
         },
     }

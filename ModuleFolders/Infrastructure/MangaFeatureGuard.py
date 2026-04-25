@@ -79,8 +79,10 @@ def get_manga_feature_status(
 
         if not bool(status.get("available")):
             missing_model_ids.append(model_id)
+            runtime_assets_path = str(status.get("runtime_assets_path", "") or "")
+            hint_path = runtime_assets_path or str(status.get("cache_dir", "") or "")
             details.append(
-                f"{stage}: 缺少模型包 `{model_id}`，请先下载到 `{status.get('cache_dir', '')}`。"
+                f"{stage}: 缺少模型包 `{model_id}`，请先下载到 `{hint_path}`。"
             )
 
     if missing_model_ids:

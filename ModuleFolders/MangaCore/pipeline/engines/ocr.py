@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+from ModuleFolders.MangaCore.bridge.providerAdapter import (
+    get_runtime_asset_status,
+    run_region_ocr_runtime,
+)
 from ModuleFolders.MangaCore.render.bubbleAssign import TextSeed
 
 DEFAULT_OCR_ENGINE_ID = "paddleocr-vl-1.5"
@@ -33,11 +38,16 @@ class OcrEngine:
             self.engine_id = str(engine_id)
 
     def describe(self) -> dict[str, object]:
+        runtime_status = get_runtime_asset_status(self.engine_id)
         return {
             "configured_engine_id": self.engine_id,
-            "runtime_engine_id": RUNTIME_OCR_ENGINE_ID,
+            "runtime_engine_id": runtime_status.runtime_engine_id if runtime_status.available else RUNTIME_OCR_ENGINE_ID,
             "supported_engine_ids": [DEFAULT_OCR_ENGINE_ID, *ALTERNATIVE_OCR_ENGINE_IDS],
         }
+
+    def requires_detect_regions(self) -> bool:
+        runtime_status = get_runtime_asset_status(self.engine_id)
+        return runtime_status.available
 
     @classmethod
     def _get_runtime(cls):
@@ -47,7 +57,16 @@ class OcrEngine:
             cls._ocr_instance = RapidOCR()
         return cls._ocr_instance
 
-    def run(self, image_path: str | Path) -> list[TextSeed]:
+    def run(self, image_path: str | Path, *, regions: list[Any] | None = None) -> list[TextSeed]:
+        runtime_status = get_runtime_asset_status(self.engine_id)
+        if runtime_status.available and regions:
+            try:
+                runtime_output = run_region_ocr_runtime(image_path, self.engine_id, regions)
+                if runtime_output is not None:
+                    return runtime_output.seeds
+            except Exception:
+                pass
+
         runtime = self._get_runtime()
         result, _timings = runtime(str(image_path))
         if not result:

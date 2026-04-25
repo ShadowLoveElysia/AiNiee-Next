@@ -78,8 +78,7 @@ class MangaPageRunner:
         )
 
         try:
-            seeds = self.ocr_engine.run(session.project_path / page.layers.source)
-            assignments = assign_bubbles(seeds, page.width, page.height)
+            seeds, assignments = self._run_seed_stage(session, page)
             self._write_seed_artifacts(session, page, seeds, assignments)
             detect_result = self._run_detect_stage(session, page, seeds=seeds, assignments=assignments)
             page.last_pipeline_stage = "page_detecting"
@@ -125,8 +124,7 @@ class MangaPageRunner:
         )
 
         try:
-            seeds = self.ocr_engine.run(session.project_path / page.layers.source)
-            assignments = assign_bubbles(seeds, page.width, page.height)
+            seeds, assignments = self._run_seed_stage(session, page)
             self._write_seed_artifacts(session, page, seeds, assignments)
             self._run_detect_stage(session, page, seeds=seeds, assignments=assignments)
             inpaint_result = self._run_inpaint_stage(session, page)
@@ -222,14 +220,13 @@ class MangaPageRunner:
                 progress=20,
                 message="OCR started for the current page.",
             )
-            seeds = self.ocr_engine.run(session.project_path / page.layers.source)
+            seeds, assignments = self._run_seed_stage(session, page)
             JobRegistry.update(
                 job.job_id,
                 stage="page_typesetting_planning",
                 progress=50,
                 message=f"OCR completed with {len(seeds)} text seed(s); generating editable blocks.",
             )
-            assignments = assign_bubbles(seeds, page.width, page.height)
             blocks = plan_text_blocks(page.page_id, seeds, assignments)
 
             page.text_blocks = blocks
@@ -358,14 +355,13 @@ class MangaPageRunner:
                     progress=int(processed * 100 / max(1, len(page_ids))),
                     message=f"OCR {processed + 1}/{len(page_ids)} page(s).",
                 )
-                seeds = self.ocr_engine.run(session.project_path / page.layers.source)
+                seeds, assignments = self._run_seed_stage(session, page)
                 JobRegistry.update(
                     job.job_id,
                     stage="batch_typesetting_planning",
                     progress=int((processed + 0.4) * 100 / max(1, len(page_ids))),
                     message=f"Planning editable blocks for {processed + 1}/{len(page_ids)} page(s).",
                 )
-                assignments = assign_bubbles(seeds, page.width, page.height)
                 blocks = plan_text_blocks(page.page_id, seeds, assignments) if generate_text_blocks else []
                 page.text_blocks = blocks
                 page.status = "needs_review" if blocks else "failed"
@@ -531,6 +527,27 @@ class MangaPageRunner:
             "bubbleAssignments.json",
             [assignment.to_dict() for assignment in assignments],
         )
+
+    def _run_seed_stage(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+    ) -> tuple[list[TextSeed], list[BubbleAssignment]]:
+        source_path = session.project_path / page.layers.source
+        if self.ocr_engine.requires_detect_regions():
+            pre_detect = self.detect_engine.run(
+                source_path,
+                page.width,
+                page.height,
+            )
+            seeds = self.ocr_engine.run(source_path, regions=pre_detect.text_regions)
+            if not seeds:
+                seeds = self.ocr_engine.run(source_path)
+        else:
+            seeds = self.ocr_engine.run(source_path)
+
+        assignments = assign_bubbles(seeds, page.width, page.height)
+        return seeds, assignments
 
     def _run_detect_stage(
         self,

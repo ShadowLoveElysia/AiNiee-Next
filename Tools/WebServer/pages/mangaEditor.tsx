@@ -1,18 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BookOpen, Download, Loader2, Plus, Redo2, RefreshCw, Save, Sparkles, Undo2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { MangaBlocksPanel } from '../components/manga/mangaBlocksPanel';
+import { MangaCanvas } from '../components/manga/mangaCanvas';
+import { MangaInspector } from '../components/manga/mangaInspector';
+import { MangaLayersPanel } from '../components/manga/mangaLayersPanel';
+import { MangaPageStrip } from '../components/manga/mangaPageStrip';
+import { MangaStatusBar } from '../components/manga/mangaStatusBar';
+import { MangaTopBar } from '../components/manga/mangaTopBar';
+import { MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode } from '../components/manga/shared';
 import { DataService } from '../services/DataService';
 import { MangaJob, MangaPageDetail, MangaProjectSummary, MangaSceneSummary } from '../types/manga';
 
-type ViewMode = 'rendered' | 'original' | 'overlay' | 'inpainted';
 type NoticeTone = 'info' | 'success' | 'warning' | 'error';
-
-interface BlockDraft {
-  source_text: string;
-  translation: string;
-  font_size: number;
-  fill: string;
-  stroke_width: number;
-}
 
 const getInitialProjectPath = () => {
   const hash = window.location.hash || '';
@@ -22,6 +21,21 @@ const getInitialProjectPath = () => {
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const formatStageLabel = (value: string) => (
+  value
+    .split('_')
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+);
+
+const createDefaultLayerControls = (viewMode: MangaViewMode): MangaLayerControls => ({
+  segment: { visible: false, opacity: 0.35 },
+  bubble: { visible: false, opacity: 0.35 },
+  brush: { visible: false, opacity: 0.35 },
+  overlay: { visible: viewMode === 'overlay', opacity: 1 },
+});
+
 export const MangaEditor: React.FC = () => {
   const [projectPath, setProjectPath] = useState(getInitialProjectPath());
   const [project, setProject] = useState<MangaProjectSummary | null>(null);
@@ -29,20 +43,90 @@ export const MangaEditor: React.FC = () => {
   const [page, setPage] = useState<MangaPageDetail | null>(null);
   const [selectedPageId, setSelectedPageId] = useState('');
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>('rendered');
+  const [activeBlockId, setActiveBlockId] = useState('');
+  const [viewMode, setViewMode] = useState<MangaViewMode>('rendered');
   const [isLoading, setIsLoading] = useState(false);
   const [busyAction, setBusyAction] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ tone: NoticeTone; message: string } | null>(null);
   const [activeJob, setActiveJob] = useState<MangaJob | null>(null);
-  const [blockDrafts, setBlockDrafts] = useState<Record<string, BlockDraft>>({});
+  const [blockDrafts, setBlockDrafts] = useState<Record<string, MangaBlockDraft>>({});
+  const [canvasCommand, setCanvasCommand] = useState<MangaCanvasCommand>({ kind: 'fit', token: 0 });
+  const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
+  const [canvasPointer, setCanvasPointer] = useState<MangaCanvasPointer | null>(null);
+  const [layerControls, setLayerControls] = useState<MangaLayerControls>(createDefaultLayerControls('rendered'));
+
+  const selectedCount = selectedPageIds.length || (selectedPageId ? 1 : 0);
 
   const currentImageUrl = useMemo(() => {
     if (!page) return '';
-    if (viewMode === 'original') return page.layers.source_url;
+    if (viewMode === 'original' || viewMode === 'overlay') return page.layers.source_url;
     if (viewMode === 'inpainted') return page.layers.inpainted_url;
     return page.layers.rendered_url;
   }, [page, viewMode]);
+
+  const engineCards = useMemo<MangaEngineCard[]>(() => {
+    if (!scene?.engines) return [];
+
+    return [
+      {
+        label: 'OCR',
+        configured: scene.engines.ocr.configured_engine_id,
+        runtime: scene.engines.ocr.runtime_engine_id,
+        available: Boolean(scene.engines.ocr.package?.available),
+        packageLabel: scene.engines.ocr.package?.display_name || scene.engines.ocr.package?.repo_id || 'Unknown package',
+      },
+      {
+        label: 'Detect',
+        configured: `${scene.engines.detect.configured_detector_id} / ${scene.engines.detect.configured_segmenter_id}`,
+        runtime: `${scene.engines.detect.runtime_detector_id} / ${scene.engines.detect.runtime_segmenter_id}`,
+        available: Boolean(scene.engines.detect.detector_package?.available) && Boolean(scene.engines.detect.segmenter_package?.available),
+        packageLabel: [
+          scene.engines.detect.detector_package?.display_name || scene.engines.detect.detector_package?.repo_id || '',
+          scene.engines.detect.segmenter_package?.display_name || scene.engines.detect.segmenter_package?.repo_id || '',
+        ].filter(Boolean).join(' + '),
+      },
+      {
+        label: 'Inpaint',
+        configured: scene.engines.inpaint.configured_engine_id,
+        runtime: scene.engines.inpaint.runtime_engine_id,
+        available: Boolean(scene.engines.inpaint.package?.available),
+        packageLabel: scene.engines.inpaint.package?.display_name || scene.engines.inpaint.package?.repo_id || 'Unknown package',
+      },
+    ];
+  }, [scene]);
+
+  const activeBlock = useMemo(
+    () => page?.blocks.find((block) => block.block_id === activeBlockId) || null,
+    [activeBlockId, page],
+  );
+
+  const activeBlockDraft = activeBlockId ? blockDrafts[activeBlockId] || null : null;
+
+  const activeJobSummary = useMemo(() => (
+    activeJob
+      ? {
+          stageLabel: formatStageLabel(activeJob.stage),
+          progress: activeJob.progress,
+          status: activeJob.status,
+          message: activeJob.message,
+        }
+      : null
+  ), [activeJob]);
+
+  const statusLeftText = page
+    ? `Page ${page.index} · ${page.width}x${page.height} · ${page.blocks.length} blocks · view ${viewMode} · zoom ${canvasZoomPercent}%`
+    : 'No page loaded';
+
+  const statusCenterText = canvasPointer
+    ? `Cursor ${canvasPointer.x},${canvasPointer.y} · ${Math.round(canvasPointer.normalizedX * 100)}%,${Math.round(canvasPointer.normalizedY * 100)}%`
+    : 'Cursor -';
+
+  const statusRightText = activeJobSummary
+    ? `${activeJobSummary.stageLabel} · ${activeJobSummary.progress}% · ${activeJobSummary.status}`
+    : engineCards.length > 0
+      ? engineCards.map((card) => `${card.label}:${card.available ? 'ready' : 'missing'}`).join(' · ')
+      : 'Idle';
 
   const showNotice = (tone: NoticeTone, message: string) => {
     setNotice({ tone, message });
@@ -54,28 +138,39 @@ export const MangaEditor: React.FC = () => {
   };
 
   const setDraftsFromPage = (detail: MangaPageDetail) => {
-    const nextDrafts: Record<string, BlockDraft> = {};
+    const nextDrafts: Record<string, MangaBlockDraft> = {};
     for (const block of detail.blocks) {
       nextDrafts[block.block_id] = {
         source_text: block.source_text || '',
         translation: block.translation || '',
+        font_family: block.style.font_family,
         font_size: block.style.font_size,
+        line_spacing: block.style.line_spacing,
         fill: block.style.fill,
+        stroke_color: block.style.stroke_color,
         stroke_width: block.style.stroke_width,
       };
     }
     setBlockDrafts(nextDrafts);
+    setActiveBlockId((current) => (
+      detail.blocks.some((block) => block.block_id === current)
+        ? current
+        : detail.blocks[0]?.block_id || ''
+    ));
   };
 
-  const updateDraft = (blockId: string, patch: Partial<BlockDraft>) => {
+  const updateDraft = (blockId: string, patch: Partial<MangaBlockDraft>) => {
     setBlockDrafts((current) => ({
       ...current,
       [blockId]: {
         ...(current[blockId] || {
           source_text: '',
           translation: '',
+          font_family: '',
           font_size: 42,
+          line_spacing: 1.2,
           fill: '#111111',
+          stroke_color: '#ffffff',
           stroke_width: 2,
         }),
         ...patch,
@@ -103,6 +198,18 @@ export const MangaEditor: React.FC = () => {
     await loadPage(projectId, targetPageId);
   };
 
+  const syncProjectState = async (projectId: string, preferredPageId?: string) => {
+    const nextScene = await refreshScene(projectId);
+    const nextPageId = preferredPageId || nextScene.current_page_id || nextScene.pages[0]?.page_id || '';
+    if (nextPageId) {
+      await loadPage(projectId, nextPageId);
+    } else {
+      setPage(null);
+      setSelectedPageId('');
+      setActiveBlockId('');
+    }
+  };
+
   const waitForJob = async (projectId: string, initialJob: MangaJob) => {
     setActiveJob(initialJob);
     if (!initialJob.job_id || initialJob.status === 'completed' || initialJob.status === 'failed') {
@@ -110,8 +217,8 @@ export const MangaEditor: React.FC = () => {
     }
 
     let latest = initialJob;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await delay(350);
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await delay(500);
       latest = await DataService.getMangaJob(projectId, initialJob.job_id);
       setActiveJob(latest);
       if (latest.status === 'completed' || latest.status === 'failed') {
@@ -135,16 +242,22 @@ export const MangaEditor: React.FC = () => {
 
   const buildChangedOps = () => {
     if (!page) return [];
+
     const ops: any[] = [];
     for (const block of page.blocks) {
       const draft = blockDrafts[block.block_id];
       if (!draft) continue;
+
       const patch: Record<string, string | number> = {};
       if (draft.source_text !== (block.source_text || '')) patch.source_text = draft.source_text;
       if (draft.translation !== (block.translation || '')) patch.translation = draft.translation;
+      if (draft.font_family !== block.style.font_family) patch['style.font_family'] = draft.font_family;
       if (draft.font_size !== block.style.font_size) patch['style.font_size'] = draft.font_size;
+      if (draft.line_spacing !== block.style.line_spacing) patch['style.line_spacing'] = draft.line_spacing;
       if (draft.fill !== block.style.fill) patch['style.fill'] = draft.fill;
+      if (draft.stroke_color !== block.style.stroke_color) patch['style.stroke_color'] = draft.stroke_color;
       if (draft.stroke_width !== block.style.stroke_width) patch['style.stroke_width'] = draft.stroke_width;
+
       if (Object.keys(patch).length > 0) {
         ops.push({
           type: 'UpdateTextBlock',
@@ -159,14 +272,15 @@ export const MangaEditor: React.FC = () => {
 
   const applyDraftChanges = async (quiet = false) => {
     if (!project || !page) return 0;
+
     const ops = buildChangedOps();
     if (ops.length === 0) {
       if (!quiet) showNotice('info', 'No block changes to save.');
       return 0;
     }
+
     await DataService.applyMangaOps(project.project_id, ops);
-    await refreshScene(project.project_id);
-    await refreshCurrentPage(project.project_id, page.page_id);
+    await syncProjectState(project.project_id, page.page_id);
     if (!quiet) showNotice('success', `Saved ${ops.length} block change(s).`);
     return ops.length;
   };
@@ -178,6 +292,7 @@ export const MangaEditor: React.FC = () => {
       return;
     }
 
+    setProjectPath(nextPath);
     setError('');
     setIsLoading(true);
     try {
@@ -187,12 +302,14 @@ export const MangaEditor: React.FC = () => {
       setScene(sceneSummary);
       setSelectedPageIds([]);
       setActiveJob(null);
+      setActiveBlockId('');
 
       const firstPageId = sceneSummary.current_page_id || sceneSummary.pages[0]?.page_id || '';
       if (firstPageId) {
         await loadPage(opened.project_id, firstPageId);
       } else {
         setPage(null);
+        setSelectedPageId('');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to open manga project.');
@@ -201,35 +318,92 @@ export const MangaEditor: React.FC = () => {
     }
   };
 
-  const handleTranslateCurrentPage = async () => {
+  const runPagePipelineAction = async (
+    action: string,
+    runner: (projectId: string, pageId: string) => Promise<MangaJob>,
+    options?: {
+      syncDraftsBefore?: boolean;
+      nextViewMode?: MangaViewMode;
+    },
+  ) => {
     if (!project || !selectedPageId) return;
-    await withBusyAction('translate current page', async () => {
-      const job = await DataService.translateMangaPage(project.project_id, selectedPageId);
+
+    await withBusyAction(action, async () => {
+      if (options?.syncDraftsBefore) {
+        await applyDraftChanges(true);
+      }
+      const job = await runner(project.project_id, selectedPageId);
       const settled = await waitForJob(project.project_id, job);
-      await refreshScene(project.project_id);
-      await refreshCurrentPage(project.project_id, selectedPageId);
+      await syncProjectState(project.project_id, selectedPageId);
+      if (options?.nextViewMode) {
+        setViewMode(options.nextViewMode);
+      }
       showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
+    });
+  };
+
+  const handleDetectPage = async () => {
+    await runPagePipelineAction('detect current page', DataService.detectMangaPage, { nextViewMode: 'original' });
+  };
+
+  const handleOcrPage = async () => {
+    await runPagePipelineAction('ocr current page', DataService.ocrMangaPage, { nextViewMode: 'overlay' });
+  };
+
+  const handleTranslateCurrentPage = async () => {
+    await runPagePipelineAction('translate current page', DataService.translateMangaPage, { nextViewMode: 'rendered' });
+  };
+
+  const handleInpaintPage = async () => {
+    await runPagePipelineAction('inpaint current page', DataService.inpaintMangaPage, { nextViewMode: 'inpainted' });
+  };
+
+  const handleRenderPage = async () => {
+    await runPagePipelineAction('render current page', DataService.renderMangaPage, {
+      syncDraftsBefore: true,
+      nextViewMode: 'rendered',
     });
   };
 
   const handleTranslateSelectedPages = async () => {
     if (!project) return;
+
     const pageIds = selectedPageIds.length > 0 ? selectedPageIds : (selectedPageId ? [selectedPageId] : []);
     if (pageIds.length === 0) {
       showNotice('warning', 'Select at least one page for batch processing.');
       return;
     }
+
     await withBusyAction('translate selected pages', async () => {
       const job = await DataService.translateSelectedMangaPages(project.project_id, pageIds);
       const settled = await waitForJob(project.project_id, job);
-      const nextScene = await refreshScene(project.project_id);
-      await refreshCurrentPage(project.project_id, nextScene.current_page_id || pageIds[0]);
+      await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
+      setViewMode('overlay');
+      showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
+    });
+  };
+
+  const handlePlanSelectedPages = async () => {
+    if (!project) return;
+
+    const pageIds = selectedPageIds.length > 0 ? selectedPageIds : (selectedPageId ? [selectedPageId] : []);
+    if (pageIds.length === 0) {
+      showNotice('warning', 'Select at least one page to regenerate text block plans.');
+      return;
+    }
+
+    await withBusyAction('plan selected pages', async () => {
+      const job = await DataService.planSelectedMangaPages(project.project_id, pageIds);
+      const settled = await waitForJob(project.project_id, job);
+      await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
+      setViewMode('overlay');
       showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
     });
   };
 
   const handleSaveProject = async () => {
     if (!project) return;
+
     await withBusyAction('save project', async () => {
       await applyDraftChanges(true);
       const result = await DataService.saveMangaProject(project.project_id);
@@ -239,11 +413,13 @@ export const MangaEditor: React.FC = () => {
 
   const handleAddBlock = async () => {
     if (!project || !page) return;
+
     const blockId = `blk_${page.page_id}_manual_${Date.now()}`;
     const width = Math.max(120, Math.round(page.width * 0.24));
     const height = Math.max(90, Math.round(page.height * 0.16));
     const x1 = Math.round((page.width - width) / 2);
     const y1 = Math.round((page.height - height) / 2);
+
     await withBusyAction('add block', async () => {
       await DataService.applyMangaOps(project.project_id, [
         {
@@ -262,38 +438,43 @@ export const MangaEditor: React.FC = () => {
           },
         },
       ]);
-      await refreshScene(project.project_id);
-      await refreshCurrentPage(project.project_id, page.page_id);
+      await syncProjectState(project.project_id, page.page_id);
+      setActiveBlockId(blockId);
+      setViewMode('overlay');
       showNotice('success', 'Added a manual text block to the current page.');
     });
   };
 
   const handleUndo = async () => {
     if (!project || !page) return;
+
     await withBusyAction('undo', async () => {
       const result = await DataService.undoMangaOps(project.project_id);
-      await refreshScene(project.project_id);
-      await refreshCurrentPage(project.project_id, page.page_id);
+      await syncProjectState(project.project_id, page.page_id);
       showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? 'Undo applied.' : 'Nothing to undo.'));
     });
   };
 
   const handleRedo = async () => {
     if (!project || !page) return;
+
     await withBusyAction('redo', async () => {
       const result = await DataService.redoMangaOps(project.project_id);
-      await refreshScene(project.project_id);
-      await refreshCurrentPage(project.project_id, page.page_id);
+      await syncProjectState(project.project_id, page.page_id);
       showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? 'Redo applied.' : 'Nothing to redo.'));
     });
   };
 
   const handleExport = async (format: 'pdf' | 'epub' | 'cbz' | 'zip' | 'rar') => {
     if (!project) return;
+
     await withBusyAction(`export ${format}`, async () => {
       await applyDraftChanges(true);
       const result = await DataService.exportMangaProject(project.project_id, format);
-      showNotice(result.ok ? 'success' : 'warning', result.ok ? `Exported ${format.toUpperCase()} to ${result.path}` : `Export ${format.toUpperCase()} returned no file.`);
+      showNotice(
+        result.ok ? 'success' : 'warning',
+        result.ok ? `Exported ${format.toUpperCase()} to ${result.path}` : `Export ${format.toUpperCase()} returned no file.`,
+      );
     });
   };
 
@@ -305,124 +486,79 @@ export const MangaEditor: React.FC = () => {
     ));
   };
 
+  const toggleLayer = (layer: MangaOverlayLayerKey) => {
+    setLayerControls((current) => ({
+      ...current,
+      [layer]: {
+        ...current[layer],
+        visible: !current[layer].visible,
+      },
+    }));
+  };
+
+  const setLayerOpacity = (layer: MangaOverlayLayerKey, opacity: number) => {
+    setLayerControls((current) => ({
+      ...current,
+      [layer]: {
+        ...current[layer],
+        opacity,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    setCanvasCommand((current) => ({ kind: 'fit', token: current.token + 1 }));
+    setCanvasPointer(null);
+  }, [page?.page_id, viewMode]);
+
+  useEffect(() => {
+    setLayerControls(createDefaultLayerControls(viewMode));
+  }, [page?.page_id, viewMode]);
+
   useEffect(() => {
     if (projectPath) {
       void openProject(projectPath);
     }
+    // Run once on initial mount; hash parsing already seeded projectPath.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div className="h-screen bg-background text-slate-100 flex flex-col overflow-hidden">
-      <div className="h-16 border-b border-slate-800 bg-surface/80 backdrop-blur px-4 flex items-center gap-3">
-        <button
-          onClick={() => { window.location.hash = '/task'; }}
-          className="h-10 w-10 rounded-lg border border-slate-700 bg-slate-900/70 text-slate-300 hover:text-white hover:border-primary transition-colors flex items-center justify-center"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="h-10 w-10 rounded-xl bg-cyan-500/10 border border-cyan-400/20 text-cyan-300 flex items-center justify-center">
-            <BookOpen size={18} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Manga Editor</div>
-            <div className="font-semibold truncate">{project?.name || 'Open MangaProject'}</div>
-          </div>
-        </div>
-        <div className="hidden lg:flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1">
-          {(['original', 'overlay', 'rendered', 'inpainted'] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={`px-3 py-2 rounded-lg text-xs uppercase tracking-[0.2em] transition-colors ${
-                viewMode === mode ? 'bg-primary text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={() => void handleTranslateCurrentPage()}
-          disabled={!project || !selectedPageId || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-4 py-2 rounded-lg border border-cyan-400/30 bg-cyan-500/10 text-cyan-200 disabled:opacity-50"
-        >
-          {busyAction === 'translate current page' ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          Translate Current Page
-        </button>
-        <button
-          onClick={() => void handleTranslateSelectedPages()}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          <Sparkles size={16} /> Translate Selected ({selectedPageIds.length || (selectedPageId ? 1 : 0)})
-        </button>
-        <button
-          onClick={() => void handleAddBlock()}
-          disabled={!project || !page || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          <Plus size={16} /> Add Block
-        </button>
-        <button
-          onClick={() => void handleUndo()}
-          disabled={!project || !page || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          <Undo2 size={16} />
-        </button>
-        <button
-          onClick={() => void handleRedo()}
-          disabled={!project || !page || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          <Redo2 size={16} />
-        </button>
-        <button
-          onClick={() => void handleSaveProject()}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          {busyAction === 'save project' ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save
-        </button>
-        <button
-          onClick={() => void handleExport('pdf')}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          <Download size={16} /> PDF
-        </button>
-        <button
-          onClick={() => void handleExport('cbz')}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          CBZ
-        </button>
-        <button
-          onClick={() => void handleExport('epub')}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          EPUB
-        </button>
-        <button
-          onClick={() => void handleExport('zip')}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          ZIP
-        </button>
-        <button
-          onClick={() => void handleExport('rar')}
-          disabled={!project || !!busyAction}
-          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-slate-300 disabled:opacity-50"
-        >
-          RAR
-        </button>
-      </div>
+      <MangaTopBar
+        projectName={project?.name || 'Open MangaProject'}
+        viewMode={viewMode}
+        busyAction={busyAction}
+        hasProject={Boolean(project)}
+        hasPage={Boolean(page)}
+        hasSelectedPage={Boolean(selectedPageId)}
+        selectedCount={selectedCount}
+        currentPageIndex={page?.index || 0}
+        pageCount={scene?.pages.length || project?.page_count || 0}
+        zoomPercent={canvasZoomPercent}
+        onBack={() => { window.location.hash = '/task'; }}
+        onSetViewMode={setViewMode}
+        onFitCanvas={() => { setCanvasCommand((current) => ({ kind: 'fit', token: current.token + 1 })); }}
+        onResetZoom={() => { setCanvasCommand((current) => ({ kind: 'actual', token: current.token + 1 })); }}
+        onDetect={() => { void handleDetectPage(); }}
+        onOcr={() => { void handleOcrPage(); }}
+        onTranslateCurrent={() => { void handleTranslateCurrentPage(); }}
+        onTranslateSelected={() => { void handleTranslateSelectedPages(); }}
+        onPlanSelected={() => { void handlePlanSelectedPages(); }}
+        onInpaint={() => { void handleInpaintPage(); }}
+        onRender={() => { void handleRenderPage(); }}
+        onAddBlock={() => { void handleAddBlock(); }}
+        onUndo={() => { void handleUndo(); }}
+        onRedo={() => { void handleRedo(); }}
+        onSave={() => { void handleSaveProject(); }}
+        onExportPdf={() => { void handleExport('pdf'); }}
+        onExportCbz={() => { void handleExport('cbz'); }}
+        onExportEpub={() => { void handleExport('epub'); }}
+        onExportZip={() => { void handleExport('zip'); }}
+        onExportRar={() => { void handleExport('rar'); }}
+      />
 
-      <div className="px-4 py-3 border-b border-slate-900 bg-slate-950/70 flex flex-col lg:flex-row gap-3 lg:items-center">
+      <div className="px-4 py-3 border-b border-slate-900 bg-slate-950/70 flex flex-col xl:flex-row gap-3 xl:items-center">
         <input
           type="text"
           value={projectPath}
@@ -430,7 +566,7 @@ export const MangaEditor: React.FC = () => {
           placeholder="H:/path/to/output/mangaProject"
           className="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-primary"
         />
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => void openProject()}
             disabled={isLoading}
@@ -439,10 +575,17 @@ export const MangaEditor: React.FC = () => {
             {isLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
             Open Project
           </button>
+          <button
+            onClick={() => setViewMode('overlay')}
+            disabled={!page}
+            className="px-4 py-3 rounded-xl border border-slate-800 bg-slate-900/80 text-sm text-slate-300 disabled:opacity-50"
+          >
+            Overlay View
+          </button>
         </div>
         {project && (
           <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-            {scene?.pages.length || 0} pages · current {page?.index || 0}
+            {scene?.pages.length || 0} pages · current {page?.index || 0} · selected {selectedCount}
           </div>
         )}
       </div>
@@ -465,173 +608,58 @@ export const MangaEditor: React.FC = () => {
       )}
 
       <div className="flex-1 min-h-0 flex">
-        <aside className="w-[290px] border-r border-slate-900 bg-slate-950/80 overflow-y-auto">
-          <div className="px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-500 border-b border-slate-900">Pages</div>
-          <div className="p-3 space-y-3">
-            {(scene?.pages || []).map((scenePage) => (
-              <button
-                key={scenePage.page_id}
-                onClick={() => { if (project) void loadPage(project.project_id, scenePage.page_id); }}
-                className={`w-full text-left rounded-2xl border overflow-hidden transition-colors ${
-                  selectedPageId === scenePage.page_id
-                    ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_rgba(34,211,238,0.18)]'
-                    : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
-                }`}
-              >
-                <div className="px-3 py-2 border-b border-slate-800/80 flex items-center justify-between">
-                  <label
-                    className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedPageIds.includes(scenePage.page_id)}
-                      onChange={() => togglePageSelection(scenePage.page_id)}
-                      className="w-4 h-4 rounded border-slate-700 text-primary bg-slate-950"
-                    />
-                    Select
-                  </label>
-                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{scenePage.status}</span>
-                </div>
-                <div className="aspect-[2/3] bg-slate-950 flex items-center justify-center overflow-hidden">
-                  <img src={scenePage.thumbnail_url} alt={scenePage.page_id} className="w-full h-full object-cover" />
-                </div>
-                <div className="px-3 py-2 flex items-center justify-between">
-                  <span className="text-sm font-semibold">Page {scenePage.index}</span>
-                  {scene?.current_page_id === scenePage.page_id && (
-                    <span className="text-[10px] uppercase tracking-[0.18em] text-primary">Current</span>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </aside>
+        <MangaPageStrip
+          pages={scene?.pages || []}
+          selectedPageId={selectedPageId}
+          selectedPageIds={selectedPageIds}
+          currentPageId={scene?.current_page_id || ''}
+          onSelectPage={(pageId) => { if (project) void loadPage(project.project_id, pageId); }}
+          onTogglePageSelection={togglePageSelection}
+        />
 
-        <main className="flex-1 min-w-0 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.08),_transparent_40%),linear-gradient(180deg,_rgba(15,23,42,0.95),_rgba(2,6,23,1))] flex items-center justify-center p-6">
-          {!page ? (
-            <div className="text-center text-slate-500">
-              <div className="text-xs uppercase tracking-[0.28em] mb-3">Canvas</div>
-              <div className="text-lg font-semibold text-slate-300">Open a MangaProject to inspect pages.</div>
-            </div>
-          ) : (
-            <div className="relative max-h-full max-w-full rounded-[28px] border border-slate-700/70 bg-black/60 shadow-2xl overflow-hidden">
-              <img
-                src={currentImageUrl}
-                alt={`Page ${page.index}`}
-                className="max-h-[calc(100vh-220px)] max-w-[calc(100vw-760px)] object-contain"
-              />
-              {viewMode === 'overlay' && (
-                <img
-                  src={page.layers.source_url}
-                  alt={`Overlay ${page.index}`}
-                  className="absolute inset-0 h-full w-full object-contain opacity-35 pointer-events-none"
-                />
-              )}
-            </div>
-          )}
-        </main>
+        <MangaCanvas
+          page={page}
+          currentImageUrl={currentImageUrl}
+          viewMode={viewMode}
+          activeBlockId={activeBlockId}
+          blockDrafts={blockDrafts}
+          activeJob={activeJobSummary}
+          layerControls={layerControls}
+          zoomCommand={canvasCommand}
+          onSelectBlock={setActiveBlockId}
+          onViewportChange={setCanvasZoomPercent}
+          onPointerChange={setCanvasPointer}
+        />
 
-        <aside className="w-[390px] border-l border-slate-900 bg-slate-950/85 flex flex-col">
-          <div className="px-4 py-3 border-b border-slate-900">
-            <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Inspector</div>
-            <div className="mt-2 text-sm text-slate-300">
-              {page ? `${page.width} × ${page.height} · ${page.status}` : 'No page selected'}
-            </div>
-          </div>
-          <div className="px-4 py-3 border-b border-slate-900">
-            <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Layers</div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              {page && [
-                ['Source', page.layers.source_url],
-                ['Rendered', page.layers.rendered_url],
-                ['Inpainted', page.layers.inpainted_url],
-                ['Overlay JSON', page.layers.overlay_text_url],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2">
-                  <div className="text-slate-500 uppercase tracking-[0.18em]">{label}</div>
-                  <div className="truncate mt-1 text-slate-300" title={value}>{value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Blocks</div>
-              <button
-                onClick={() => void applyDraftChanges()}
-                disabled={!project || !page || !!busyAction}
-                className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-900/60 text-xs uppercase tracking-[0.18em] text-slate-300 disabled:opacity-50"
-              >
-                Save Page Changes
-              </button>
-            </div>
-            <div className="mt-3 space-y-3">
-              {(page?.blocks || []).length === 0 && (
-                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-6 text-sm text-slate-500">
-                  No editable text blocks yet. Run `Translate Current Page` or `Translate Selected` to generate OCR-based editable blocks.
-                </div>
-              )}
-              {(page?.blocks || []).map((block) => (
-                <div key={block.block_id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-semibold text-slate-200">{block.block_id}</div>
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{block.origin}</div>
-                  </div>
-                  <div className="mt-3 text-xs text-slate-500">OCR</div>
-                  <textarea
-                    value={blockDrafts[block.block_id]?.source_text ?? block.source_text ?? ''}
-                    onChange={(event) => updateDraft(block.block_id, { source_text: event.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200 min-h-[78px] outline-none focus:border-primary"
-                  />
-                  <div className="mt-3 text-xs text-slate-500">Translation</div>
-                  <textarea
-                    value={blockDrafts[block.block_id]?.translation ?? block.translation ?? ''}
-                    onChange={(event) => updateDraft(block.block_id, { translation: event.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 min-h-[92px] outline-none focus:border-primary"
-                  />
-                  <div className="mt-3 grid grid-cols-3 gap-3">
-                    <label className="text-xs text-slate-500">
-                      Font Size
-                      <input
-                        type="number"
-                        value={blockDrafts[block.block_id]?.font_size ?? block.style.font_size}
-                        onChange={(event) => updateDraft(block.block_id, { font_size: Number(event.target.value || block.style.font_size) })}
-                        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200 outline-none focus:border-primary"
-                      />
-                    </label>
-                    <label className="text-xs text-slate-500">
-                      Fill
-                      <input
-                        type="color"
-                        value={blockDrafts[block.block_id]?.fill ?? block.style.fill}
-                        onChange={(event) => updateDraft(block.block_id, { fill: event.target.value })}
-                        className="mt-1 h-[42px] w-full rounded-xl border border-slate-800 bg-slate-950/70 px-1 py-1"
-                      />
-                    </label>
-                    <label className="text-xs text-slate-500">
-                      Stroke
-                      <input
-                        type="number"
-                        value={blockDrafts[block.block_id]?.stroke_width ?? block.style.stroke_width}
-                        onChange={(event) => updateDraft(block.block_id, { stroke_width: Number(event.target.value || block.style.stroke_width) })}
-                        className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200 outline-none focus:border-primary"
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                    {block.flags.join(' · ') || 'no flags'}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        <aside className="w-[420px] border-l border-slate-900 bg-slate-950/85 flex flex-col">
+          <MangaInspector
+            page={page}
+            activeBlock={activeBlock}
+            activeBlockDraft={activeBlockDraft}
+            activeJob={activeJobSummary}
+            engineCards={engineCards}
+          />
+          <MangaLayersPanel
+            page={page}
+            viewMode={viewMode}
+            layerControls={layerControls}
+            onToggleLayer={toggleLayer}
+            onSetLayerOpacity={setLayerOpacity}
+          />
+          <MangaBlocksPanel
+            page={page}
+            blockDrafts={blockDrafts}
+            activeBlockId={activeBlockId}
+            busyAction={busyAction}
+            hasProject={Boolean(project)}
+            onSelectBlock={setActiveBlockId}
+            onUpdateDraft={updateDraft}
+            onSavePageChanges={() => { void applyDraftChanges(); }}
+          />
         </aside>
       </div>
 
-      <div className="h-8 border-t border-slate-900 bg-slate-950/80 px-4 text-[11px] uppercase tracking-[0.2em] text-slate-500 flex items-center justify-between">
-        <span>{page ? `Page ${page.index} · ${viewMode}` : 'No page loaded'}</span>
-        <span>{activeJob ? `${activeJob.stage} · ${activeJob.status} · ${activeJob.message}` : (busyAction || project?.project_id || 'MangaCore workbench')}</span>
-      </div>
+      <MangaStatusBar leftText={statusLeftText} centerText={statusCenterText} rightText={statusRightText} />
     </div>
   );
 };

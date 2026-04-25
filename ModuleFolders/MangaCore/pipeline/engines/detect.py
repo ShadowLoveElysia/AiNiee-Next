@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from ModuleFolders.MangaCore.bridge.providerAdapter import get_runtime_asset_status, run_detect_runtime
 from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
 from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed
 
@@ -75,6 +77,8 @@ class DetectResult:
     text_regions: list[DetectRegion] = field(default_factory=list)
     bubble_regions: list[DetectRegion] = field(default_factory=list)
     warning_message: str = ""
+    segment_mask_data: np.ndarray | None = field(default=None, repr=False)
+    bubble_mask_data: np.ndarray | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -113,11 +117,12 @@ class DetectEngine:
             self.segmenter_id = str(segmenter_id)
 
     def describe(self) -> dict[str, object]:
+        runtime_status = get_runtime_asset_status(self.detector_id)
         return {
             "configured_detector_id": self.detector_id,
             "configured_segmenter_id": self.segmenter_id,
-            "runtime_detector_id": "heuristic-grouping",
-            "runtime_segmenter_id": "pil-mask-rasterizer",
+            "runtime_detector_id": runtime_status.runtime_engine_id if runtime_status.available else "heuristic-grouping",
+            "runtime_segmenter_id": runtime_status.extra.get("runtime_segmenter_id", "pil-mask-rasterizer") if runtime_status.available else "pil-mask-rasterizer",
             "supported_detector_ids": [DEFAULT_DETECT_ENGINE_ID, *ALTERNATIVE_DETECT_ENGINE_IDS],
             "supported_segmenter_ids": [DEFAULT_SEGMENT_ENGINE_ID],
         }
@@ -132,10 +137,18 @@ class DetectEngine:
         assignments: list[BubbleAssignment] | None = None,
         blocks: list[MangaTextBlock] | None = None,
     ) -> DetectResult:
-        _ = Path(image_path)
+        image_path = Path(image_path)
         text_seeds = list(seeds or [])
         if not text_seeds and blocks:
             text_seeds = [build_seed_from_block(block, index) for index, block in enumerate(blocks, start=1)]
+
+        runtime_output = None
+        runtime_status = get_runtime_asset_status(self.detector_id)
+        if runtime_status.available:
+            try:
+                runtime_output = run_detect_runtime(image_path, self.detector_id)
+            except Exception:
+                runtime_output = None
 
         text_regions = [
             DetectRegion(
@@ -147,6 +160,28 @@ class DetectEngine:
             )
             for seed in text_seeds
         ]
+        runtime_warning = ""
+        segment_mask_data = None
+        bubble_mask_data = None
+        runtime_detector_id = "heuristic-grouping"
+        runtime_segmenter_id = "pil-mask-rasterizer"
+        if runtime_output is not None and runtime_output.text_regions:
+            text_regions = [
+                DetectRegion(
+                    region_id=str(region.get("region_id", f"region_{index:04d}")),
+                    kind="text",
+                    bbox=[int(value) for value in list(region.get("bbox", []))[:4]],
+                    polygon=[[float(point[0]), float(point[1])] for point in list(region.get("polygon", []))[:4]],
+                    score=float(region.get("score", 1.0) or 0.0),
+                )
+                for index, region in enumerate(runtime_output.text_regions, start=1)
+            ]
+            segment_mask_data = runtime_output.segment_mask
+            bubble_mask_data = runtime_output.bubble_mask
+            runtime_detector_id = runtime_output.runtime_detector_id
+            runtime_segmenter_id = runtime_output.runtime_segmenter_id
+        elif runtime_status.available:
+            runtime_warning = "Runtime detector was available but returned no regions; fell back to heuristic grouping."
 
         bubble_regions: list[DetectRegion] = []
         bubble_lookup: dict[str, DetectRegion] = {}
@@ -171,31 +206,36 @@ class DetectEngine:
             bubble_regions.append(region)
 
         if not bubble_regions:
-            for index, seed in enumerate(text_seeds, start=1):
-                bubble_bbox = _pad_bbox(seed.bbox, page_width, page_height, pad_x=24, pad_y=24)
+            source_boxes = [seed.bbox for seed in text_seeds] or [region.bbox for region in text_regions]
+            for index, bbox in enumerate(source_boxes, start=1):
+                bubble_bbox = _pad_bbox(list(bbox), page_width, page_height, pad_x=24, pad_y=24)
                 bubble_regions.append(
                     DetectRegion(
                         region_id=f"bubble_{index:04d}",
                         kind="bubble",
                         bbox=bubble_bbox,
                         polygon=_bbox_to_polygon(bubble_bbox),
-                        score=float(seed.confidence),
+                        score=1.0,
                     )
                 )
 
         warning_message = ""
         if not text_regions:
             warning_message = "No text regions were available for detection."
+        elif runtime_warning:
+            warning_message = runtime_warning
 
         return DetectResult(
             ok=bool(text_regions),
             configured_detector_id=self.detector_id,
             configured_segmenter_id=self.segmenter_id,
-            runtime_detector_id="heuristic-grouping",
-            runtime_segmenter_id="pil-mask-rasterizer",
+            runtime_detector_id=runtime_detector_id,
+            runtime_segmenter_id=runtime_segmenter_id,
             text_regions=text_regions,
             bubble_regions=bubble_regions,
             warning_message=warning_message,
+            segment_mask_data=segment_mask_data,
+            bubble_mask_data=bubble_mask_data,
         )
 
     def write_masks(
@@ -211,20 +251,38 @@ class DetectEngine:
         segment_path.parent.mkdir(parents=True, exist_ok=True)
         bubble_path.parent.mkdir(parents=True, exist_ok=True)
 
-        segment_mask = Image.new("L", size, 0)
-        bubble_mask = Image.new("L", size, 0)
-        segment_draw = ImageDraw.Draw(segment_mask)
-        bubble_draw = ImageDraw.Draw(bubble_mask)
+        runtime_segment_mask = self._mask_image_from_result(result.segment_mask_data, size)
+        runtime_bubble_mask = self._mask_image_from_result(result.bubble_mask_data, size)
 
-        for region in result.text_regions:
-            segment_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
-        for region in result.bubble_regions:
-            bubble_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
+        if runtime_segment_mask is None:
+            runtime_segment_mask = Image.new("L", size, 0)
+            segment_draw = ImageDraw.Draw(runtime_segment_mask)
+            for region in result.text_regions:
+                segment_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
+
+        if runtime_bubble_mask is None:
+            runtime_bubble_mask = Image.new("L", size, 0)
+            bubble_draw = ImageDraw.Draw(runtime_bubble_mask)
+            for region in result.bubble_regions:
+                bubble_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
 
         if result.text_regions:
-            segment_mask = segment_mask.filter(ImageFilter.MaxFilter(size=5))
+            runtime_segment_mask = runtime_segment_mask.filter(ImageFilter.MaxFilter(size=5))
         if result.bubble_regions:
-            bubble_mask = bubble_mask.filter(ImageFilter.MaxFilter(size=9))
+            runtime_bubble_mask = runtime_bubble_mask.filter(ImageFilter.MaxFilter(size=9))
 
-        segment_mask.save(segment_path, format="PNG")
-        bubble_mask.save(bubble_path, format="PNG")
+        runtime_segment_mask.save(segment_path, format="PNG")
+        runtime_bubble_mask.save(bubble_path, format="PNG")
+
+    @staticmethod
+    def _mask_image_from_result(mask: np.ndarray | None, size: tuple[int, int]) -> Image.Image | None:
+        if mask is None:
+            return None
+        mask_array = np.asarray(mask)
+        if mask_array.ndim == 3:
+            mask_array = mask_array[:, :, 0]
+        mask_array = np.where(mask_array > 0, 255, 0).astype(np.uint8)
+        image = Image.fromarray(mask_array, mode="L")
+        if image.size != size:
+            image = image.resize(size, resample=Image.Resampling.NEAREST)
+        return image

@@ -36,11 +36,56 @@ export interface MangaScenePageSummary {
   thumbnail_url: string;
 }
 
+export interface MangaModelPackageStatus {
+  model_id: string;
+  stage: string;
+  display_name: string;
+  repo_id: string;
+  repo_url: string;
+  source_url?: string;
+  description?: string;
+  runtime_notes?: string[];
+  available?: boolean;
+  storage_root?: string;
+  cache_dir?: string;
+  snapshot_path?: string;
+  downloaded_at?: string;
+  revision?: string;
+}
+
+export interface MangaOcrEngineStatus {
+  configured_engine_id: string;
+  runtime_engine_id: string;
+  package?: MangaModelPackageStatus;
+}
+
+export interface MangaDetectEngineStatus {
+  configured_detector_id: string;
+  configured_segmenter_id: string;
+  runtime_detector_id: string;
+  runtime_segmenter_id: string;
+  detector_package?: MangaModelPackageStatus;
+  segmenter_package?: MangaModelPackageStatus;
+}
+
+export interface MangaInpaintEngineStatus {
+  configured_engine_id: string;
+  runtime_engine_id: string;
+  package?: MangaModelPackageStatus;
+}
+
+export interface MangaSceneEngineStatus {
+  ocr: MangaOcrEngineStatus;
+  detect: MangaDetectEngineStatus;
+  inpaint: MangaInpaintEngineStatus;
+}
+
 export interface MangaSceneSummary {
   project_id: string;
   current_page_id: string;
   render_preset: string;
   export_preset: string;
+  engines?: MangaSceneEngineStatus;
   pages: MangaScenePageSummary[];
 }
 
