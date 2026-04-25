@@ -2,11 +2,13 @@
 命令行非交互运行模块
 从 ainiee_cli.py 分离
 """
+import os
 import time
 
 from rich.console import Console
 
 from ModuleFolders.Base.Base import Base
+from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_status
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 
 
@@ -25,6 +27,10 @@ class CommandModeRunner:
             return self.host.mcp_runtime_bridge.run_mcp_server_from_command(
                 transport=getattr(args, "mcp_transport", "stdio"),
             )
+
+        if getattr(args, "manga", False) and args.task != "translate":
+            console.print("[red]Error: --manga currently only supports the translate task.[/red]")
+            return 2
 
         if args.profile:
             self.host.root_config["active_profile"] = args.profile
@@ -53,6 +59,8 @@ class CommandModeRunner:
             if not args.input_path:
                 console.print("[red]Error: input_path is required for this task.[/red]")
                 return 2
+            if getattr(args, "manga", False):
+                return self._run_manga(args)
             if args.task == "all_in_one":
                 self._run_all_in_one(args)
             else:
@@ -178,3 +186,42 @@ class CommandModeRunner:
             return
 
         self.host.run_all_in_one()
+
+    def _run_manga(self, args):
+        manga_status = get_manga_feature_status(require_models=True)
+        if not manga_status.available:
+            console.print(f"[yellow][MangaCore][/yellow] {manga_status.message}")
+            for detail in manga_status.details:
+                console.print(f"[yellow][MangaCore][/yellow] {detail}")
+            return 2
+
+        from ModuleFolders.MangaCore.bridge.configAdapter import build_cli_config_snapshot
+        from ModuleFolders.MangaCore.pipeline.runnerBatch import MangaBatchRunner
+
+        input_path = os.path.abspath(args.input_path)
+        self.host.config["label_input_path"] = input_path
+
+        output_path = self.host.config.get("label_output_path")
+        if not output_path:
+            base_name = os.path.basename(input_path)
+            if os.path.isfile(input_path):
+                base_name = os.path.splitext(base_name)[0]
+            output_path = os.path.join(os.path.dirname(input_path), f"{base_name}_AiNiee_Output")
+            self.host.config["label_output_path"] = output_path
+
+        self.host.save_config()
+
+        console.print(f"[bold cyan][MangaCore][/bold cyan] Input: {input_path}")
+        console.print(f"[bold cyan][MangaCore][/bold cyan] Output: {output_path}")
+
+        result = MangaBatchRunner(logger=console.print).run(
+            input_path=input_path,
+            output_path=output_path,
+            config_snapshot=build_cli_config_snapshot(self.host, args),
+            profile_name=self.host.root_config.get("active_profile", "default"),
+            rules_profile_name=self.host.root_config.get("active_rules_profile", "default"),
+            source_lang=self.host.config.get("source_language", "ja"),
+            target_lang=self.host.config.get("target_language", "zh_cn"),
+        )
+        console.print(f"[bold green][MangaCore][/bold green] Project ready: {result.session.project_path}")
+        return 0

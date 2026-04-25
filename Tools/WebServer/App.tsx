@@ -9,6 +9,7 @@ import { TaskRunner } from './pages/TaskRunner';
 import { Prompts } from './pages/Prompts';
 import { Monitor } from './pages/Monitor';
 import { CacheEditor } from './pages/CacheEditor';
+import { MangaEditor } from './pages/mangaEditor';
 import { DataService } from './services/DataService';
 import { I18nProvider, useI18n } from './contexts/I18nContext';
 import { GlobalProvider, useGlobal } from './contexts/GlobalContext';
@@ -18,11 +19,12 @@ import { UnlockModal } from './components/UnlockModal';
 
 // Custom hook to track hash based location for navigation
 const useLocation = () => {
-  const [pathname, setPathname] = useState(window.location.hash.substring(1) || '/');
+  const getPathname = () => (window.location.hash.substring(1).split('?')[0] || '/');
+  const [pathname, setPathname] = useState(getPathname());
 
   useEffect(() => {
     const handleHashChange = () => {
-      setPathname(window.location.hash.substring(1) || '/');
+      setPathname(getPathname());
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
@@ -344,6 +346,7 @@ const MainLayout: React.FC = () => {
   
     const isMonitorMode = systemMode === 'monitor';
     const isMonitorPath = pathname === '/monitor';
+    const isWorkbenchPath = pathname === '/monitor' || pathname === '/manga-editor';
   
     let content;
     if (isMonitorMode && !isMonitorPath) {
@@ -380,6 +383,8 @@ const MainLayout: React.FC = () => {
       content = <Settings />;
     } else if (pathname === '/monitor') {
       content = <Monitor />;
+    } else if (pathname === '/manga-editor') {
+      content = <MangaEditor />;
     } else if (pathname === '/export') {
       content = <div className="text-slate-500 text-center mt-20">{t('menu_export_only')} (Placeholder)</div>;
     } else if (pathname === '/logs') {
@@ -388,7 +393,7 @@ const MainLayout: React.FC = () => {
       content = <Dashboard />;
     }
   
-    if (isMonitorPath) {
+    if (isWorkbenchPath) {
       return (
         <div className="h-screen bg-background overflow-hidden selection:bg-primary/30 selection:text-white">
           <ThemeManager />

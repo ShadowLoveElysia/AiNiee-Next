@@ -12,6 +12,7 @@ interface TaskRunnerState {
   taskType: TaskType;
   customInputPath: string;
   isResuming: boolean;
+  isMangaMode: boolean;
   comparison?: {
     source: string;
     translation: string;
@@ -35,6 +36,7 @@ const DEFAULT_TASK_STATE: TaskRunnerState = {
   taskType: TaskType.TRANSLATE,
   customInputPath: '',
   isResuming: false,
+  isMangaMode: false,
   comparison: undefined // Set to undefined to match optional interface
 };
 

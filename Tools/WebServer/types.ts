@@ -86,6 +86,7 @@ export interface TaskPayload {
   rules_profile?: string; // New field
   queue_file?: string;
   run_all_in_one?: boolean;
+  manga?: boolean;
   
   // Overrides
   source_lang?: string;
@@ -205,6 +206,7 @@ export interface TaskRunnerState {
   taskType: TaskType;
   customInputPath: string;
   isResuming?: boolean; // New flag for Dashboard navigation
+  isMangaMode?: boolean;
   comparison?: {
     source: string;
     translation: string;

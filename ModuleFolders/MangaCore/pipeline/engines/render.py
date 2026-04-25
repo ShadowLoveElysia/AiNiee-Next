@@ -1,0 +1,2 @@
+class RenderEngine:
+    stage = "render"

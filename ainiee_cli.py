@@ -1951,6 +1951,7 @@ def main():
     parser.add_argument('--failover', choices=['on', 'off'], help="Enable or disable API failover")
     
     parser.add_argument('--web-mode', action='store_true', help="Enable Web Server compatible output mode")
+    parser.add_argument('--manga', action='store_true', help="Enable the MangaCore batch bootstrap pipeline for manga/image sources")
     parser.add_argument(
         '--mcp',
         action='store_true',

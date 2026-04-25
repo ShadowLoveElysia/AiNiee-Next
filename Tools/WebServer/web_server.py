@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 # --- Pre-emptive Import for FastAPI & Pydantic ---
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request
+    from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request, APIRouter
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse, JSONResponse
     from pydantic import BaseModel
@@ -31,6 +31,7 @@ TEMP_EDIT_PATH = os.path.join(PROJECT_ROOT, "output", "temp_edit") # Define draf
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_status
 from Tools.MCPServer.security import (
     MCP_AUTH_HEADER,
     MCP_SECRET_PLACEHOLDER,
@@ -43,6 +44,30 @@ from Tools.MCPServer.security import (
     sanitize_json_text_for_mcp,
     strip_mcp_security_metadata,
 )
+
+_MANGA_OPTIONAL_HINT = "主程序其它功能不受影响；只有在使用漫画翻译时才需要补齐漫画模块。"
+
+try:
+    from ModuleFolders.MangaCore.api import router as manga_router
+    _MANGA_ROUTER_IMPORT_ERROR = None
+except Exception as exc:
+    _MANGA_ROUTER_IMPORT_ERROR = exc
+    manga_router = APIRouter(prefix="/api/manga", tags=["manga"])
+
+    @manga_router.api_route("", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    async def manga_api_unavailable_root():
+        raise HTTPException(
+            status_code=503,
+            detail=f"漫画模块当前不可用。{_MANGA_OPTIONAL_HINT} 导入错误: {_MANGA_ROUTER_IMPORT_ERROR}",
+        )
+
+    @manga_router.api_route("/{asset_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    async def manga_api_unavailable(asset_path: str):
+        _ = asset_path
+        raise HTTPException(
+            status_code=503,
+            detail=f"漫画模块当前不可用。{_MANGA_OPTIONAL_HINT} 导入错误: {_MANGA_ROUTER_IMPORT_ERROR}",
+        )
 
 # --- Global State & Task Management ---
 
@@ -242,6 +267,8 @@ class TaskManager:
                 cli_args.extend(["--profile", payload["profile"]])
             if payload.get("rules_profile"):
                 cli_args.extend(["--rules-profile", payload["rules_profile"]])
+            if payload.get("manga"):
+                cli_args.append("--manga")
             
             # Note: other keys like 'threads' are in the payload but not used here
             # because ainiee_cli.py doesn't have CLI args for them. They are
@@ -515,6 +542,7 @@ class TaskPayload(BaseModel):
     project_type: Optional[str] = None
     resume: Optional[bool] = False
     profile: Optional[str] = None # Added profile field
+    rules_profile: Optional[str] = None
     
     # Overrides
     source_lang: Optional[str] = None
@@ -535,10 +563,12 @@ class TaskPayload(BaseModel):
     # Limits
     lines: Optional[int] = None
     tokens: Optional[int] = None
+    manga: Optional[bool] = False
 
 # --- FastAPI Application ---
 
 app = FastAPI(title="AiNiee CLI Backend API")
+app.include_router(manga_router)
 
 # --- Paths to Resources ---
 RESOURCE_PATH = os.path.join(PROJECT_ROOT, "Resource")
@@ -1764,6 +1794,11 @@ async def create_platform(request: PlatformCreateRequest):
 async def run_task(payload: TaskPayload):
     if task_manager.status == "running":
         raise HTTPException(status_code=409, detail="A task is already running.")
+
+    if payload.manga:
+        manga_status = get_manga_feature_status(require_models=True)
+        if not manga_status.available:
+            raise HTTPException(status_code=503, detail=manga_status.user_message())
     
     # 强制同步 Web 端缓存到磁盘，确保子进程能读取到编辑器中最新的修改
     try:

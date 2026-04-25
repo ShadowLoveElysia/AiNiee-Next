@@ -1,4 +1,5 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
+import { MangaExportResult, MangaJob, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -463,6 +464,109 @@ export const DataService = {
             body: JSON.stringify({ content })
         });
         if (!res.ok) throw new Error('Failed to save prompt content');
+    },
+
+    async openMangaProject(projectPath: string): Promise<MangaProjectSummary> {
+        const res = await fetch(`${API_BASE}/manga/projects/open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_path: projectPath })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to open manga project');
+        return data;
+    },
+
+    async getMangaScene(projectId: string): Promise<MangaSceneSummary> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/scene`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga scene');
+        return data;
+    },
+
+    async getMangaPage(projectId: string, pageId: string): Promise<MangaPageDetail> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga page');
+        return data;
+    },
+
+    async saveMangaProject(projectId: string): Promise<MangaOperationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: projectId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to save manga project');
+        return data;
+    },
+
+    async translateMangaPage(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/translate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ save_after_run: true, refresh_render: true })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to translate manga page');
+        return data;
+    },
+
+    async translateSelectedMangaPages(projectId: string, pageIds: string[]): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/batch/translate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                page_ids: pageIds,
+                generate_text_blocks: true,
+                auto_inpaint: false,
+                auto_render: false,
+                auto_export: false
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to translate selected manga pages');
+        return data;
+    },
+
+    async applyMangaOps(projectId: string, ops: any[]): Promise<MangaOperationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/ops`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ops })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to apply manga operations');
+        return data;
+    },
+
+    async undoMangaOps(projectId: string): Promise<MangaOperationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/undo`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to undo manga operations');
+        return data;
+    },
+
+    async redoMangaOps(projectId: string): Promise<MangaOperationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/redo`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to redo manga operations');
+        return data;
+    },
+
+    async getMangaJob(projectId: string, jobId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/jobs/${jobId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga job');
+        return data;
+    },
+
+    async exportMangaProject(projectId: string, format: 'pdf' | 'epub' | 'cbz' | 'zip' | 'rar'): Promise<MangaExportResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/export/${format}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Failed to export manga project as ${format}`);
+        return data;
     },
 
     // --- Task Execution ---

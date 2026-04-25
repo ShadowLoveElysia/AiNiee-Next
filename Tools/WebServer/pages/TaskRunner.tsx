@@ -23,6 +23,8 @@ export const TaskRunner: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [showUploadArea, setShowUploadArea] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mangaMode = !!taskState.isMangaMode;
+  const mangaProjectPath = `${config?.label_output_path || ''}/mangaProject`;
 
   // --- Helper Functions (Hoisted) ---
 
@@ -277,7 +279,8 @@ export const TaskRunner: React.FC = () => {
           lines: !config.tokens_limit_switch ? Number(config.lines_limit || 20) : undefined,
           tokens: config.tokens_limit_switch ? Number(config.tokens_limit || 1500) : undefined,
           
-          run_all_in_one: isAllInOne
+          run_all_in_one: isAllInOne,
+          manga: mangaMode
       };
 
       // Reset Chart but keep input path
@@ -328,6 +331,7 @@ export const TaskRunner: React.FC = () => {
       // Add Profile (Critical)
       if (config.active_profile) parts.push(`--profile "${config.active_profile}"`);
       if (config.active_rules_profile) parts.push(`--rules-profile "${config.active_rules_profile}"`);
+      if (mangaMode) parts.push('--manga');
 
       if (config.source_language) parts.push(`-s "${config.source_language}"`);
       if (config.target_language) parts.push(`-t "${config.target_language}"`);
@@ -437,14 +441,14 @@ export const TaskRunner: React.FC = () => {
                             {t('ui_task_translate')}
                         </button>
                         <button 
-                            disabled={taskState.isRunning}
+                            disabled={taskState.isRunning || mangaMode}
                             onClick={() => setTaskType(TaskType.POLISH)} 
                             className={`text-xs px-3 py-1 rounded transition-colors ${taskState.taskType === TaskType.POLISH ? 'bg-purple-500 text-slate-900 font-bold' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
                         >
                             {t('ui_task_polish')}
                         </button>
                         <button 
-                            disabled={taskState.isRunning}
+                            disabled={taskState.isRunning || mangaMode}
                             onClick={() => setTaskType(TaskType.EXPORT)} 
                             className={`text-xs px-3 py-1 rounded transition-colors ${taskState.taskType === TaskType.EXPORT ? 'bg-emerald-500 text-slate-900 font-bold' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
                         >
@@ -504,6 +508,19 @@ export const TaskRunner: React.FC = () => {
                             />
                             <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors">{t('ui_resume')} / {t('option_resume')}</span>
                         </label>
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                                type="checkbox"
+                                checked={mangaMode}
+                                onChange={(e) => setTaskState(prev => ({
+                                    ...prev,
+                                    isMangaMode: e.target.checked,
+                                    taskType: e.target.checked ? TaskType.TRANSLATE : prev.taskType
+                                }))}
+                                className="w-4 h-4 rounded border-slate-700 text-cyan-400 focus:ring-cyan-400 bg-slate-900"
+                            />
+                            <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors">Manga Mode (`--manga`)</span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -528,6 +545,7 @@ export const TaskRunner: React.FC = () => {
                         
                         <button 
                             onClick={() => handleStart(true)}
+                            disabled={mangaMode || taskState.taskType !== TaskType.TRANSLATE}
                             className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all bg-green-500/10 text-green-400 border border-green-500/50 hover:bg-green-500/20 hover:shadow-lg"
                             title={t('menu_start_all_in_one')}
                         >
@@ -541,6 +559,15 @@ export const TaskRunner: React.FC = () => {
                         >
                             <ListPlus size={18} /> {t('ui_process_queue') || 'Queue'}
                         </button>
+                        {mangaMode && (
+                            <button
+                                onClick={() => { window.location.hash = `/manga-editor?project_path=${encodeURIComponent(mangaProjectPath)}`; }}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all bg-cyan-500/10 text-cyan-300 border border-cyan-400/40 hover:bg-cyan-500/20"
+                                title="Open Manga Editor"
+                            >
+                                <FileText size={18} /> Manga Editor
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <button 
