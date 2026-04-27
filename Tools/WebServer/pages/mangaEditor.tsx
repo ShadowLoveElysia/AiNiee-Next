@@ -7,9 +7,10 @@ import { MangaLayersPanel } from '../components/manga/mangaLayersPanel';
 import { MangaPageStrip } from '../components/manga/mangaPageStrip';
 import { MangaStatusBar } from '../components/manga/mangaStatusBar';
 import { MangaTopBar } from '../components/manga/mangaTopBar';
-import { MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode } from '../components/manga/shared';
+import { useI18n } from '../contexts/I18nContext';
+import { MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode, translateMangaEnum } from '../components/manga/shared';
 import { DataService } from '../services/DataService';
-import { MangaJob, MangaPageDetail, MangaProjectSummary, MangaSceneSummary } from '../types/manga';
+import { MangaJob, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -21,12 +22,41 @@ const getInitialProjectPath = () => {
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-const formatStageLabel = (value: string) => (
-  value
+const formatStageLabel = (value: string, t: (key: string) => string) => {
+  const key = `manga_stage_${value}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
+  return value
     .split('_')
     .filter(Boolean)
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ')
+    .join(' ');
+};
+
+const ACTION_LABEL_KEYS: Record<string, string> = {
+  'detect current page': 'manga_action_detect',
+  'ocr current page': 'manga_action_ocr',
+  'translate current page': 'manga_action_generate',
+  'translate selected pages': 'manga_action_selected',
+  'plan selected pages': 'manga_action_plan',
+  'inpaint current page': 'manga_action_inpaint',
+  'render current page': 'manga_action_render',
+  'validate runtime': 'manga_action_validate_runtime',
+  'add block': 'manga_action_add',
+  undo: 'manga_action_undo',
+  redo: 'manga_action_redo',
+  'save project': 'manga_action_save',
+  'export pdf': 'manga_export_pdf',
+  'export cbz': 'manga_export_cbz',
+  'export epub': 'manga_export_epub',
+  'export zip': 'manga_export_zip',
+  'export rar': 'manga_export_rar',
+};
+
+const getActionLabelKey = (action: string) => (
+  action.startsWith('download model:')
+    ? 'manga_action_prepare_model'
+    : ACTION_LABEL_KEYS[action] || 'manga_action_generic'
 );
 
 const createDefaultLayerControls = (viewMode: MangaViewMode): MangaLayerControls => ({
@@ -37,6 +67,7 @@ const createDefaultLayerControls = (viewMode: MangaViewMode): MangaLayerControls
 });
 
 export const MangaEditor: React.FC = () => {
+  const { t } = useI18n();
   const [projectPath, setProjectPath] = useState(getInitialProjectPath());
   const [project, setProject] = useState<MangaProjectSummary | null>(null);
   const [scene, setScene] = useState<MangaSceneSummary | null>(null);
@@ -50,6 +81,7 @@ export const MangaEditor: React.FC = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ tone: NoticeTone; message: string } | null>(null);
   const [activeJob, setActiveJob] = useState<MangaJob | null>(null);
+  const [runtimeValidation, setRuntimeValidation] = useState<MangaRuntimeValidationResult | null>(null);
   const [blockDrafts, setBlockDrafts] = useState<Record<string, MangaBlockDraft>>({});
   const [canvasCommand, setCanvasCommand] = useState<MangaCanvasCommand>({ kind: 'fit', token: 0 });
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
@@ -68,16 +100,32 @@ export const MangaEditor: React.FC = () => {
   const engineCards = useMemo<MangaEngineCard[]>(() => {
     if (!scene?.engines) return [];
 
+    const buildPackageCard = (pkg: any) => ({
+      modelId: String(pkg?.model_id || ''),
+      label: String(pkg?.display_name || pkg?.model_id || t('manga_unknown_package')),
+      repoId: String(pkg?.repo_id || ''),
+      available: Boolean(pkg?.available),
+      runtimeSupported: Boolean(pkg?.runtime_supported),
+      runtimeEngineId: String(pkg?.runtime_engine_id || ''),
+      storagePath: String(pkg?.runtime_assets_path || pkg?.snapshot_path || ''),
+    });
+
+    const ocrPackage = buildPackageCard(scene.engines.ocr.package);
+    const detectorPackage = buildPackageCard(scene.engines.detect.detector_package);
+    const segmenterPackage = buildPackageCard(scene.engines.detect.segmenter_package);
+    const inpaintPackage = buildPackageCard(scene.engines.inpaint.package);
+
     return [
       {
-        label: 'OCR',
+        label: t('manga_engine_ocr'),
         configured: scene.engines.ocr.configured_engine_id,
         runtime: scene.engines.ocr.runtime_engine_id,
         available: Boolean(scene.engines.ocr.package?.available),
-        packageLabel: scene.engines.ocr.package?.display_name || scene.engines.ocr.package?.repo_id || 'Unknown package',
+        packageLabel: scene.engines.ocr.package?.display_name || scene.engines.ocr.package?.repo_id || t('manga_unknown_package'),
+        packages: [ocrPackage].filter((pkg) => pkg.modelId),
       },
       {
-        label: 'Detect',
+        label: t('manga_engine_detect'),
         configured: `${scene.engines.detect.configured_detector_id} / ${scene.engines.detect.configured_segmenter_id}`,
         runtime: `${scene.engines.detect.runtime_detector_id} / ${scene.engines.detect.runtime_segmenter_id}`,
         available: Boolean(scene.engines.detect.detector_package?.available) && Boolean(scene.engines.detect.segmenter_package?.available),
@@ -85,16 +133,18 @@ export const MangaEditor: React.FC = () => {
           scene.engines.detect.detector_package?.display_name || scene.engines.detect.detector_package?.repo_id || '',
           scene.engines.detect.segmenter_package?.display_name || scene.engines.detect.segmenter_package?.repo_id || '',
         ].filter(Boolean).join(' + '),
+        packages: [detectorPackage, segmenterPackage].filter((pkg) => pkg.modelId),
       },
       {
-        label: 'Inpaint',
+        label: t('manga_engine_inpaint'),
         configured: scene.engines.inpaint.configured_engine_id,
         runtime: scene.engines.inpaint.runtime_engine_id,
         available: Boolean(scene.engines.inpaint.package?.available),
-        packageLabel: scene.engines.inpaint.package?.display_name || scene.engines.inpaint.package?.repo_id || 'Unknown package',
+        packageLabel: scene.engines.inpaint.package?.display_name || scene.engines.inpaint.package?.repo_id || t('manga_unknown_package'),
+        packages: [inpaintPackage].filter((pkg) => pkg.modelId),
       },
     ];
-  }, [scene]);
+  }, [scene, t]);
 
   const activeBlock = useMemo(
     () => page?.blocks.find((block) => block.block_id === activeBlockId) || null,
@@ -106,27 +156,27 @@ export const MangaEditor: React.FC = () => {
   const activeJobSummary = useMemo(() => (
     activeJob
       ? {
-          stageLabel: formatStageLabel(activeJob.stage),
+          stageLabel: formatStageLabel(activeJob.stage, t),
           progress: activeJob.progress,
           status: activeJob.status,
           message: activeJob.message,
         }
       : null
-  ), [activeJob]);
+  ), [activeJob, t]);
 
   const statusLeftText = page
-    ? `Page ${page.index} · ${page.width}x${page.height} · ${page.blocks.length} blocks · view ${viewMode} · zoom ${canvasZoomPercent}%`
-    : 'No page loaded';
+    ? t('manga_status_page_loaded', page.index, page.width, page.height, page.blocks.length, t(`manga_view_${viewMode}`), canvasZoomPercent)
+    : t('manga_status_no_page_loaded');
 
   const statusCenterText = canvasPointer
-    ? `Cursor ${canvasPointer.x},${canvasPointer.y} · ${Math.round(canvasPointer.normalizedX * 100)}%,${Math.round(canvasPointer.normalizedY * 100)}%`
-    : 'Cursor -';
+    ? t('manga_status_cursor', canvasPointer.x, canvasPointer.y, Math.round(canvasPointer.normalizedX * 100), Math.round(canvasPointer.normalizedY * 100))
+    : t('manga_status_cursor_empty');
 
   const statusRightText = activeJobSummary
-    ? `${activeJobSummary.stageLabel} · ${activeJobSummary.progress}% · ${activeJobSummary.status}`
+    ? `${activeJobSummary.stageLabel} · ${activeJobSummary.progress}% · ${translateMangaEnum('manga_state', activeJobSummary.status, t)}`
     : engineCards.length > 0
-      ? engineCards.map((card) => `${card.label}:${card.available ? 'ready' : 'missing'}`).join(' · ')
-      : 'Idle';
+      ? engineCards.map((card) => `${card.label}:${card.available ? t('manga_ready') : t('manga_missing')}`).join(' · ')
+      : t('manga_idle');
 
   const showNotice = (tone: NoticeTone, message: string) => {
     setNotice({ tone, message });
@@ -182,8 +232,15 @@ export const MangaEditor: React.FC = () => {
     const detail = await DataService.getMangaPage(projectId, pageId);
     setPage(detail);
     setSelectedPageId(pageId);
+    setRuntimeValidation(null);
     setDraftsFromPage(detail);
     setScene((current) => (current ? { ...current, current_page_id: pageId } : current));
+    try {
+      const latestValidation = await DataService.getLatestMangaRuntimeValidation(projectId, pageId);
+      setRuntimeValidation(latestValidation);
+    } catch {
+      setRuntimeValidation(null);
+    }
   };
 
   const refreshScene = async (projectId: string) => {
@@ -210,15 +267,21 @@ export const MangaEditor: React.FC = () => {
     }
   };
 
-  const waitForJob = async (projectId: string, initialJob: MangaJob) => {
+  const waitForJob = async (
+    projectId: string,
+    initialJob: MangaJob,
+    options?: { maxAttempts?: number; intervalMs?: number },
+  ) => {
     setActiveJob(initialJob);
     if (!initialJob.job_id || initialJob.status === 'completed' || initialJob.status === 'failed') {
       return initialJob;
     }
 
     let latest = initialJob;
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      await delay(500);
+    const maxAttempts = options?.maxAttempts ?? 90;
+    const intervalMs = options?.intervalMs ?? 500;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await delay(intervalMs);
       latest = await DataService.getMangaJob(projectId, initialJob.job_id);
       setActiveJob(latest);
       if (latest.status === 'completed' || latest.status === 'failed') {
@@ -234,7 +297,8 @@ export const MangaEditor: React.FC = () => {
     try {
       await callback();
     } catch (err: any) {
-      setError(err.message || `Failed to ${action}`);
+      const actionLabel = t(getActionLabelKey(action));
+      setError(err.message || t('manga_error_failed_action', actionLabel));
     } finally {
       setBusyAction('');
     }
@@ -275,20 +339,20 @@ export const MangaEditor: React.FC = () => {
 
     const ops = buildChangedOps();
     if (ops.length === 0) {
-      if (!quiet) showNotice('info', 'No block changes to save.');
+      if (!quiet) showNotice('info', t('manga_notice_no_block_changes'));
       return 0;
     }
 
     await DataService.applyMangaOps(project.project_id, ops);
     await syncProjectState(project.project_id, page.page_id);
-    if (!quiet) showNotice('success', `Saved ${ops.length} block change(s).`);
+    if (!quiet) showNotice('success', t('manga_notice_saved_block_changes', ops.length));
     return ops.length;
   };
 
   const openProject = async (pathOverride?: string) => {
     const nextPath = (pathOverride ?? projectPath).trim();
     if (!nextPath) {
-      setError('Project path is required.');
+      setError(t('manga_error_project_path_required'));
       return;
     }
 
@@ -312,7 +376,7 @@ export const MangaEditor: React.FC = () => {
         setSelectedPageId('');
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to open manga project.');
+      setError(err.message || t('manga_error_open_project_failed'));
     } finally {
       setIsLoading(false);
     }
@@ -365,12 +429,45 @@ export const MangaEditor: React.FC = () => {
     });
   };
 
+  const handleValidateRuntime = async () => {
+    if (!project || !selectedPageId) return;
+
+    await withBusyAction('validate runtime', async () => {
+      const result = await DataService.validateMangaRuntime(project.project_id, selectedPageId);
+      setRuntimeValidation(result);
+      const runtimeCount = result.summary?.runtime_stage_count ?? 0;
+      const fallbackCount = result.summary?.fallback_stage_count ?? 0;
+      showNotice(
+        result.ok ? 'success' : 'warning',
+        t('manga_notice_runtime_validation_finished', runtimeCount, fallbackCount),
+      );
+    });
+  };
+
+  const handleDownloadMangaModel = async (modelId: string) => {
+    if (!modelId || !project) return;
+
+    await withBusyAction(`download model:${modelId}`, async () => {
+      const job = await DataService.startMangaModelDownload(modelId);
+      const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      const result = settled.result || {};
+      const modelLabel = String(result.display_name || result.model_id || modelId);
+      showNotice(
+        settled.status === 'completed' ? 'success' : 'warning',
+        settled.status === 'completed'
+          ? t('manga_notice_model_prepared', modelLabel)
+          : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', modelLabel),
+      );
+      await refreshScene(project.project_id);
+    });
+  };
+
   const handleTranslateSelectedPages = async () => {
     if (!project) return;
 
     const pageIds = selectedPageIds.length > 0 ? selectedPageIds : (selectedPageId ? [selectedPageId] : []);
     if (pageIds.length === 0) {
-      showNotice('warning', 'Select at least one page for batch processing.');
+      showNotice('warning', t('manga_notice_select_page_for_batch'));
       return;
     }
 
@@ -388,7 +485,7 @@ export const MangaEditor: React.FC = () => {
 
     const pageIds = selectedPageIds.length > 0 ? selectedPageIds : (selectedPageId ? [selectedPageId] : []);
     if (pageIds.length === 0) {
-      showNotice('warning', 'Select at least one page to regenerate text block plans.');
+      showNotice('warning', t('manga_notice_select_page_for_plan'));
       return;
     }
 
@@ -407,7 +504,7 @@ export const MangaEditor: React.FC = () => {
     await withBusyAction('save project', async () => {
       await applyDraftChanges(true);
       const result = await DataService.saveMangaProject(project.project_id);
-      showNotice(result.ok ? 'success' : 'warning', result.ok ? 'Project saved.' : result.message || 'Project save returned a warning.');
+      showNotice(result.ok ? 'success' : 'warning', result.ok ? t('manga_notice_project_saved') : result.message || t('manga_notice_project_save_warning'));
     });
   };
 
@@ -441,7 +538,7 @@ export const MangaEditor: React.FC = () => {
       await syncProjectState(project.project_id, page.page_id);
       setActiveBlockId(blockId);
       setViewMode('overlay');
-      showNotice('success', 'Added a manual text block to the current page.');
+      showNotice('success', t('manga_notice_manual_block_added'));
     });
   };
 
@@ -451,7 +548,7 @@ export const MangaEditor: React.FC = () => {
     await withBusyAction('undo', async () => {
       const result = await DataService.undoMangaOps(project.project_id);
       await syncProjectState(project.project_id, page.page_id);
-      showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? 'Undo applied.' : 'Nothing to undo.'));
+      showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? t('manga_notice_undo_applied') : t('manga_notice_nothing_to_undo')));
     });
   };
 
@@ -461,7 +558,7 @@ export const MangaEditor: React.FC = () => {
     await withBusyAction('redo', async () => {
       const result = await DataService.redoMangaOps(project.project_id);
       await syncProjectState(project.project_id, page.page_id);
-      showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? 'Redo applied.' : 'Nothing to redo.'));
+      showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? t('manga_notice_redo_applied') : t('manga_notice_nothing_to_redo')));
     });
   };
 
@@ -473,7 +570,7 @@ export const MangaEditor: React.FC = () => {
       const result = await DataService.exportMangaProject(project.project_id, format);
       showNotice(
         result.ok ? 'success' : 'warning',
-        result.ok ? `Exported ${format.toUpperCase()} to ${result.path}` : `Export ${format.toUpperCase()} returned no file.`,
+        result.ok ? t('manga_notice_exported_to', format.toUpperCase(), result.path || '') : t('manga_notice_export_no_file', format.toUpperCase()),
       );
     });
   };
@@ -526,7 +623,7 @@ export const MangaEditor: React.FC = () => {
   return (
     <div className="h-screen bg-background text-slate-100 flex flex-col overflow-hidden">
       <MangaTopBar
-        projectName={project?.name || 'Open MangaProject'}
+        projectName={project?.name || t('manga_open_mangaproject')}
         viewMode={viewMode}
         busyAction={busyAction}
         hasProject={Boolean(project)}
@@ -547,6 +644,7 @@ export const MangaEditor: React.FC = () => {
         onPlanSelected={() => { void handlePlanSelectedPages(); }}
         onInpaint={() => { void handleInpaintPage(); }}
         onRender={() => { void handleRenderPage(); }}
+        onValidateRuntime={() => { void handleValidateRuntime(); }}
         onAddBlock={() => { void handleAddBlock(); }}
         onUndo={() => { void handleUndo(); }}
         onRedo={() => { void handleRedo(); }}
@@ -558,40 +656,37 @@ export const MangaEditor: React.FC = () => {
         onExportRar={() => { void handleExport('rar'); }}
       />
 
-      <div className="px-4 py-3 border-b border-slate-900 bg-slate-950/70 flex flex-col xl:flex-row gap-3 xl:items-center">
+      {!project && (
+      <div className="m-4 rounded-lg border border-slate-800 bg-slate-950/78 p-4 shadow-2xl shadow-slate-950/30 flex flex-col xl:flex-row gap-3 xl:items-center">
         <input
           type="text"
           value={projectPath}
           onChange={(event) => setProjectPath(event.target.value)}
-          placeholder="H:/path/to/output/mangaProject"
-          className="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-primary"
+          placeholder={t('manga_project_path_placeholder')}
+          className="flex-1 min-w-0 rounded-lg border border-slate-800 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-primary"
         />
         <div className="flex items-center gap-2">
           <button
             onClick={() => void openProject()}
             disabled={isLoading}
-            className="px-4 py-3 rounded-xl bg-primary text-slate-900 font-bold disabled:opacity-60 flex items-center gap-2"
+            className="px-4 py-3 rounded-lg bg-primary text-slate-900 font-bold disabled:opacity-60 flex items-center gap-2"
           >
             {isLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            Open Project
+            {t('manga_open_project')}
           </button>
           <button
             onClick={() => setViewMode('overlay')}
             disabled={!page}
-            className="px-4 py-3 rounded-xl border border-slate-800 bg-slate-900/80 text-sm text-slate-300 disabled:opacity-50"
+            className="px-4 py-3 rounded-lg border border-slate-800 bg-slate-900/80 text-sm text-slate-300 disabled:opacity-50"
           >
-            Overlay View
+            {t('manga_view_overlay')}
           </button>
         </div>
-        {project && (
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-            {scene?.pages.length || 0} pages · current {page?.index || 0} · selected {selectedCount}
-          </div>
-        )}
       </div>
+      )}
 
       {notice && (
-        <div className={`mx-4 mt-3 rounded-xl border px-4 py-3 text-sm ${
+        <div className={`mx-4 mt-3 rounded-lg border px-4 py-3 text-sm ${
           notice.tone === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' :
           notice.tone === 'warning' ? 'border-amber-500/20 bg-amber-500/10 text-amber-200' :
           notice.tone === 'error' ? 'border-rose-500/20 bg-rose-500/10 text-rose-200' :
@@ -602,12 +697,12 @@ export const MangaEditor: React.FC = () => {
       )}
 
       {error && (
-        <div className="mx-4 mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="mx-4 mt-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
           {error}
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 flex bg-slate-950">
         <MangaPageStrip
           pages={scene?.pages || []}
           selectedPageId={selectedPageId}
@@ -631,13 +726,16 @@ export const MangaEditor: React.FC = () => {
           onPointerChange={setCanvasPointer}
         />
 
-        <aside className="w-[420px] border-l border-slate-900 bg-slate-950/85 flex flex-col">
+        <aside className="w-[340px] shrink-0 border-l border-slate-900 bg-slate-950/88 overflow-y-auto 2xl:w-[360px]">
           <MangaInspector
             page={page}
             activeBlock={activeBlock}
             activeBlockDraft={activeBlockDraft}
             activeJob={activeJobSummary}
             engineCards={engineCards}
+            runtimeValidation={runtimeValidation}
+            busyAction={busyAction}
+            onDownloadModel={(modelId) => { void handleDownloadMangaModel(modelId); }}
           />
           <MangaLayersPanel
             page={page}

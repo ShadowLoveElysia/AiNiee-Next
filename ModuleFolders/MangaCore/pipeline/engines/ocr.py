@@ -32,6 +32,9 @@ class OcrEngine:
 
     def __init__(self, engine_id: str | None = None) -> None:
         self.engine_id = str(engine_id or DEFAULT_OCR_ENGINE_ID)
+        self.last_runtime_engine_id = RUNTIME_OCR_ENGINE_ID
+        self.last_warning_message = ""
+        self.last_used_runtime = False
 
     def configure(self, engine_id: str | None = None) -> None:
         if engine_id:
@@ -49,6 +52,14 @@ class OcrEngine:
         runtime_status = get_runtime_asset_status(self.engine_id)
         return runtime_status.available
 
+    def describe_last_run(self) -> dict[str, object]:
+        return {
+            "configured_engine_id": self.engine_id,
+            "runtime_engine_id": self.last_runtime_engine_id,
+            "used_runtime": self.last_used_runtime,
+            "warning_message": self.last_warning_message,
+        }
+
     @classmethod
     def _get_runtime(cls):
         if cls._ocr_instance is None:
@@ -58,14 +69,28 @@ class OcrEngine:
         return cls._ocr_instance
 
     def run(self, image_path: str | Path, *, regions: list[Any] | None = None) -> list[TextSeed]:
+        self.last_runtime_engine_id = RUNTIME_OCR_ENGINE_ID
+        self.last_warning_message = ""
+        self.last_used_runtime = False
         runtime_status = get_runtime_asset_status(self.engine_id)
         if runtime_status.available and regions:
             try:
                 runtime_output = run_region_ocr_runtime(image_path, self.engine_id, regions)
                 if runtime_output is not None:
+                    self.last_runtime_engine_id = runtime_output.runtime_engine_id
+                    self.last_used_runtime = True
                     return runtime_output.seeds
-            except Exception:
-                pass
+                self.last_warning_message = (
+                    f"Runtime OCR returned no output; fell back to {RUNTIME_OCR_ENGINE_ID}."
+                )
+            except Exception as exc:
+                self.last_warning_message = (
+                    f"Runtime OCR failed and fell back to {RUNTIME_OCR_ENGINE_ID}: {exc}"
+                )
+        elif runtime_status.available and not regions:
+            self.last_warning_message = (
+                f"Runtime OCR requires detect regions; fell back to {RUNTIME_OCR_ENGINE_ID}."
+            )
 
         runtime = self._get_runtime()
         result, _timings = runtime(str(image_path))

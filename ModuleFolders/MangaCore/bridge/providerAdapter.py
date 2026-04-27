@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,6 +112,32 @@ def _resolve_model_root(root_dir: str | Path | None = None) -> Path:
     return Path(root_dir) if root_dir is not None else _default_model_root()
 
 
+def _runtime_cache_root(root_dir: str | Path | None = None) -> Path:
+    return _resolve_model_root(root_dir) / "cache"
+
+
+def _ensure_transformers_module_cache(root_dir: str | Path | None = None) -> Path:
+    cache_root = _runtime_cache_root(root_dir) / "huggingface"
+    modules_cache = cache_root / "modules"
+    modules_cache.mkdir(parents=True, exist_ok=True)
+
+    modules_cache_str = str(modules_cache)
+    os.environ["HF_HOME"] = str(cache_root)
+    os.environ["HF_MODULES_CACHE"] = modules_cache_str
+
+    for module_name in (
+        "transformers.utils",
+        "transformers.utils.hub",
+        "transformers.file_utils",
+        "transformers.dynamic_module_utils",
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, "HF_MODULES_CACHE"):
+            setattr(module, "HF_MODULES_CACHE", modules_cache_str)
+
+    return modules_cache
+
+
 def _ensure_upstream_import_path() -> None:
     upstream_root = _repo_root() / "manga-translator-ui-main"
     upstream_path = str(upstream_root)
@@ -171,6 +198,7 @@ def _build_runtime_wrapper(model_id: str, root_dir: str | Path | None = None):
     if spec is None:
         raise KeyError(f"Unsupported runtime-backed manga model: {model_id}")
 
+    _ensure_transformers_module_cache(root_dir)
     model_root = _resolve_model_root(root_dir)
     cache_key = (str(model_root), spec["module"], spec["class"])
     wrapper_cls = _RUNTIME_CLASS_CACHE.get(cache_key)

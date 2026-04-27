@@ -4,6 +4,7 @@ from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine, DetectResult
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintEngine, InpaintResult
 from ModuleFolders.MangaCore.pipeline.engines.ocr import OcrEngine
+from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine, RenderResult
 from ModuleFolders.MangaCore.pipeline.engines.translate import TranslateEngine, TranslationBatchResult
 from ModuleFolders.MangaCore.pipeline.progress import JobRegistry, PipelineJob
 from ModuleFolders.MangaCore.project.page import MangaPage
@@ -21,6 +22,7 @@ class MangaPageRunner:
         detect_engine: DetectEngine | None = None,
         translate_engine: TranslateEngine | None = None,
         inpaint_engine: InpaintEngine | None = None,
+        render_engine: RenderEngine | None = None,
         renderer: MangaRenderer | None = None,
     ) -> None:
         self.logger = logger or (lambda *_args, **_kwargs: None)
@@ -28,7 +30,8 @@ class MangaPageRunner:
         self.detect_engine = detect_engine or DetectEngine()
         self.translate_engine = translate_engine or TranslateEngine(logger=self.logger)
         self.inpaint_engine = inpaint_engine or InpaintEngine()
-        self.renderer = renderer or MangaRenderer()
+        self.render_engine = render_engine or RenderEngine(renderer=renderer)
+        self.renderer = getattr(self.render_engine, "renderer", renderer or MangaRenderer())
 
     def translate_current_page(
         self,
@@ -289,7 +292,7 @@ class MangaPageRunner:
                     progress=95,
                     message="Refreshing rendered page preview from current block data.",
                 )
-                self.renderer.render_page(session, page)
+                self._run_render_stage(session, page)
                 page.last_pipeline_stage = "page_rendering"
 
             if save_after_run or refresh_render:
@@ -426,7 +429,7 @@ class MangaPageRunner:
                         progress=int((processed + 0.95) * 100 / max(1, len(page_ids))),
                         message=f"Refreshing rendered page {processed + 1}/{len(page_ids)}.",
                     )
-                    self.renderer.render_page(session, page)
+                    self._run_render_stage(session, page)
                     page.last_pipeline_stage = "batch_rendering"
 
                 processed += 1
@@ -491,7 +494,7 @@ class MangaPageRunner:
         session.scene.current_page_id = page_id
 
         try:
-            self.renderer.render_page(session, page)
+            render_result = self._run_render_stage(session, page)
             page.last_pipeline_stage = "page_rendering"
             if save_after_run:
                 MangaProjectPersistence.save_session(session)
@@ -500,7 +503,7 @@ class MangaPageRunner:
                 stage="page_completed",
                 status="completed",
                 progress=100,
-                message="Rendered the current page preview successfully.",
+                message=self._build_render_message(render_result),
             )
             return updated or job
         except Exception as exc:
@@ -534,7 +537,11 @@ class MangaPageRunner:
         page: MangaPage,
     ) -> tuple[list[TextSeed], list[BubbleAssignment]]:
         source_path = session.project_path / page.layers.source
-        if self.ocr_engine.requires_detect_regions():
+        requires_detect_regions = False
+        if hasattr(self.ocr_engine, "requires_detect_regions"):
+            requires_detect_regions = bool(self.ocr_engine.requires_detect_regions())
+
+        if requires_detect_regions:
             pre_detect = self.detect_engine.run(
                 source_path,
                 page.width,
@@ -586,6 +593,15 @@ class MangaPageRunner:
             output_path=session.project_path / page.layers.inpainted,
         )
         MangaProjectPersistence.write_page_artifact(session, page, "inpaintResults.json", result.to_dict())
+        return result
+
+    def _run_render_stage(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+    ) -> RenderResult:
+        result = self.render_engine.run_page(session, page)
+        MangaProjectPersistence.write_page_artifact(session, page, "renderResults.json", result.to_dict())
         return result
 
     @staticmethod
@@ -664,6 +680,13 @@ class MangaPageRunner:
         return (
             f"Refreshed the inpainted base layer using {inpaint_result.configured_engine_id} "
             f"({inpaint_result.runtime_engine_id}) over {inpaint_result.mask_pixels} masked pixel(s)."
+        )
+
+    @staticmethod
+    def _build_render_message(render_result: RenderResult) -> str:
+        return (
+            f"Rendered {render_result.rendered_blocks} text block(s) with "
+            f"{render_result.configured_engine_id} ({render_result.runtime_engine_id})."
         )
 
     @staticmethod

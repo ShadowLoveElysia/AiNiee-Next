@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
 
 from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_status
 from ModuleFolders.MangaCore.api.schemas import BatchTranslateRequest, PageTranslateRequest
+from ModuleFolders.MangaCore.pipeline.runtimeValidation import MangaRuntimeValidator
 from ModuleFolders.MangaCore.pipeline.runnerPage import MangaPageRunner
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
 
@@ -97,6 +100,26 @@ def render_page(project_id: str, page_id: str) -> dict[str, object]:
     payload = job.to_dict()
     payload["page_id"] = page_id
     return payload
+
+
+@router.post("/projects/{project_id}/pages/{page_id}/runtime-validation")
+def validate_page_runtime(project_id: str, page_id: str) -> dict[str, object]:
+    session = _ensure_project_and_page(project_id, page_id)
+    page = session.get_page(page_id)
+    return MangaRuntimeValidator().run_page_validation(session, page).to_dict()
+
+
+@router.get("/projects/{project_id}/pages/{page_id}/runtime-validation/latest")
+def get_latest_page_runtime_validation(project_id: str, page_id: str) -> dict[str, object] | None:
+    session = _ensure_project_and_page(project_id, page_id)
+    page = session.get_page(page_id)
+    page_key = f"{page.index:04d}"
+    report_path = session.project_path / "pages" / page_key / "runtimeValidationLatest.json"
+    if not report_path.exists():
+        return None
+    with open(report_path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else None
 
 
 @router.post("/projects/{project_id}/batch/translate")

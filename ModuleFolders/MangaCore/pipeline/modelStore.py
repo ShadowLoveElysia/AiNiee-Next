@@ -14,7 +14,7 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_ocr_runtime_id,
     get_runtime_asset_status,
 )
-from ModuleFolders.MangaCore.pipeline.modelCatalog import MangaModelPackage, get_model_package, list_model_packages
+from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package, list_model_packages
 
 
 def _now_iso() -> str:
@@ -47,7 +47,10 @@ class MangaModelStore:
         runtime_status = get_runtime_asset_status(model_id, self.root_dir)
         if not snapshot_path and runtime_status.available and runtime_status.storage_path:
             snapshot_path = Path(runtime_status.storage_path)
-        available = bool(snapshot_path and snapshot_path.exists()) or runtime_status.available
+        if runtime_status.supported:
+            available = runtime_status.available
+        else:
+            available = bool(snapshot_path and snapshot_path.exists())
         payload = package.to_dict()
         payload.update(
             {
@@ -91,12 +94,15 @@ class MangaModelStore:
 
     def download(self, model_id: str) -> dict[str, object]:
         package = get_model_package(model_id)
-        runtime_status = download_runtime_assets(model_id, self.root_dir)
-        if runtime_status is not None and runtime_status.available:
+        runtime_status = get_runtime_asset_status(model_id, self.root_dir)
+        if runtime_status.supported:
+            downloaded_runtime_status = download_runtime_assets(model_id, self.root_dir)
+            if downloaded_runtime_status is None or not downloaded_runtime_status.available:
+                raise RuntimeError(f"Failed to prepare runtime assets for manga model: {model_id}")
             return self.register_downloaded_snapshot(
                 model_id,
-                runtime_status.storage_path,
-                revision=f"runtime:{runtime_status.runtime_engine_id}",
+                downloaded_runtime_status.storage_path,
+                revision=f"runtime:{downloaded_runtime_status.runtime_engine_id}",
             )
 
         self.huggingface_cache_dir().mkdir(parents=True, exist_ok=True)

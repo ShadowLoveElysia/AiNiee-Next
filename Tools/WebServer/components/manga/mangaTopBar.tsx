@@ -1,9 +1,28 @@
 import React from 'react';
-import { ArrowLeft, BookOpen, Download, Loader2, Plus, Redo2, RefreshCw, Save, Sparkles, Undo2 } from 'lucide-react';
+import {
+  Activity,
+  ArrowLeft,
+  BookOpen,
+  Download,
+  FileArchive,
+  FileText,
+  Layers3,
+  Loader2,
+  Paintbrush,
+  Plus,
+  Redo2,
+  RefreshCw,
+  Save,
+  ScanLine,
+  Sparkles,
+  Type,
+  Undo2,
+} from 'lucide-react';
 
-type ButtonTone = 'primary' | 'accent' | 'neutral';
-
+import { useI18n } from '../../contexts/I18nContext';
 import { MangaViewMode } from './shared';
+
+type ButtonTone = 'primary' | 'accent' | 'neutral' | 'quiet';
 
 interface ToolbarButtonProps {
   label: string;
@@ -12,6 +31,7 @@ interface ToolbarButtonProps {
   busy?: boolean;
   tone?: ButtonTone;
   icon?: React.ReactNode;
+  compact?: boolean;
 }
 
 export interface MangaTopBarProps {
@@ -36,6 +56,7 @@ export interface MangaTopBarProps {
   onPlanSelected: () => void;
   onInpaint: () => void;
   onRender: () => void;
+  onValidateRuntime: () => void;
   onAddBlock: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -47,10 +68,11 @@ export interface MangaTopBarProps {
   onExportRar: () => void;
 }
 
-const TOOLBAR_BUTTON_STYLES: Record<ButtonTone, string> = {
-  primary: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15',
-  accent: 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/15',
-  neutral: 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100',
+const BUTTON_STYLES: Record<ButtonTone, string> = {
+  primary: 'border-primary/35 bg-primary text-slate-950 shadow-[0_8px_28px_rgba(6,182,212,0.22)] hover:bg-cyan-300',
+  accent: 'border-emerald-300/30 bg-emerald-400/12 text-emerald-100 hover:bg-emerald-400/18',
+  neutral: 'border-slate-700/80 bg-slate-900/70 text-slate-200 hover:border-slate-500 hover:bg-slate-800/80',
+  quiet: 'border-transparent bg-transparent text-slate-400 hover:bg-slate-900/70 hover:text-slate-100',
 };
 
 const ToolbarButton: React.FC<ToolbarButtonProps> = ({
@@ -60,15 +82,46 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
   busy = false,
   tone = 'neutral',
   icon,
+  compact = false,
 }) => (
   <button
+    type="button"
     onClick={onClick}
     disabled={disabled}
-    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${TOOLBAR_BUTTON_STYLES[tone]}`}
+    title={label}
+    className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-45 ${
+      compact ? 'w-10 px-0' : ''
+    } ${BUTTON_STYLES[tone]}`}
   >
-    {busy ? <Loader2 size={15} className="animate-spin" /> : icon}
-    <span>{label}</span>
+    {busy ? <Loader2 size={16} className="animate-spin" /> : icon}
+    {!compact && <span>{label}</span>}
   </button>
+);
+
+const BUSY_LABEL_KEYS: Record<string, string> = {
+  'detect current page': 'manga_busy_detect',
+  'ocr current page': 'manga_busy_ocr',
+  'translate current page': 'manga_busy_translate_current',
+  'translate selected pages': 'manga_busy_translate_selected',
+  'plan selected pages': 'manga_busy_plan_selected',
+  'inpaint current page': 'manga_busy_inpaint',
+  'render current page': 'manga_busy_render',
+  'validate runtime': 'manga_busy_validate_runtime',
+  'add block': 'manga_busy_add_block',
+  undo: 'manga_busy_undo',
+  redo: 'manga_busy_redo',
+  'save project': 'manga_busy_save',
+  'export pdf': 'manga_busy_export_pdf',
+  'export cbz': 'manga_busy_export_cbz',
+  'export epub': 'manga_busy_export_epub',
+  'export zip': 'manga_busy_export_zip',
+  'export rar': 'manga_busy_export_rar',
+};
+
+const getBusyLabelKey = (busyAction: string) => (
+  busyAction.startsWith('download model:')
+    ? 'manga_busy_prepare_model'
+    : BUSY_LABEL_KEYS[busyAction] || 'manga_busy_working'
 );
 
 export const MangaTopBar: React.FC<MangaTopBarProps> = ({
@@ -93,6 +146,7 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
   onPlanSelected,
   onInpaint,
   onRender,
+  onValidateRuntime,
   onAddBlock,
   onUndo,
   onRedo,
@@ -103,181 +157,144 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
   onExportZip,
   onExportRar,
 }) => {
+  const { t } = useI18n();
+  const pageLabel = pageCount > 0 ? `${currentPageIndex || 0}/${pageCount}` : t('manga_no_project');
+  const isBusy = Boolean(busyAction);
+  const busyLabel = busyAction ? t(getBusyLabelKey(busyAction)) : t('manga_llm_ready');
+
   return (
-    <div className="min-h-16 border-b border-slate-800 bg-surface/80 backdrop-blur px-4 py-3 flex flex-wrap items-center gap-2">
-      <button
-        onClick={onBack}
-        className="h-10 w-10 rounded-lg border border-slate-700 bg-slate-900/70 text-slate-300 hover:text-white hover:border-primary transition-colors flex items-center justify-center"
-      >
-        <ArrowLeft size={18} />
-      </button>
+    <header className="shrink-0 border-b border-slate-800/90 bg-background/95 text-slate-100 shadow-[0_1px_0_rgba(255,255,255,0.03)]">
+      <div className="flex h-12 items-center gap-3 px-3">
+        <button
+          type="button"
+          onClick={onBack}
+          title={t('manga_back')}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900/75 text-slate-300 transition-colors hover:border-primary hover:text-white"
+        >
+          <ArrowLeft size={17} />
+        </button>
 
-      <div className="flex items-center gap-3 min-w-0 mr-auto">
-        <div className="h-10 w-10 rounded-xl bg-cyan-500/10 border border-cyan-400/20 text-cyan-300 flex items-center justify-center">
-          <BookOpen size={18} />
+        <div className="flex items-center gap-2 pr-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+            <BookOpen size={16} />
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{projectName}</div>
+            <div className="text-[11px] text-slate-500">{t('manga_workbench')} · {t('manga_page_short')} {pageLabel} · {zoomPercent}%</div>
+          </div>
         </div>
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Manga Editor</div>
-          <div className="font-semibold truncate">{projectName}</div>
-          {pageCount > 0 && (
-            <div className="mt-1 text-[11px] text-slate-500">
-              Page {currentPageIndex || 0} / {pageCount} · Zoom {zoomPercent}%
-            </div>
-          )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <div className="hidden rounded-full border border-slate-700/80 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-400 md:block">
+            {t('manga_selected')} <span className="font-semibold text-slate-100">{selectedCount}</span>
+          </div>
+          <div className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+            isBusy
+              ? 'border-amber-300/30 bg-amber-300/10 text-amber-100'
+              : 'border-primary/25 bg-primary/10 text-primary'
+          }`}>
+            {busyLabel}
+          </div>
         </div>
       </div>
 
-      <div className="hidden xl:flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-2 py-1">
-        <button
-          onClick={onFitCanvas}
-          className="px-3 py-2 rounded-lg text-xs uppercase tracking-[0.2em] text-slate-400 hover:text-slate-100 transition-colors"
-        >
-          Fit
-        </button>
-        <button
-          onClick={onResetZoom}
-          className="px-3 py-2 rounded-lg text-xs uppercase tracking-[0.2em] text-slate-400 hover:text-slate-100 transition-colors"
-        >
-          100%
-        </button>
-        <div className="h-6 w-px bg-slate-800" />
-        {(['original', 'overlay', 'rendered', 'inpainted'] as MangaViewMode[]).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => onSetViewMode(mode)}
-            className={`px-3 py-2 rounded-lg text-xs uppercase tracking-[0.2em] transition-colors ${
-              viewMode === mode ? 'bg-primary text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {mode}
-          </button>
-        ))}
-      </div>
+      <div className="flex min-h-14 items-center gap-2 overflow-x-auto border-t border-slate-900/80 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/65 p-1">
+          {(['rendered', 'overlay', 'original', 'inpainted'] as MangaViewMode[]).map((mode) => (
+            <button
+              type="button"
+              key={mode}
+              onClick={() => onSetViewMode(mode)}
+              className={`h-8 rounded-md px-3 text-xs font-semibold capitalize transition-colors ${
+                viewMode === mode
+                  ? 'bg-primary text-slate-950'
+                  : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
+              }`}
+            >
+              {t(`manga_view_${mode}`)}
+            </button>
+          ))}
+        </div>
 
-      <ToolbarButton
-        label="Detect"
-        onClick={onDetect}
-        disabled={!hasProject || !hasSelectedPage || !!busyAction}
-        busy={busyAction === 'detect current page'}
-        tone="neutral"
-        icon={<RefreshCw size={15} />}
-      />
-      <ToolbarButton
-        label="OCR"
-        onClick={onOcr}
-        disabled={!hasProject || !hasSelectedPage || !!busyAction}
-        busy={busyAction === 'ocr current page'}
-        tone="neutral"
-        icon={<RefreshCw size={15} />}
-      />
-      <ToolbarButton
-        label="Translate Current"
-        onClick={onTranslateCurrent}
-        disabled={!hasProject || !hasSelectedPage || !!busyAction}
-        busy={busyAction === 'translate current page'}
-        tone="primary"
-        icon={<Sparkles size={15} />}
-      />
-      <ToolbarButton
-        label={`Translate Selected ${selectedCount > 0 ? `(${selectedCount})` : ''}`}
-        onClick={onTranslateSelected}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'translate selected pages'}
-        tone="accent"
-        icon={<Sparkles size={15} />}
-      />
-      <ToolbarButton
-        label="Plan Selected"
-        onClick={onPlanSelected}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'plan selected pages'}
-        tone="neutral"
-        icon={<RefreshCw size={15} />}
-      />
-      <ToolbarButton
-        label="Inpaint"
-        onClick={onInpaint}
-        disabled={!hasProject || !hasSelectedPage || !!busyAction}
-        busy={busyAction === 'inpaint current page'}
-        tone="neutral"
-        icon={<RefreshCw size={15} />}
-      />
-      <ToolbarButton
-        label="Render"
-        onClick={onRender}
-        disabled={!hasProject || !hasSelectedPage || !!busyAction}
-        busy={busyAction === 'render current page'}
-        tone="neutral"
-        icon={<RefreshCw size={15} />}
-      />
-      <ToolbarButton
-        label="Add Block"
-        onClick={onAddBlock}
-        disabled={!hasProject || !hasPage || !!busyAction}
-        busy={busyAction === 'add block'}
-        tone="neutral"
-        icon={<Plus size={15} />}
-      />
-      <ToolbarButton
-        label="Undo"
-        onClick={onUndo}
-        disabled={!hasProject || !hasPage || !!busyAction}
-        busy={busyAction === 'undo'}
-        tone="neutral"
-        icon={<Undo2 size={15} />}
-      />
-      <ToolbarButton
-        label="Redo"
-        onClick={onRedo}
-        disabled={!hasProject || !hasPage || !!busyAction}
-        busy={busyAction === 'redo'}
-        tone="neutral"
-        icon={<Redo2 size={15} />}
-      />
-      <ToolbarButton
-        label="Save"
-        onClick={onSave}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'save project'}
-        tone="neutral"
-        icon={<Save size={15} />}
-      />
-      <ToolbarButton
-        label="PDF"
-        onClick={onExportPdf}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'export pdf'}
-        tone="neutral"
-        icon={<Download size={15} />}
-      />
-      <ToolbarButton
-        label="CBZ"
-        onClick={onExportCbz}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'export cbz'}
-        tone="neutral"
-      />
-      <ToolbarButton
-        label="EPUB"
-        onClick={onExportEpub}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'export epub'}
-        tone="neutral"
-      />
-      <ToolbarButton
-        label="ZIP"
-        onClick={onExportZip}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'export zip'}
-        tone="neutral"
-      />
-      <ToolbarButton
-        label="RAR"
-        onClick={onExportRar}
-        disabled={!hasProject || !!busyAction}
-        busy={busyAction === 'export rar'}
-        tone="neutral"
-      />
-    </div>
+        <ToolbarButton label={t('manga_fit')} onClick={onFitCanvas} disabled={!hasPage} tone="quiet" icon={<Layers3 size={16} />} compact />
+        <ToolbarButton label="100%" onClick={onResetZoom} disabled={!hasPage} tone="quiet" icon={<RefreshCw size={16} />} compact />
+
+        <div className="mx-1 h-8 w-px shrink-0 bg-slate-800" />
+
+        <ToolbarButton
+          label={t('manga_action_detect')}
+          onClick={onDetect}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'detect current page'}
+          icon={<ScanLine size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_ocr')}
+          onClick={onOcr}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'ocr current page'}
+          icon={<Type size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_generate')}
+          onClick={onTranslateCurrent}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'translate current page'}
+          tone="primary"
+          icon={<Sparkles size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_selected')}
+          onClick={onTranslateSelected}
+          disabled={!hasProject || isBusy}
+          busy={busyAction === 'translate selected pages'}
+          tone="accent"
+          icon={<Sparkles size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_plan')}
+          onClick={onPlanSelected}
+          disabled={!hasProject || isBusy}
+          busy={busyAction === 'plan selected pages'}
+          icon={<RefreshCw size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_inpaint')}
+          onClick={onInpaint}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'inpaint current page'}
+          icon={<Paintbrush size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_render')}
+          onClick={onRender}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'render current page'}
+          icon={<FileText size={16} />}
+        />
+        <ToolbarButton
+          label={t('manga_action_validate_runtime')}
+          onClick={onValidateRuntime}
+          disabled={!hasProject || !hasSelectedPage || isBusy}
+          busy={busyAction === 'validate runtime'}
+          icon={<Activity size={16} />}
+        />
+
+        <div className="mx-1 h-8 w-px shrink-0 bg-slate-800" />
+
+        <ToolbarButton label={t('manga_action_add')} onClick={onAddBlock} disabled={!hasProject || !hasPage || isBusy} busy={busyAction === 'add block'} icon={<Plus size={16} />} compact />
+        <ToolbarButton label={t('manga_action_undo')} onClick={onUndo} disabled={!hasProject || !hasPage || isBusy} busy={busyAction === 'undo'} icon={<Undo2 size={16} />} compact />
+        <ToolbarButton label={t('manga_action_redo')} onClick={onRedo} disabled={!hasProject || !hasPage || isBusy} busy={busyAction === 'redo'} icon={<Redo2 size={16} />} compact />
+        <ToolbarButton label={t('manga_action_save')} onClick={onSave} disabled={!hasProject || isBusy} busy={busyAction === 'save project'} icon={<Save size={16} />} compact />
+
+        <div className="ml-auto flex items-center gap-1">
+          <ToolbarButton label="PDF" onClick={onExportPdf} disabled={!hasProject || isBusy} busy={busyAction === 'export pdf'} icon={<Download size={16} />} compact />
+          <ToolbarButton label="CBZ" onClick={onExportCbz} disabled={!hasProject || isBusy} busy={busyAction === 'export cbz'} icon={<FileArchive size={16} />} compact />
+          <ToolbarButton label="EPUB" onClick={onExportEpub} disabled={!hasProject || isBusy} busy={busyAction === 'export epub'} tone="quiet" />
+          <ToolbarButton label="ZIP" onClick={onExportZip} disabled={!hasProject || isBusy} busy={busyAction === 'export zip'} tone="quiet" />
+          <ToolbarButton label="RAR" onClick={onExportRar} disabled={!hasProject || isBusy} busy={busyAction === 'export rar'} tone="quiet" />
+        </div>
+      </div>
+    </header>
   );
 };

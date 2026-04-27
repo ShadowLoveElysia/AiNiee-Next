@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Eraser, MousePointer2, Paintbrush, SquareDashedMousePointer, Type } from 'lucide-react';
 
+import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail } from '../../types/manga';
-import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaLayerControls, MangaViewMode } from './shared';
+import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaLayerControls, MangaViewMode, translateMangaEnum } from './shared';
 
 interface DragState {
   pointerId: number;
@@ -47,6 +49,14 @@ const clampScale = (scale: number, fitScale: number) => {
   return Math.max(minScale, Math.min(4, scale));
 };
 
+const CANVAS_TOOLS: Array<{ labelKey: string; icon: typeof MousePointer2 }> = [
+  { labelKey: 'manga_tool_select', icon: MousePointer2 },
+  { labelKey: 'manga_tool_region', icon: SquareDashedMousePointer },
+  { labelKey: 'manga_tool_text', icon: Type },
+  { labelKey: 'manga_tool_brush', icon: Paintbrush },
+  { labelKey: 'manga_tool_erase', icon: Eraser },
+];
+
 export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   page,
   currentImageUrl,
@@ -60,6 +70,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   onViewportChange,
   onPointerChange,
 }) => {
+  const { t } = useI18n();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [fitScale, setFitScale] = useState(1);
   const [scale, setScale] = useState(1);
@@ -190,12 +201,12 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   };
 
   return (
-    <main className="flex-1 min-w-0 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.08),_transparent_40%),linear-gradient(180deg,_rgba(15,23,42,0.95),_rgba(2,6,23,1))] flex flex-col">
-      <div className="border-b border-slate-900 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+    <main className="flex-1 min-w-0 bg-slate-900 flex flex-col">
+      <div className="border-b border-slate-800/90 bg-slate-950/78 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.2em] text-slate-500">
         <div className="flex items-center gap-4">
-          <span>Canvas</span>
-          {page && <span>Page {page.index} · {page.status}</span>}
-          {page && <span>{page.blocks.length} block(s)</span>}
+          <span>{t('manga_canvas_title')}</span>
+          {page && <span>{t('manga_canvas_page_status', page.index, translateMangaEnum('manga_state', page.status, t))}</span>}
+          {page && <span>{t('manga_canvas_block_count', page.blocks.length)}</span>}
         </div>
         {activeJob && (
           <span className={`${activeJob.status === 'failed' ? 'text-rose-300' : 'text-cyan-300'}`}>
@@ -206,17 +217,37 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
 
       <div
         ref={viewportRef}
-        className={`flex-1 min-h-0 relative overflow-hidden p-6 ${page ? (dragState ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+        className={`flex-1 min-h-0 relative overflow-hidden p-6 ${
+          page ? (dragState ? 'cursor-grabbing' : 'cursor-grab') : ''
+        } bg-[linear-gradient(45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(-45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(45deg,transparent_75%,rgba(15,23,42,0.92)_75%),linear-gradient(-45deg,transparent_75%,rgba(15,23,42,0.92)_75%)] bg-[length:28px_28px] bg-[position:0_0,0_14px,14px_-14px,-14px_0px]`}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={() => onPointerChange(null)}
       >
+        <div className="absolute left-4 top-4 z-20 hidden w-12 flex-col items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/88 p-2 shadow-xl shadow-slate-950/40 md:flex">
+          {CANVAS_TOOLS.map(({ labelKey, icon: ToolIcon }, index) => {
+            const label = t(labelKey);
+            return (
+              <button
+                key={labelKey}
+                type="button"
+                title={label}
+                className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                  index === 0 ? 'bg-primary text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
+                }`}
+              >
+                <ToolIcon size={16} />
+              </button>
+            );
+          })}
+        </div>
+
         {!page ? (
           <div className="absolute inset-0 flex items-center justify-center text-center text-slate-500">
-            <div className="text-xs uppercase tracking-[0.28em] mb-3">Canvas</div>
-            <div className="text-lg font-semibold text-slate-300">Open a MangaProject to inspect pages.</div>
+            <div className="text-xs uppercase tracking-[0.28em] mb-3">{t('manga_canvas_title')}</div>
+            <div className="text-lg font-semibold text-slate-300">{t('manga_canvas_empty')}</div>
           </div>
         ) : (
           <>
@@ -225,7 +256,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
               style={canvasFrameStyle}
             >
               <div
-                className="relative h-full w-full rounded-[28px] border border-slate-700/70 bg-black/60 shadow-2xl overflow-hidden"
+                className="relative h-full w-full rounded-md border border-slate-700/70 bg-black/60 shadow-2xl shadow-slate-950/55 overflow-hidden"
                 style={{
                   transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
                   transformOrigin: 'center center',
@@ -233,7 +264,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
               >
                 <img
                   src={currentImageUrl}
-                  alt={`Page ${page.index}`}
+                  alt={t('manga_page_alt', page.index)}
                   draggable={false}
                   className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                 />
@@ -241,7 +272,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                 {layerControls.segment.visible && (
                   <img
                     src={page.masks.segment_url}
-                    alt="Segment mask"
+                    alt={t('manga_layer_segment_mask')}
                     draggable={false}
                     className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                     style={{ opacity: layerControls.segment.opacity }}
@@ -251,7 +282,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                 {layerControls.bubble.visible && (
                   <img
                     src={page.masks.bubble_url}
-                    alt="Bubble mask"
+                    alt={t('manga_layer_bubble_mask')}
                     draggable={false}
                     className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                     style={{ opacity: layerControls.bubble.opacity }}
@@ -261,7 +292,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                 {layerControls.brush.visible && (
                   <img
                     src={page.masks.brush_url}
-                    alt="Brush mask"
+                    alt={t('manga_layer_brush_mask')}
                     draggable={false}
                     className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                     style={{ opacity: layerControls.brush.opacity }}
@@ -300,7 +331,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
             </div>
 
             <div className="absolute bottom-4 right-4 rounded-lg border border-slate-800 bg-slate-950/85 px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
-              {Math.round(scale * 100)}% · Wheel to zoom · Drag to pan
+              {t('manga_canvas_zoom_hint', Math.round(scale * 100))}
             </div>
           </>
         )}

@@ -14,6 +14,8 @@ export interface MangaJob {
   message: string;
   updated_at?: string;
   page_count?: number;
+  result?: Record<string, any>;
+  error_message?: string;
 }
 
 export interface MangaOperationResult {
@@ -51,6 +53,9 @@ export interface MangaModelPackageStatus {
   snapshot_path?: string;
   downloaded_at?: string;
   revision?: string;
+  runtime_supported?: boolean;
+  runtime_assets_path?: string;
+  runtime_engine_id?: string;
 }
 
 export interface MangaOcrEngineStatus {
@@ -133,4 +138,30 @@ export interface MangaPageDetail {
     brush_url: string;
   };
   blocks: MangaTextBlock[];
+}
+
+export interface MangaRuntimeValidationStage {
+  stage: string;
+  ok: boolean;
+  configured_engine_id: string;
+  runtime_engine_id: string;
+  used_runtime: boolean;
+  execution_mode?: string;
+  elapsed_ms: number;
+  warning_message?: string;
+  error_message?: string;
+  metrics: Record<string, any>;
+  artifacts: Record<string, string>;
+}
+
+export interface MangaRuntimeValidationResult {
+  ok: boolean;
+  project_id: string;
+  page_id: string;
+  page_index: number;
+  source_path: string;
+  output_dir: string;
+  created_at: string;
+  stages: MangaRuntimeValidationStage[];
+  summary: Record<string, any>;
 }

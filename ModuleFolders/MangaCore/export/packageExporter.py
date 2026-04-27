@@ -8,8 +8,8 @@ from ModuleFolders.MangaCore.export.imageExporter import ImageExporter
 from ModuleFolders.MangaCore.export.pdfExporter import PdfExporter
 from ModuleFolders.MangaCore.export.rarExporter import RarExporter
 from ModuleFolders.MangaCore.export.zipExporter import ZipExporter
+from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
-from ModuleFolders.MangaCore.render.painter import MangaRenderer
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class PackageExporter:
 
     def export(self, session: MangaProjectSession) -> PackageExportResult:
         result = PackageExportResult()
-        MangaRenderer().render_session(session)
+        RenderEngine().run_session(session)
         pages_dir = self.image_exporter.export(session)
         result.exported_paths["pages"] = str(pages_dir)
 

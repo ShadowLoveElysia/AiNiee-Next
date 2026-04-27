@@ -1,5 +1,5 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
-import { MangaExportResult, MangaJob, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaSceneSummary } from '../types/manga';
+import { MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -546,6 +546,40 @@ export const DataService = {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to render manga page');
+        return data;
+    },
+
+    async validateMangaRuntime(projectId: string, pageId: string): Promise<MangaRuntimeValidationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to validate manga runtime');
+        return data;
+    },
+
+    async getLatestMangaRuntimeValidation(projectId: string, pageId: string): Promise<MangaRuntimeValidationResult | null> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/latest`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch latest manga runtime validation');
+        return data;
+    },
+
+    async downloadMangaModel(modelId: string): Promise<MangaModelPackageStatus> {
+        const res = await fetch(`${API_BASE}/manga/models/${encodeURIComponent(modelId)}/download`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to prepare manga model');
+        return data;
+    },
+
+    async startMangaModelDownload(modelId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/models/${encodeURIComponent(modelId)}/download/start`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to start manga model preparation');
         return data;
     },
 

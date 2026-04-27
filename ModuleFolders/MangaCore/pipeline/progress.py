@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 
@@ -14,6 +14,8 @@ class PipelineJob:
     message: str = ""
     page_id: str = ""
     project_id: str = ""
+    result: dict[str, object] = field(default_factory=dict)
+    error_message: str = ""
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)

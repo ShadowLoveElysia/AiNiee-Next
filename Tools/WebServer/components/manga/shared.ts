@@ -1,5 +1,14 @@
 export type MangaViewMode = 'rendered' | 'original' | 'overlay' | 'inpainted';
 
+export type MangaTranslator = (key: string, ...args: any[]) => string;
+
+export const translateMangaEnum = (prefix: string, value: string, t: MangaTranslator): string => {
+  if (!value) return '';
+  const key = `${prefix}_${value}`;
+  const translated = t(key);
+  return translated === key ? value : translated;
+};
+
 export interface MangaBlockDraft {
   source_text: string;
   translation: string;
@@ -24,6 +33,15 @@ export interface MangaEngineCard {
   runtime: string;
   available: boolean;
   packageLabel: string;
+  packages: Array<{
+    modelId: string;
+    label: string;
+    repoId: string;
+    available: boolean;
+    runtimeSupported: boolean;
+    runtimeEngineId: string;
+    storagePath: string;
+  }>;
 }
 
 export interface MangaCanvasCommand {
