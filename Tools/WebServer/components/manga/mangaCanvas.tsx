@@ -3,7 +3,7 @@ import { Eraser, MousePointer2, Paintbrush, SquareDashedMousePointer, Type } fro
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail } from '../../types/manga';
-import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaLayerControls, MangaViewMode, translateMangaEnum } from './shared';
+import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeOverlay, MangaLayerControls, MangaViewMode, translateMangaEnum } from './shared';
 
 interface DragState {
   pointerId: number;
@@ -20,6 +20,7 @@ export interface MangaCanvasProps {
   activeBlockId: string;
   blockDrafts: Record<string, MangaBlockDraft>;
   activeJob: MangaActiveJobSummary | null;
+  runtimeOverlay: MangaCanvasRuntimeOverlay | null;
   layerControls: MangaLayerControls;
   zoomCommand: MangaCanvasCommand;
   onSelectBlock: (blockId: string) => void;
@@ -64,6 +65,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   activeBlockId,
   blockDrafts,
   activeJob,
+  runtimeOverlay,
   layerControls,
   zoomCommand,
   onSelectBlock,
@@ -207,6 +209,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
           <span>{t('manga_canvas_title')}</span>
           {page && <span>{t('manga_canvas_page_status', page.index, translateMangaEnum('manga_state', page.status, t))}</span>}
           {page && <span>{t('manga_canvas_block_count', page.blocks.length)}</span>}
+          {runtimeOverlay && <span className="text-cyan-300">{t('manga_canvas_runtime_overlay', runtimeOverlay.title)}</span>}
         </div>
         {activeJob && (
           <span className={`${activeJob.status === 'failed' ? 'text-rose-300' : 'text-cyan-300'}`}>
@@ -299,6 +302,37 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   />
                 )}
 
+                {runtimeOverlay?.imageUrl && (
+                  <img
+                    src={runtimeOverlay.imageUrl}
+                    alt={runtimeOverlay.title}
+                    draggable={false}
+                    className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none mix-blend-screen"
+                    style={{ opacity: 0.58 }}
+                  />
+                )}
+
+                {runtimeOverlay?.boxes.map((box, index) => {
+                  const toneClass = box.tone === 'emerald'
+                    ? 'border-emerald-300 bg-emerald-400/10 text-emerald-100'
+                    : box.tone === 'rose'
+                      ? 'border-rose-300 bg-rose-400/10 text-rose-100'
+                      : box.tone === 'amber'
+                        ? 'border-amber-300 bg-amber-400/10 text-amber-100'
+                        : 'border-cyan-300 bg-cyan-400/10 text-cyan-100';
+                  return (
+                    <div
+                      key={`${runtimeOverlay.stage}-${index}`}
+                      className={`absolute rounded-md border pointer-events-none ${toneClass}`}
+                      style={buildOverlayBoxStyle(box.bbox)}
+                    >
+                      <span className="absolute -top-6 left-0 max-w-full truncate rounded bg-slate-950/88 px-1.5 py-0.5 text-[10px] font-semibold">
+                        {box.label}
+                      </span>
+                    </div>
+                  );
+                })}
+
                 {layerControls.overlay.visible && page.blocks.map((block) => {
                   const draft = blockDrafts[block.block_id];
                   const isActive = block.block_id === activeBlockId;
@@ -333,6 +367,13 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
             <div className="absolute bottom-4 right-4 rounded-lg border border-slate-800 bg-slate-950/85 px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
               {t('manga_canvas_zoom_hint', Math.round(scale * 100))}
             </div>
+
+            {runtimeOverlay && (
+              <div className="absolute bottom-4 left-4 max-w-[360px] rounded-lg border border-cyan-300/20 bg-slate-950/88 px-3 py-2 text-xs text-slate-300 shadow-xl shadow-slate-950/40">
+                <div className="font-semibold text-cyan-100">{runtimeOverlay.title}</div>
+                <div className="mt-1 line-clamp-2 text-slate-500">{runtimeOverlay.message}</div>
+              </div>
+            )}
           </>
         )}
       </div>

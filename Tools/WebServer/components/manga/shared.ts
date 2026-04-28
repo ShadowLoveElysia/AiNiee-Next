@@ -56,6 +56,20 @@ export interface MangaCanvasPointer {
   normalizedY: number;
 }
 
+export interface MangaCanvasRuntimeBox {
+  bbox: number[];
+  label: string;
+  tone?: 'cyan' | 'amber' | 'emerald' | 'rose';
+}
+
+export interface MangaCanvasRuntimeOverlay {
+  stage: string;
+  title: string;
+  imageUrl: string;
+  boxes: MangaCanvasRuntimeBox[];
+  message: string;
+}
+
 export type MangaOverlayLayerKey = 'segment' | 'bubble' | 'brush' | 'overlay';
 
 export interface MangaLayerControl {

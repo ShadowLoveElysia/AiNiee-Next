@@ -10,8 +10,11 @@ export interface MangaBlocksPanelProps {
   activeBlockId: string;
   busyAction: string;
   hasProject: boolean;
+  activeBlockDirty: boolean;
+  dirtyBlockCount: number;
   onSelectBlock: (blockId: string) => void;
   onUpdateDraft: (blockId: string, patch: Partial<MangaBlockDraft>) => void;
+  onSaveActiveBlock: () => void;
   onSavePageChanges: () => void;
 }
 
@@ -26,28 +29,43 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
   activeBlockId,
   busyAction,
   hasProject,
+  activeBlockDirty,
+  dirtyBlockCount,
   onSelectBlock,
   onUpdateDraft,
+  onSaveActiveBlock,
   onSavePageChanges,
 }) => {
   const { t } = useI18n();
   const blocks = page?.blocks || [];
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+    <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_blocks_title')}</div>
-          <div className="mt-1 text-xs text-slate-600">{t('manga_editable_block_count', blocks.length)}</div>
+          <div className="mt-1 text-xs text-slate-600">
+            {dirtyBlockCount > 0 ? t('manga_dirty_block_count', dirtyBlockCount) : t('manga_editable_block_count', blocks.length)}
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={onSavePageChanges}
-          disabled={!hasProject || !page || !!busyAction}
-          className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-primary disabled:opacity-50"
-        >
-          {t('manga_action_save')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onSaveActiveBlock}
+            disabled={!hasProject || !page || !activeBlockId || !activeBlockDirty || !!busyAction}
+            className="rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition-colors hover:border-amber-200 disabled:opacity-45"
+          >
+            {t('manga_save_current_block')}
+          </button>
+          <button
+            type="button"
+            onClick={onSavePageChanges}
+            disabled={!hasProject || !page || !!busyAction}
+            className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-primary disabled:opacity-50"
+          >
+            {t('manga_action_save')}
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 space-y-2">
@@ -89,7 +107,8 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
                     <span className="truncate text-sm font-semibold text-slate-200">{previewText(translation || sourceText, t('manga_empty_block'))}</span>
                   </span>
                   <span className="mt-1 block truncate text-xs text-slate-500">
-                    {block.origin} · {block.rendered_direction} · bbox {block.bbox.join(', ')}
+                    {block.origin} · {block.rendered_direction} · {t('manga_field_bbox')} {block.bbox.join(', ')}
+                    {isActive && activeBlockDirty ? ` · ${t('manga_unsaved')}` : ''}
                   </span>
                 </span>
               </button>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Activity, ChevronDown, PackageCheck, PlayCircle } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
@@ -11,9 +12,89 @@ export interface MangaInspectorProps {
   activeJob: MangaActiveJobSummary | null;
   engineCards: MangaEngineCard[];
   runtimeValidation: MangaRuntimeValidationResult | null;
+  activeRuntimeStage: string;
   busyAction: string;
+  hasProject: boolean;
+  dirtyBlockCount: number;
+  activeBlockDirty: boolean;
+  onSelectRuntimeStage: (stage: string) => void;
+  onValidateRuntime: () => void;
   onDownloadModel: (modelId: string) => void;
 }
+
+interface InspectorSectionProps {
+  title: string;
+  meta?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}
+
+const InspectorSection: React.FC<InspectorSectionProps> = ({
+  title,
+  meta,
+  defaultOpen = false,
+  children,
+}) => (
+  <details
+    open={defaultOpen}
+    className="group rounded-xl border border-slate-800/85 bg-slate-900/48 shadow-[0_16px_42px_rgba(2,6,23,0.18)]"
+  >
+    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{title}</div>
+        {meta && <div className="mt-0.5 truncate text-[11px] text-slate-500">{meta}</div>}
+      </div>
+      <ChevronDown size={15} className="shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
+    </summary>
+    <div className="border-t border-slate-800/75 px-3 py-3">{children}</div>
+  </details>
+);
+
+const MetricTile: React.FC<{ label: string; value: React.ReactNode; tone?: string }> = ({
+  label,
+  value,
+  tone = 'text-slate-100',
+}) => (
+  <div className="rounded-lg border border-slate-800 bg-slate-950/55 px-2.5 py-2">
+    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</div>
+    <div className={`mt-1 text-sm font-bold ${tone}`}>{value}</div>
+  </div>
+);
+
+const StatusPill: React.FC<{ children: React.ReactNode; tone?: 'cyan' | 'emerald' | 'amber' | 'rose' | 'slate' }> = ({
+  children,
+  tone = 'slate',
+}) => {
+  const classes = {
+    cyan: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-100',
+    emerald: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100',
+    amber: 'border-amber-300/25 bg-amber-300/10 text-amber-100',
+    rose: 'border-rose-300/25 bg-rose-300/10 text-rose-100',
+    slate: 'border-slate-700/80 bg-slate-800/60 text-slate-200',
+  };
+
+  return (
+    <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.13em] ${classes[tone]}`}>
+      {children}
+    </span>
+  );
+};
+
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value || 0));
+
+const formatDateTime = (value: string) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
+const getExecutionTone = (mode: string): 'cyan' | 'emerald' | 'amber' | 'rose' | 'slate' => {
+  if (mode === 'configured_runtime') return 'emerald';
+  if (mode === 'fallback_runtime') return 'cyan';
+  if (mode === 'failed') return 'rose';
+  return 'amber';
+};
 
 export const MangaInspector: React.FC<MangaInspectorProps> = ({
   page,
@@ -22,7 +103,13 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   activeJob,
   engineCards,
   runtimeValidation,
+  activeRuntimeStage,
   busyAction,
+  hasProject,
+  dirtyBlockCount,
+  activeBlockDirty,
+  onSelectRuntimeStage,
+  onValidateRuntime,
   onDownloadModel,
 }) => {
   const { t } = useI18n();
@@ -36,209 +123,283 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const strokeWidth = activeBlockDraft?.stroke_width ?? activeBlock?.style.stroke_width ?? 0;
   const sourcePreview = activeBlockDraft?.source_text ?? activeBlock?.source_text ?? '';
   const translationPreview = activeBlockDraft?.translation ?? activeBlock?.translation ?? '';
+  const isBusy = Boolean(busyAction);
+  const isRuntimeBusy = busyAction === 'validate runtime';
+  const canValidateRuntime = Boolean(hasProject && page && !isBusy);
+  const missingEngineCount = engineCards.filter((card) => !card.available).length;
+  const missingPackages = engineCards
+    .flatMap((card) => card.packages)
+    .filter((pkg) => !pkg.available);
 
   return (
-    <>
-      <div className="px-4 py-3 border-b border-slate-900">
-        <div className="flex items-center gap-2">
-          <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200">{t('manga_panel_render')}</div>
-          <div className="rounded-lg border border-transparent px-3 py-2 text-xs font-semibold text-slate-500">{t('manga_panel_layers')}</div>
-        </div>
-        <div className="mt-3 text-sm text-slate-300">
-          {page ? `${page.width} × ${page.height} · ${translateMangaEnum('manga_state', page.status, t)}` : t('manga_no_page_selected')}
+    <div className="space-y-3 px-3 py-3">
+      <div className="rounded-2xl border border-cyan-300/10 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_45%),rgba(15,23,42,0.72)] px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/85">{t('manga_inspector_title')}</div>
+            <div className="mt-1 truncate text-sm font-semibold text-slate-100">
+              {page ? t('manga_page_summary', page.index, page.width, page.height) : t('manga_no_page_selected')}
+            </div>
+          </div>
+          <StatusPill tone={page ? 'cyan' : 'slate'}>
+            {page ? translateMangaEnum('manga_state', page.status, t) : t('manga_idle')}
+          </StatusPill>
         </div>
         {activeBlock && (
-          <div className="mt-2 text-xs text-slate-500">
-            {t('manga_active_block_inline')} <span className="text-slate-200">{activeBlock.block_id}</span>
+          <div className="mt-2 truncate text-xs text-slate-500">
+            {t('manga_active_block_inline')} <span className="font-semibold text-slate-200">{activeBlock.block_id}</span>
+            {activeBlockDirty && <span className="ml-2 text-amber-200">{t('manga_unsaved')}</span>}
+          </div>
+        )}
+        {dirtyBlockCount > 0 && (
+          <div className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/10 px-2.5 py-1.5 text-xs text-amber-100">
+            {t('manga_dirty_block_count', dirtyBlockCount)}
           </div>
         )}
       </div>
 
-      <div className="px-4 py-3 border-b border-slate-900">
-        <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_panel_active_block')}</div>
-        {!activeBlock ? (
-          <div className="mt-3 rounded-lg border border-dashed border-slate-800 bg-slate-900/40 px-4 py-5 text-sm text-slate-500">
-            {t('manga_active_block_empty')}
+      <section className="rounded-xl border border-slate-800/85 bg-slate-900/55 px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+              <Activity size={14} className="text-cyan-300" />
+              {t('manga_panel_runtime_validation')}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {runtimeValidation
+                ? t('manga_last_checked', formatDateTime(runtimeValidation.created_at))
+                : t('manga_runtime_validation_empty')}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onValidateRuntime}
+            disabled={!canValidateRuntime}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-cyan-300/25 bg-cyan-300/10 px-2.5 text-[11px] font-bold text-cyan-100 transition-colors hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {isRuntimeBusy ? <Activity size={13} className="animate-pulse" /> : <PlayCircle size={13} />}
+            {t('manga_action_validate_runtime')}
+          </button>
+        </div>
+
+        {runtimeValidation && (
+          <div className="mt-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-100">{t('manga_page_short')} {runtimeValidation.page_index}</div>
+              <StatusPill tone={runtimeValidation.ok ? 'emerald' : 'amber'}>
+                {runtimeValidation.ok ? t('manga_complete') : t('manga_needs_review')}
+              </StatusPill>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <MetricTile label={t('manga_summary_runtime')} value={runtimeValidation.summary?.runtime_stage_count ?? 0} tone="text-emerald-200" />
+              <MetricTile label={t('manga_summary_fallback')} value={runtimeValidation.summary?.fallback_stage_count ?? 0} tone="text-amber-200" />
+              <MetricTile label={t('manga_summary_seeds')} value={runtimeValidation.summary?.seed_count ?? 0} tone="text-cyan-200" />
+            </div>
+            <details className="group rounded-lg border border-slate-800 bg-slate-950/38">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {t('manga_artifact_dir')}
+                <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-slate-800 px-2.5 py-2 text-xs text-slate-400 break-all">{runtimeValidation.output_dir}</div>
+            </details>
+          </div>
+        )}
+
+        {missingPackages.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-100">
+              {t('manga_runtime_missing_models')}
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {missingPackages.map((pkg) => {
+                const isPreparing = busyAction === `download model:${pkg.modelId}`;
+                return (
+                  <div key={pkg.modelId} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate text-amber-50" title={pkg.label}>{pkg.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => onDownloadModel(pkg.modelId)}
+                      disabled={Boolean(busyAction)}
+                      className="shrink-0 rounded-md border border-amber-200/25 bg-amber-200/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isPreparing ? t('manga_preparing') : t('manga_prepare')}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {runtimeValidation && (
+        <InspectorSection
+          title={t('manga_validation_stages')}
+          meta={t('manga_validation_stage_count', runtimeValidation.stages.length)}
+          defaultOpen={!runtimeValidation.ok}
+        >
+          <div className="space-y-2">
+            {runtimeValidation.stages.map((stage) => {
+              const mode = stage.execution_mode || (stage.used_runtime ? 'configured_runtime' : 'heuristic_fallback');
+              return (
+                <button
+                  key={stage.stage}
+                  type="button"
+                  onClick={() => onSelectRuntimeStage(stage.stage)}
+                  className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    activeRuntimeStage === stage.stage
+                      ? 'border-cyan-300/60 bg-cyan-300/10'
+                      : 'border-slate-800 bg-slate-950/42 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 truncate text-sm font-semibold text-slate-100">
+                      {translateMangaEnum('manga_runtime_stage', stage.stage, t)}
+                    </div>
+                    <StatusPill tone={getExecutionTone(mode)}>
+                      {translateMangaEnum('manga_execution_mode', mode, t)}
+                    </StatusPill>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+                    <div>
+                      <div className="uppercase tracking-[0.14em]">{t('manga_runtime')}</div>
+                      <div className="mt-0.5 truncate text-slate-300" title={stage.runtime_engine_id || '-'}>
+                        {stage.runtime_engine_id || '-'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="uppercase tracking-[0.14em]">{t('manga_elapsed')}</div>
+                      <div className="mt-0.5 text-slate-300">{t('manga_elapsed_ms', stage.elapsed_ms)}</div>
+                    </div>
+                  </div>
+                  {(stage.warning_message || stage.error_message) && (
+                    <div className="mt-2 rounded-md border border-amber-300/20 bg-amber-300/10 px-2.5 py-2 text-xs text-amber-100">
+                      {stage.error_message || stage.warning_message}
+                    </div>
+                  )}
+                  {stage.fallback_reason && (
+                    <div className="mt-2 rounded-md border border-slate-700/70 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-400">
+                      {stage.fallback_reason}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </InspectorSection>
+      )}
+
+      <section className="rounded-xl border border-slate-800/85 bg-slate-900/48 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{t('manga_panel_task_status')}</div>
+          {activeJob && <StatusPill tone={activeJob.status === 'failed' ? 'rose' : 'cyan'}>{translateMangaEnum('manga_state', activeJob.status, t)}</StatusPill>}
+        </div>
+        {activeJob ? (
+          <div className="mt-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="truncate font-semibold text-slate-100">{activeJob.stageLabel}</span>
+              <span className="text-xs text-slate-500">{clampPercent(activeJob.progress)}%</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-950/80">
+              <div
+                className={`h-full ${activeJob.status === 'failed' ? 'bg-rose-400' : 'bg-cyan-400'}`}
+                style={{ width: `${clampPercent(activeJob.progress)}%` }}
+              />
+            </div>
+            <div className="mt-2 line-clamp-2 text-xs text-slate-400">{activeJob.message || t('manga_waiting_job_details')}</div>
           </div>
         ) : (
-          <div className="mt-3 space-y-3">
-            <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-semibold text-slate-100">{activeBlock.block_id}</div>
-                <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{activeBlock.origin}</div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_position')}</div>
-                  <div className="mt-1 text-slate-200">
-                    x {activeBlock.bbox[0]} · y {activeBlock.bbox[1]}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_size')}</div>
-                  <div className="mt-1 text-slate-200">
-                    {blockWidth} × {blockHeight}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_direction')}</div>
-                  <div className="mt-1 text-slate-200">
-                    {activeBlock.source_direction} → {activeBlock.rendered_direction}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_placement')}</div>
-                  <div className="mt-1 text-slate-200">
-                    {activeBlock.placement_mode} · {activeBlock.editable ? t('manga_editable') : t('manga_locked')}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_confidence')}</div>
-                  <div className="mt-1 text-slate-200">{activeBlock.ocr_confidence.toFixed(3)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_flags')}</div>
-                  <div className="mt-1 text-slate-200">{activeBlock.flags.join(', ') || t('manga_no_flags')}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_text_preview')}</div>
-              <div className="mt-2 text-xs text-slate-500">{t('manga_ocr_label')}</div>
-              <div className="mt-1 whitespace-pre-wrap text-sm text-slate-200">{sourcePreview || t('manga_no_ocr_text')}</div>
-              <div className="mt-3 text-xs text-slate-500">{t('manga_translation_label')}</div>
-              <div className="mt-1 whitespace-pre-wrap text-sm text-slate-100">{translationPreview || t('manga_no_translation_yet')}</div>
-            </div>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_render_style')}</div>
-              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_font')}</div>
-                  <div className="mt-1 text-slate-200 break-all">{fontFamily || '-'}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_font_prediction')}</div>
-                  <div className="mt-1 text-slate-200 break-all">{activeBlock.font_prediction || '-'}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_font_size')}</div>
-                  <div className="mt-1 text-slate-200">{fontSize}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_line_spacing')}</div>
-                  <div className="mt-1 text-slate-200">{lineSpacing}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_fill')}</div>
-                  <div className="mt-1 flex items-center gap-2 text-slate-200">
-                    <span className="h-4 w-4 rounded border border-slate-700" style={{ backgroundColor: fill }} />
-                    {fill}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('manga_field_stroke')}</div>
-                  <div className="mt-1 flex items-center gap-2 text-slate-200">
-                    <span className="h-4 w-4 rounded border border-slate-700" style={{ backgroundColor: strokeColor }} />
-                    {strokeColor} · {strokeWidth}px
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div className="mt-2 text-sm text-slate-500">{t('manga_no_active_job')}</div>
         )}
-      </div>
+      </section>
 
-      <div className="px-4 py-3 border-b border-slate-900">
-        <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_panel_task_status')}</div>
-        <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
-          {activeJob ? (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-semibold text-slate-100">{activeJob.stageLabel}</div>
-                <div className={`text-[10px] uppercase tracking-[0.18em] ${activeJob.status === 'failed' ? 'text-rose-300' : 'text-cyan-300'}`}>
-                  {translateMangaEnum('manga_state', activeJob.status, t)}
-                </div>
-              </div>
-              <div className="mt-3 h-2 rounded-full bg-slate-950/80 overflow-hidden">
-                <div
-                  className={`h-full ${activeJob.status === 'failed' ? 'bg-rose-400' : 'bg-cyan-400'}`}
-                  style={{ width: `${Math.max(0, Math.min(100, activeJob.progress || 0))}%` }}
-                />
-              </div>
-              <div className="mt-3 text-sm text-slate-300">{activeJob.message || t('manga_waiting_job_details')}</div>
-            </>
-          ) : (
-            <div className="text-sm text-slate-500">{t('manga_no_active_job')}</div>
-          )}
-        </div>
-      </div>
-
-      <div className="px-4 py-3 border-b border-slate-900">
-        <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_panel_engine_status')}</div>
-        <div className="mt-3 grid gap-2">
+      <InspectorSection
+        title={t('manga_panel_engine_status')}
+        meta={missingEngineCount > 0 ? t('manga_engine_missing_count', missingEngineCount) : t('manga_engine_all_ready')}
+        defaultOpen={missingEngineCount > 0}
+      >
+        <div className="grid gap-2">
           {engineCards.length === 0 && (
-            <div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/40 px-4 py-5 text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/38 px-3 py-4 text-sm text-slate-500">
               {t('manga_engine_status_empty')}
             </div>
           )}
           {engineCards.map((card) => (
-            <div key={card.label} className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+            <div key={card.label} className="rounded-lg border border-slate-800 bg-slate-950/42 px-3 py-2.5">
               <div className="flex items-center justify-between gap-3">
-                <div className="font-semibold text-slate-100">{card.label}</div>
-                <div className={`text-[10px] uppercase tracking-[0.18em] ${card.available ? 'text-emerald-300' : 'text-amber-300'}`}>
+                <div className="min-w-0 truncate text-sm font-semibold text-slate-100">{card.label}</div>
+                <StatusPill tone={card.available ? 'emerald' : 'amber'}>
                   {card.available ? t('manga_ready') : t('manga_missing')}
-                </div>
+                </StatusPill>
               </div>
-              <div className="mt-2 text-xs text-slate-500">{t('manga_configured')}</div>
-              <div className="text-sm text-slate-300 break-all">{card.configured}</div>
-              <div className="mt-2 text-xs text-slate-500">{t('manga_runtime')}</div>
-              <div className="text-sm text-slate-300 break-all">{card.runtime}</div>
-              <div className="mt-2 text-xs text-slate-500">{t('manga_package')}</div>
-              <div className="text-sm text-slate-300 break-all">{card.packageLabel}</div>
+              <div className="mt-1 truncate text-xs text-slate-500" title={card.packageLabel || '-'}>
+                {card.packageLabel || t('manga_unknown_package')}
+              </div>
+
               {card.packages.length > 0 && (
-                <div className="mt-3 space-y-2">
+                <div className="mt-2 space-y-2">
                   {card.packages.map((pkg) => {
                     const isPreparing = busyAction === `download model:${pkg.modelId}`;
+                    const progress = isPreparing ? clampPercent(activeJob?.progress || 0) : 0;
                     return (
-                      <div key={pkg.modelId} className="rounded-md border border-slate-800 bg-slate-950/45 px-3 py-2">
+                      <div key={pkg.modelId} className="rounded-md border border-slate-800 bg-slate-900/58 px-2.5 py-2">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold text-slate-200">{pkg.label}</div>
+                            <div className="flex items-center gap-1.5">
+                              <PackageCheck size={13} className={pkg.available ? 'text-emerald-300' : 'text-amber-300'} />
+                              <div className="truncate text-xs font-semibold text-slate-200">{pkg.label}</div>
+                            </div>
                             <div className="mt-0.5 truncate text-[11px] text-slate-500" title={pkg.repoId || pkg.storagePath}>
                               {pkg.repoId || pkg.storagePath || t('manga_unknown_package')}
                             </div>
                           </div>
                           {pkg.available ? (
-                            <span className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
-                              {t('manga_ready')}
-                            </span>
+                            <StatusPill tone="emerald">{t('manga_ready')}</StatusPill>
                           ) : (
                             <button
                               type="button"
                               onClick={() => onDownloadModel(pkg.modelId)}
                               disabled={Boolean(busyAction)}
-                              className="shrink-0 rounded-md border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-100 transition-colors hover:border-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="shrink-0 rounded-md border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-100 transition-colors hover:border-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {isPreparing ? t('manga_preparing') : t('manga_prepare')}
                             </button>
                           )}
                         </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
-                          <div>
-                            <div className="uppercase tracking-[0.14em]">{t('manga_runtime')}</div>
-                            <div className="mt-0.5 truncate text-slate-300" title={pkg.runtimeEngineId || '-'}>
-                              {pkg.runtimeEngineId || '-'}
+
+                        {isPreparing && (
+                          <div className="mt-2">
+                            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                              <span>{t('manga_model_progress')}</span>
+                              <span>{progress}%</span>
+                            </div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-950/85">
+                              <div className="h-full bg-amber-300" style={{ width: `${progress}%` }} />
                             </div>
                           </div>
-                          <div>
-                            <div className="uppercase tracking-[0.14em]">{t('manga_storage')}</div>
-                            <div className="mt-0.5 truncate text-slate-300" title={pkg.storagePath || '-'}>
-                              {pkg.storagePath || '-'}
+                        )}
+
+                        <details className="group mt-2">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            {t('manga_model_details')}
+                            <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+                          </summary>
+                          <div className="mt-2 grid grid-cols-1 gap-2 text-[11px] text-slate-500">
+                            <div>
+                              <div className="uppercase tracking-[0.14em]">{t('manga_runtime')}</div>
+                              <div className="mt-0.5 truncate text-slate-300" title={pkg.runtimeEngineId || '-'}>
+                                {pkg.runtimeEngineId || '-'}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="uppercase tracking-[0.14em]">{t('manga_storage')}</div>
+                              <div className="mt-0.5 truncate text-slate-300" title={pkg.storagePath || '-'}>
+                                {pkg.storagePath || '-'}
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        </details>
+
                         {!pkg.runtimeSupported && (
                           <div className="mt-2 text-[11px] text-slate-500">{t('manga_model_no_runtime_bridge')}</div>
                         )}
@@ -247,71 +408,105 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                   })}
                 </div>
               )}
+
+              <details className="group mt-2 rounded-md border border-slate-800/75 bg-slate-900/40">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('manga_configured')}
+                  <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="space-y-2 border-t border-slate-800 px-2 py-2 text-[11px] text-slate-500">
+                  <div>
+                    <div className="uppercase tracking-[0.14em]">{t('manga_configured')}</div>
+                    <div className="mt-0.5 break-all text-slate-300">{card.configured || '-'}</div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-[0.14em]">{t('manga_runtime')}</div>
+                    <div className="mt-0.5 break-all text-slate-300">{card.runtime || '-'}</div>
+                  </div>
+                </div>
+              </details>
             </div>
           ))}
         </div>
-      </div>
+      </InspectorSection>
 
-      <div className="px-4 py-3 border-b border-slate-900">
-        <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_panel_runtime_validation')}</div>
-        {!runtimeValidation ? (
-          <div className="mt-3 rounded-lg border border-dashed border-slate-800 bg-slate-900/40 px-4 py-4 text-sm text-slate-500">
-            {t('manga_runtime_validation_empty')}
+      <InspectorSection
+        title={t('manga_panel_active_block')}
+        meta={activeBlock ? activeBlock.block_id : t('manga_active_block_empty')}
+        defaultOpen={Boolean(activeBlock)}
+      >
+        {!activeBlock ? (
+          <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/38 px-3 py-4 text-sm text-slate-500">
+            {t('manga_active_block_empty')}
           </div>
         ) : (
-          <div className="mt-3 space-y-2">
-            <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+          <div className="space-y-3">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/42 px-3 py-2.5">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-100">{t('manga_page_short')} {runtimeValidation.page_index}</div>
-                <div className={`text-[10px] uppercase tracking-[0.18em] ${runtimeValidation.ok ? 'text-emerald-300' : 'text-amber-300'}`}>
-                  {runtimeValidation.ok ? t('manga_complete') : t('manga_needs_review')}
-                </div>
+                <div className="truncate font-semibold text-slate-100">{activeBlock.block_id}</div>
+                <StatusPill>{activeBlock.origin}</StatusPill>
               </div>
-              <div className="mt-2 text-xs text-slate-500 break-all">{runtimeValidation.output_dir}</div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                <div className="rounded-md border border-slate-800 bg-slate-950/50 px-2 py-2">
-                  <div className="uppercase tracking-[0.16em] text-slate-500">{t('manga_summary_runtime')}</div>
-                  <div className="mt-1 text-sm font-semibold text-emerald-200">{runtimeValidation.summary?.runtime_stage_count ?? 0}</div>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/50 px-2 py-2">
-                  <div className="uppercase tracking-[0.16em] text-slate-500">{t('manga_summary_fallback')}</div>
-                  <div className="mt-1 text-sm font-semibold text-amber-200">{runtimeValidation.summary?.fallback_stage_count ?? 0}</div>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/50 px-2 py-2">
-                  <div className="uppercase tracking-[0.16em] text-slate-500">{t('manga_summary_seeds')}</div>
-                  <div className="mt-1 text-sm font-semibold text-cyan-200">{runtimeValidation.summary?.seed_count ?? 0}</div>
-                </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <MetricTile label={t('manga_field_position')} value={`x ${activeBlock.bbox[0]} / y ${activeBlock.bbox[1]}`} />
+                <MetricTile label={t('manga_field_size')} value={`${blockWidth} x ${blockHeight}`} />
+                <MetricTile label={t('manga_field_direction')} value={`${activeBlock.source_direction} -> ${activeBlock.rendered_direction}`} />
+                <MetricTile label={t('manga_field_confidence')} value={activeBlock.ocr_confidence.toFixed(3)} />
               </div>
             </div>
-            {runtimeValidation.stages.map((stage) => (
-              <div key={stage.stage} className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold capitalize text-slate-100">{translateMangaEnum('manga_runtime_stage', stage.stage, t)}</div>
-                  <div className={`text-[10px] uppercase tracking-[0.18em] ${
-                    stage.execution_mode === 'configured_runtime'
-                      ? 'text-emerald-300'
-                      : stage.execution_mode === 'fallback_runtime'
-                        ? 'text-cyan-300'
-                        : stage.execution_mode === 'failed'
-                          ? 'text-rose-300'
-                          : 'text-amber-300'
-                  }`}>
-                    {translateMangaEnum('manga_execution_mode', stage.execution_mode || (stage.used_runtime ? 'configured_runtime' : 'heuristic_fallback'), t)}
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-slate-500">{t('manga_runtime')}</div>
-                <div className="text-sm text-slate-300 break-all">{stage.runtime_engine_id || '-'}</div>
-                <div className="mt-2 text-xs text-slate-500">{t('manga_elapsed_ms', stage.elapsed_ms)}</div>
-                {(stage.warning_message || stage.error_message) && (
-                  <div className="mt-2 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                    {stage.error_message || stage.warning_message}
-                  </div>
-                )}
+
+            <div className="rounded-lg border border-slate-800 bg-slate-950/42 px-3 py-2.5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{t('manga_text_preview')}</div>
+              <div className="mt-2 text-[11px] text-slate-500">{t('manga_ocr_label')}</div>
+              <div className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm text-slate-200">{sourcePreview || t('manga_no_ocr_text')}</div>
+              <div className="mt-2 text-[11px] text-slate-500">{t('manga_translation_label')}</div>
+              <div className="mt-1 line-clamp-5 whitespace-pre-wrap text-sm text-slate-100">{translationPreview || t('manga_no_translation_yet')}</div>
+            </div>
+
+            <details className="group rounded-lg border border-slate-800 bg-slate-950/42">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {t('manga_render_style')}
+                <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="grid grid-cols-2 gap-2 border-t border-slate-800 px-3 py-3 text-xs">
+                <MetricTile label={t('manga_field_font')} value={<span className="break-all">{fontFamily || '-'}</span>} />
+                <MetricTile label={t('manga_field_font_prediction')} value={<span className="break-all">{activeBlock.font_prediction || '-'}</span>} />
+                <MetricTile label={t('manga_field_font_size')} value={fontSize} />
+                <MetricTile label={t('manga_field_line_spacing')} value={lineSpacing} />
+                <MetricTile
+                  label={t('manga_field_fill')}
+                  value={(
+                    <span className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 rounded border border-slate-700" style={{ backgroundColor: fill }} />
+                      {fill}
+                    </span>
+                  )}
+                />
+                <MetricTile
+                  label={t('manga_field_stroke')}
+                  value={(
+                    <span className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 rounded border border-slate-700" style={{ backgroundColor: strokeColor }} />
+                      {strokeWidth}px
+                    </span>
+                  )}
+                />
               </div>
-            ))}
+            </details>
+
+            <details className="group rounded-lg border border-slate-800 bg-slate-950/42">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {t('manga_block_geometry')}
+                <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-2 border-t border-slate-800 px-3 py-3 text-xs text-slate-400">
+                <div>{t('manga_field_placement')}: <span className="text-slate-200">{activeBlock.placement_mode} · {activeBlock.editable ? t('manga_editable') : t('manga_locked')}</span></div>
+                <div>{t('manga_field_bbox')}: <span className="text-slate-200">{activeBlock.bbox.join(', ')}</span></div>
+                <div>{t('manga_field_flags')}: <span className="text-slate-200">{activeBlock.flags.join(', ') || t('manga_no_flags')}</span></div>
+              </div>
+            </details>
           </div>
         )}
-      </div>
-    </>
+      </InspectorSection>
+    </div>
   );
 };

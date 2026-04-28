@@ -150,8 +150,10 @@ export interface MangaRuntimeValidationStage {
   elapsed_ms: number;
   warning_message?: string;
   error_message?: string;
+  fallback_reason?: string;
   metrics: Record<string, any>;
   artifacts: Record<string, string>;
+  artifact_urls?: Record<string, string>;
 }
 
 export interface MangaRuntimeValidationResult {

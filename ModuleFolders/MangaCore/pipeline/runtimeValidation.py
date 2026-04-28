@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import quote
 
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine
@@ -25,8 +26,10 @@ class RuntimeValidationStage:
     elapsed_ms: int = 0
     warning_message: str = ""
     error_message: str = ""
+    fallback_reason: str = ""
     metrics: dict[str, object] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)
+    artifact_urls: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -60,6 +63,23 @@ def _now_iso() -> str:
 
 def _relative_to_project(session: MangaProjectSession, path: Path) -> str:
     return path.relative_to(session.project_path).as_posix()
+
+
+def _asset_url(session: MangaProjectSession, relative_path: str) -> str:
+    if not relative_path:
+        return ""
+    target = session.project_path / relative_path
+    version = int(target.stat().st_mtime_ns) if target.exists() else 0
+    return f"/api/manga/projects/{session.manifest.project_id}/assets/{quote(relative_path, safe='/')}?v={version}"
+
+
+def _attach_artifact_urls(session: MangaProjectSession, stage: RuntimeValidationStage) -> RuntimeValidationStage:
+    stage.artifact_urls = {
+        key: _asset_url(session, relative_path)
+        for key, relative_path in stage.artifacts.items()
+        if relative_path
+    }
+    return stage
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -112,7 +132,7 @@ class MangaRuntimeValidator:
             source_path=source_path,
             output_dir=output_dir,
         )
-        stages.append(detect_stage)
+        stages.append(_attach_artifact_urls(session, detect_stage))
 
         ocr_stage, seeds_path, seed_count = self._run_ocr(
             session=session,
@@ -121,7 +141,7 @@ class MangaRuntimeValidator:
             regions=detect_regions,
             output_dir=output_dir,
         )
-        stages.append(ocr_stage)
+        stages.append(_attach_artifact_urls(session, ocr_stage))
 
         inpaint_stage = self._run_inpaint(
             session=session,
@@ -130,7 +150,7 @@ class MangaRuntimeValidator:
             segment_path=segment_path,
             output_dir=output_dir,
         )
-        stages.append(inpaint_stage)
+        stages.append(_attach_artifact_urls(session, inpaint_stage))
 
         runtime_stage_count = sum(1 for stage in stages if stage.used_runtime)
         fallback_stage_count = len(stages) - runtime_stage_count
@@ -208,20 +228,22 @@ class MangaRuntimeValidator:
                 f"runtimeValidation/{output_dir.name}/detectResults.json",
                 regions_payload,
             )
+            used_runtime = result.runtime_detector_id != "heuristic-grouping"
             return (
                 RuntimeValidationStage(
                     stage="detect",
                     ok=True,
                     configured_engine_id=f"{result.configured_detector_id} / {result.configured_segmenter_id}",
                     runtime_engine_id=f"{result.runtime_detector_id} / {result.runtime_segmenter_id}",
-                    used_runtime=result.runtime_detector_id != "heuristic-grouping",
+                    used_runtime=used_runtime,
                     execution_mode=(
                         "configured_runtime"
-                        if result.runtime_detector_id != "heuristic-grouping"
+                        if used_runtime
                         else "heuristic_fallback"
                     ),
                     elapsed_ms=_elapsed_ms(started_at),
                     warning_message=result.warning_message,
+                    fallback_reason="" if used_runtime else "Detector runtime assets are unavailable; heuristic text-region grouping was used.",
                     metrics={
                         "text_region_count": len(result.text_regions),
                         "bubble_region_count": len(result.bubble_regions),
@@ -249,6 +271,7 @@ class MangaRuntimeValidator:
                     execution_mode="failed",
                     elapsed_ms=_elapsed_ms(started_at),
                     error_message=str(exc),
+                    fallback_reason=str(exc),
                 ),
                 [],
                 "",
@@ -298,6 +321,8 @@ class MangaRuntimeValidator:
                 }
             used_runtime = bool(last_run.get("used_runtime", False))
             runtime_engine_id = str(last_run.get("runtime_engine_id", ""))
+            seed_payload = [seed.to_dict() for seed in seeds]
+            assignment_payload = [assignment.to_dict() for assignment in assignments]
             return (
                 RuntimeValidationStage(
                     stage="ocr",
@@ -308,9 +333,12 @@ class MangaRuntimeValidator:
                     execution_mode="configured_runtime" if used_runtime else "fallback_runtime",
                     elapsed_ms=_elapsed_ms(started_at),
                     warning_message=str(last_run.get("warning_message", "")),
+                    fallback_reason="" if used_runtime else "OCR runtime bridge did not use a prepared runtime package; fallback OCR adapter was used.",
                     metrics={
                         "seed_count": len(seeds),
                         "assignment_count": len(assignments),
+                        "seeds": seed_payload,
+                        "assignments": assignment_payload,
                     },
                     artifacts={
                         "ocr_seeds": _relative_to_project(session, seeds_path),
@@ -333,6 +361,7 @@ class MangaRuntimeValidator:
                     execution_mode="failed",
                     elapsed_ms=_elapsed_ms(started_at),
                     error_message=str(exc),
+                    fallback_reason=str(exc),
                 ),
                 "",
                 0,
@@ -378,6 +407,7 @@ class MangaRuntimeValidator:
                 ),
                 elapsed_ms=_elapsed_ms(started_at),
                 error_message=result.error_message,
+                fallback_reason="" if used_runtime else "Inpaint runtime assets are unavailable; fallback inpaint mode was used.",
                 metrics={"mask_pixels": result.mask_pixels},
                 artifacts={
                     "inpaint_results": _relative_to_project(session, output_dir / "inpaintResults.json"),
@@ -393,4 +423,5 @@ class MangaRuntimeValidator:
                 execution_mode="failed",
                 elapsed_ms=_elapsed_ms(started_at),
                 error_message=str(exc),
+                fallback_reason=str(exc),
             )
