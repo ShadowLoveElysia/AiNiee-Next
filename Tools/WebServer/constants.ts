@@ -4,6 +4,7 @@ import { AppConfig } from './types';
 export const ZH_CN_LOCALE: Record<string, string> = {
     "menu_title": "AiNiee CLI - 主菜单",
     "menu_start_translation": "开始翻译任务",
+    "menu_manga_editor": "漫画编辑器",
     "menu_start_polishing": "开始润色任务",
     "menu_export_only": "仅执行导出 (基于现有缓存)",
     "menu_settings": "项目设置",
@@ -908,6 +909,7 @@ export const ZH_CN_LOCALE: Record<string, string> = {
 export const EN_LOCALE: Record<string, string> = {
     "menu_title": "AiNiee CLI - Main Menu",
     "menu_start_translation": "Start Translation Task",
+    "menu_manga_editor": "Manga Editor",
     "menu_start_polishing": "Start Polishing Task",
     "menu_export_only": "Export Only (From Cache)",
     "menu_settings": "Project Settings",

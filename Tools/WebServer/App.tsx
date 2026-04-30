@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, PlayCircle, Settings as SettingsIcon, Archive, Terminal as TerminalIcon, BookOpen, Puzzle, Menu, X as CloseIcon, Sparkles, ListPlus, Database } from 'lucide-react';
+import { LayoutDashboard, PlayCircle, Settings as SettingsIcon, Archive, Terminal as TerminalIcon, BookOpen, Puzzle, Menu, X as CloseIcon, Sparkles, ListPlus, Database, Images } from 'lucide-react';
 import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
 import { Rules } from './pages/Rules';
@@ -490,6 +490,7 @@ const MainLayout: React.FC = () => {
             <nav className="space-y-2">
               <SidebarItem to="/" icon={LayoutDashboard} labelKey="menu_title" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/task" icon={PlayCircle} labelKey="menu_start_translation" currentPath={pathname} activeTheme={activeTheme} />
+              <SidebarItem to="/manga-editor" icon={Images} labelKey="menu_manga_editor" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/cache-editor" icon={Database} labelKey="menu_cache_editor" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/prompts" icon={Sparkles} labelKey="menu_prompt_features" currentPath={pathname} activeTheme={activeTheme} />
               <SidebarItem to="/rules" icon={BookOpen} labelKey="menu_glossary_rules" currentPath={pathname} activeTheme={activeTheme} />
