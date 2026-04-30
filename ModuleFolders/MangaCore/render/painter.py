@@ -22,6 +22,27 @@ def _resolve_base_layer(session: MangaProjectSession, page: MangaPage, preset: s
     return base_path
 
 
+def _apply_restore_mask(session: MangaProjectSession, page: MangaPage, canvas: Image.Image) -> Image.Image:
+    restore_relative_path = getattr(page.masks, "restore", "")
+    if not restore_relative_path:
+        return canvas
+    restore_path = session.project_path / restore_relative_path
+    source_path = session.project_path / page.layers.source
+    if not restore_path.exists() or not source_path.exists():
+        return canvas
+    with Image.open(restore_path) as mask_image:
+        restore_mask = mask_image.convert("L")
+        if restore_mask.size != canvas.size:
+            restore_mask = restore_mask.resize(canvas.size, resample=Image.Resampling.NEAREST)
+    if not restore_mask.getbbox():
+        return canvas
+    with Image.open(source_path) as source_image:
+        source = source_image.convert("RGBA")
+        if source.size != canvas.size:
+            source = source.resize(canvas.size, resample=Image.Resampling.BICUBIC)
+    return Image.composite(source, canvas, restore_mask)
+
+
 class MangaRenderer:
     def __init__(self, *, use_source_text_fallback: bool = False) -> None:
         self.use_source_text_fallback = use_source_text_fallback
@@ -67,6 +88,7 @@ class MangaRenderer:
                     stroke_width=block.style.stroke_width,
                 )
 
+        canvas = _apply_restore_mask(session, page, canvas)
         canvas.save(rendered_path, format="PNG")
 
         final_path = session.output_root / "final" / "pages" / f"{page.index:04d}.png"

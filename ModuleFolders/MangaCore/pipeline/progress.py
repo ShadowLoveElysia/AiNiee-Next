@@ -16,6 +16,7 @@ class PipelineJob:
     project_id: str = ""
     result: dict[str, object] = field(default_factory=dict)
     error_message: str = ""
+    cancel_requested: bool = False
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -60,3 +61,22 @@ class JobRegistry:
                 if hasattr(job, key):
                     setattr(job, key, value)
             return job
+
+    @classmethod
+    def request_cancel(cls, job_id: str, *, stage: str = "", message: str = "") -> PipelineJob | None:
+        with cls._lock:
+            job = cls._jobs.get(job_id)
+            if job is None:
+                return None
+            job.cancel_requested = True
+            if stage:
+                job.stage = stage
+            if message:
+                job.message = message
+            return job
+
+    @classmethod
+    def is_cancel_requested(cls, job_id: str) -> bool:
+        with cls._lock:
+            job = cls._jobs.get(job_id)
+            return bool(job and job.cancel_requested)

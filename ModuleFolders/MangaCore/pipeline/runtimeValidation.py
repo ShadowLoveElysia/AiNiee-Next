@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
+from typing import Callable
 from urllib.parse import quote
 
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
-from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine
+from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine, DetectRegion
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintEngine
 from ModuleFolders.MangaCore.pipeline.engines.ocr import OcrEngine
 from ModuleFolders.MangaCore.project.page import MangaPage
@@ -54,7 +56,7 @@ class RuntimeValidationResult:
 
 
 def _now_token() -> str:
-    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _now_iso() -> str:
@@ -102,6 +104,67 @@ def _count_execution_modes(stages: list[RuntimeValidationStage]) -> dict[str, in
     return counts
 
 
+class RuntimeValidationCancelled(RuntimeError):
+    """Raised when a runtime validation job is cancelled between stages."""
+
+
+def _check_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel and should_cancel():
+        raise RuntimeValidationCancelled("Runtime validation cancelled.")
+
+
+def _stage_from_payload(payload: dict[str, object]) -> RuntimeValidationStage:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    artifact_urls = payload.get("artifact_urls") if isinstance(payload.get("artifact_urls"), dict) else {}
+    return RuntimeValidationStage(
+        stage=str(payload.get("stage") or ""),
+        ok=bool(payload.get("ok")),
+        configured_engine_id=str(payload.get("configured_engine_id") or ""),
+        runtime_engine_id=str(payload.get("runtime_engine_id") or ""),
+        used_runtime=bool(payload.get("used_runtime")),
+        execution_mode=str(payload.get("execution_mode") or "heuristic_fallback"),
+        elapsed_ms=int(payload.get("elapsed_ms") or 0),
+        warning_message=str(payload.get("warning_message") or ""),
+        error_message=str(payload.get("error_message") or ""),
+        fallback_reason=str(payload.get("fallback_reason") or ""),
+        metrics=dict(metrics),
+        artifacts={str(key): str(value) for key, value in artifacts.items()},
+        artifact_urls={str(key): str(value) for key, value in artifact_urls.items()},
+    )
+
+
+def _detect_region_from_payload(payload: dict[str, object], index: int) -> DetectRegion | None:
+    bbox = payload.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) < 4:
+        return None
+    bbox_values = [int(float(value)) for value in bbox[:4]]
+    polygon = payload.get("polygon")
+    if isinstance(polygon, list) and len(polygon) >= 4:
+        polygon_values = [
+            [float(point[0]), float(point[1])]
+            for point in polygon[:4]
+            if isinstance(point, list) and len(point) >= 2
+        ]
+    else:
+        x1, y1, x2, y2 = bbox_values
+        polygon_values = [
+            [float(x1), float(y1)],
+            [float(x2), float(y1)],
+            [float(x2), float(y2)],
+            [float(x1), float(y2)],
+        ]
+    if len(polygon_values) < 4:
+        return None
+    return DetectRegion(
+        region_id=str(payload.get("region_id") or payload.get("id") or f"region_{index:04d}"),
+        kind=str(payload.get("kind") or payload.get("type") or "text"),
+        bbox=bbox_values,
+        polygon=polygon_values,
+        score=float(payload.get("score") or 0.0),
+    )
+
+
 class MangaRuntimeValidator:
     def __init__(
         self,
@@ -118,6 +181,8 @@ class MangaRuntimeValidator:
         self,
         session: MangaProjectSession,
         page: MangaPage,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> RuntimeValidationResult:
         self._configure_engines(session)
         page_key = f"{page.index:04d}"
@@ -126,6 +191,7 @@ class MangaRuntimeValidator:
         source_path = session.project_path / page.layers.source
         stages: list[RuntimeValidationStage] = []
 
+        _check_cancelled(should_cancel)
         detect_stage, detect_regions, detect_regions_path, segment_path, bubble_path = self._run_detect(
             session=session,
             page=page,
@@ -134,6 +200,7 @@ class MangaRuntimeValidator:
         )
         stages.append(_attach_artifact_urls(session, detect_stage))
 
+        _check_cancelled(should_cancel)
         ocr_stage, seeds_path, seed_count = self._run_ocr(
             session=session,
             page=page,
@@ -143,6 +210,7 @@ class MangaRuntimeValidator:
         )
         stages.append(_attach_artifact_urls(session, ocr_stage))
 
+        _check_cancelled(should_cancel)
         inpaint_stage = self._run_inpaint(
             session=session,
             page=page,
@@ -152,10 +220,123 @@ class MangaRuntimeValidator:
         )
         stages.append(_attach_artifact_urls(session, inpaint_stage))
 
+        _check_cancelled(should_cancel)
+        result = self._build_result(
+            session=session,
+            page=page,
+            source_path=source_path,
+            output_dir=output_dir,
+            stages=stages,
+            summary_overrides={
+                "seed_count": seed_count,
+                "detect_regions_path": detect_regions_path,
+                "ocr_seeds_path": seeds_path,
+                "segment_mask_path": _relative_to_project(session, segment_path),
+                "bubble_mask_path": _relative_to_project(session, bubble_path),
+            },
+        )
+        self._write_report(session, page, output_dir, result)
+        return result
+
+    def retry_stage(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+        stage: str,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> RuntimeValidationResult:
+        stage = str(stage).strip().lower()
+        if stage not in {"detect", "ocr", "inpaint"}:
+            raise ValueError(f"Unsupported runtime validation stage retry: {stage}")
+
+        self._configure_engines(session)
+        page_key = f"{page.index:04d}"
+        output_dir = session.project_path / "pages" / page_key / "runtimeValidation" / f"{_now_token()}_retry_{stage}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        source_path = session.project_path / page.layers.source
+        latest = self._load_latest_report(session, page)
+        latest_summary = latest.get("summary") if isinstance(latest.get("summary"), dict) else {}
+        existing_stages = self._stages_from_report(latest)
+        stages_by_id = {item.stage: item for item in existing_stages if item.stage}
+        summary_overrides = dict(latest_summary)
+        summary_overrides["retry_stage"] = stage
+
+        _check_cancelled(should_cancel)
+        if stage == "detect":
+            detect_stage, _detect_regions, detect_regions_path, segment_path, bubble_path = self._run_detect(
+                session=session,
+                page=page,
+                source_path=source_path,
+                output_dir=output_dir,
+            )
+            stages_by_id[stage] = _attach_artifact_urls(session, detect_stage)
+            summary_overrides.update(
+                {
+                    "detect_regions_path": detect_regions_path,
+                    "segment_mask_path": _relative_to_project(session, segment_path),
+                    "bubble_mask_path": _relative_to_project(session, bubble_path),
+                }
+            )
+        elif stage == "ocr":
+            regions = self._detect_regions_from_latest_report(latest)
+            ocr_stage, seeds_path, seed_count = self._run_ocr(
+                session=session,
+                page=page,
+                source_path=source_path,
+                regions=regions,
+                output_dir=output_dir,
+            )
+            stages_by_id[stage] = _attach_artifact_urls(session, ocr_stage)
+            summary_overrides.update({"seed_count": seed_count, "ocr_seeds_path": seeds_path})
+        else:
+            segment_path = self._resolve_latest_segment_mask(session, page, latest_summary)
+            inpaint_stage = self._run_inpaint(
+                session=session,
+                page=page,
+                source_path=source_path,
+                segment_path=segment_path,
+                output_dir=output_dir,
+            )
+            stages_by_id[stage] = _attach_artifact_urls(session, inpaint_stage)
+
+        _check_cancelled(should_cancel)
+        stages = [stages_by_id[item] for item in ("detect", "ocr", "inpaint") if item in stages_by_id]
+        result = self._build_result(
+            session=session,
+            page=page,
+            source_path=source_path,
+            output_dir=output_dir,
+            stages=stages,
+            summary_overrides=summary_overrides,
+        )
+        self._write_report(session, page, output_dir, result)
+        return result
+
+    def _build_result(
+        self,
+        *,
+        session: MangaProjectSession,
+        page: MangaPage,
+        source_path: Path,
+        output_dir: Path,
+        stages: list[RuntimeValidationStage],
+        summary_overrides: dict[str, object],
+    ) -> RuntimeValidationResult:
         runtime_stage_count = sum(1 for stage in stages if stage.used_runtime)
         fallback_stage_count = len(stages) - runtime_stage_count
         execution_mode_counts = _count_execution_modes(stages)
-        result = RuntimeValidationResult(
+        summary = {
+            "runtime_stage_count": runtime_stage_count,
+            "fallback_stage_count": fallback_stage_count,
+            "configured_runtime_stage_count": execution_mode_counts.get("configured_runtime", 0),
+            "fallback_runtime_stage_count": execution_mode_counts.get("fallback_runtime", 0),
+            "heuristic_fallback_stage_count": execution_mode_counts.get("heuristic_fallback", 0),
+            "failed_stage_count": execution_mode_counts.get("failed", 0),
+            "execution_mode_counts": execution_mode_counts,
+        }
+        summary.update(summary_overrides)
+        return RuntimeValidationResult(
             ok=all(stage.ok for stage in stages),
             project_id=session.manifest.project_id,
             page_id=page.page_id,
@@ -164,21 +345,16 @@ class MangaRuntimeValidator:
             output_dir=_relative_to_project(session, output_dir),
             created_at=_now_iso(),
             stages=stages,
-            summary={
-                "runtime_stage_count": runtime_stage_count,
-                "fallback_stage_count": fallback_stage_count,
-                "configured_runtime_stage_count": execution_mode_counts.get("configured_runtime", 0),
-                "fallback_runtime_stage_count": execution_mode_counts.get("fallback_runtime", 0),
-                "heuristic_fallback_stage_count": execution_mode_counts.get("heuristic_fallback", 0),
-                "failed_stage_count": execution_mode_counts.get("failed", 0),
-                "execution_mode_counts": execution_mode_counts,
-                "seed_count": seed_count,
-                "detect_regions_path": detect_regions_path,
-                "ocr_seeds_path": seeds_path,
-                "segment_mask_path": _relative_to_project(session, segment_path),
-                "bubble_mask_path": _relative_to_project(session, bubble_path),
-            },
+            summary=summary,
         )
+
+    def _write_report(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+        output_dir: Path,
+        result: RuntimeValidationResult,
+    ) -> None:
         payload = result.to_dict()
         MangaProjectPersistence.write_page_artifact(session, page, "runtimeValidationLatest.json", payload)
         MangaProjectPersistence.write_page_artifact(
@@ -187,7 +363,56 @@ class MangaRuntimeValidator:
             f"runtimeValidation/{output_dir.name}/report.json",
             payload,
         )
-        return result
+
+    def _load_latest_report(self, session: MangaProjectSession, page: MangaPage) -> dict[str, object]:
+        latest_path = session.project_path / "pages" / f"{page.index:04d}" / "runtimeValidationLatest.json"
+        if not latest_path.exists():
+            raise FileNotFoundError("No latest runtime validation report is available for stage retry.")
+        with open(latest_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            raise ValueError("Latest runtime validation report is invalid.")
+        return payload
+
+    def _stages_from_report(self, report: dict[str, object]) -> list[RuntimeValidationStage]:
+        stages = report.get("stages")
+        if not isinstance(stages, list):
+            return []
+        return [_stage_from_payload(stage) for stage in stages if isinstance(stage, dict)]
+
+    def _detect_regions_from_latest_report(self, report: dict[str, object]) -> list[DetectRegion]:
+        stage_lookup = {stage.stage: stage for stage in self._stages_from_report(report)}
+        detect_stage = stage_lookup.get("detect")
+        if detect_stage is None:
+            return []
+        records = detect_stage.metrics.get("text_regions")
+        if not isinstance(records, list):
+            return []
+        return [
+            region
+            for index, record in enumerate(records, start=1)
+            if isinstance(record, dict)
+            for region in [_detect_region_from_payload(record, index)]
+            if region is not None
+        ]
+
+    def _resolve_latest_segment_mask(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+        latest_summary: dict[str, object],
+    ) -> Path:
+        candidates = [
+            str(latest_summary.get("segment_mask_path") or ""),
+            page.masks.segment,
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = session.project_path / candidate
+            if path.exists():
+                return path
+        return session.project_path / page.masks.segment
 
     def _configure_engines(self, session: MangaProjectSession) -> None:
         snapshot = session.config_snapshot if isinstance(getattr(session, "config_snapshot", None), dict) else {}

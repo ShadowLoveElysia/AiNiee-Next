@@ -17,7 +17,7 @@ from ModuleFolders.MangaCore.constants import (
     PROJECT_STATUS_EDITABLE,
 )
 from ModuleFolders.MangaCore.io.blobStore import BlobStore
-from ModuleFolders.MangaCore.io.importers import ImportedInput, discover_input_images
+from ModuleFolders.MangaCore.io.importers import discover_input_images
 from ModuleFolders.MangaCore.io.thumbnails import generate_thumbnail
 from ModuleFolders.MangaCore.project.layers import MangaLayerSet, MangaMaskSet
 from ModuleFolders.MangaCore.project.manifest import MangaProjectManifest
@@ -101,7 +101,6 @@ class MangaProjectPersistence:
                 page_key = f"{index:04d}"
                 page_id = f"page_{page_key}"
                 page_dir = blob_store.page_dir(page_key)
-                rel_page_dir = Path("pages") / page_key
 
                 source_path = page_dir / DEFAULT_LAYER_PATHS["source"]
                 inpainted_path = page_dir / DEFAULT_LAYER_PATHS["inpainted"]
@@ -110,6 +109,7 @@ class MangaProjectPersistence:
                 segment_mask_path = page_dir / DEFAULT_MASK_PATHS["segment"]
                 bubble_mask_path = page_dir / DEFAULT_MASK_PATHS["bubble"]
                 brush_mask_path = page_dir / DEFAULT_MASK_PATHS["brush"]
+                restore_mask_path = page_dir / DEFAULT_MASK_PATHS["restore"]
 
                 width, height = _normalize_image(image_path, source_path)
                 shutil.copy2(source_path, inpainted_path)
@@ -117,6 +117,7 @@ class MangaProjectPersistence:
                 _create_blank_mask(segment_mask_path, (width, height))
                 _create_blank_mask(bubble_mask_path, (width, height))
                 _create_blank_mask(brush_mask_path, (width, height))
+                _create_blank_mask(restore_mask_path, (width, height))
                 _write_json(overlay_path, {"blocks": []})
 
                 thumbnail_path = blob_store.thumbs_dir() / f"{page_key}.webp"
@@ -143,6 +144,7 @@ class MangaProjectPersistence:
                         segment=cls._relative_to_project(project_root, segment_mask_path),
                         bubble=cls._relative_to_project(project_root, bubble_mask_path),
                         brush=cls._relative_to_project(project_root, brush_mask_path),
+                        restore=cls._relative_to_project(project_root, restore_mask_path),
                     ),
                 )
                 pages[page_id] = page

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, Star } from 'lucide-react';
 import { MangaBlocksPanel } from '../components/manga/mangaBlocksPanel';
 import { MangaCanvas } from '../components/manga/mangaCanvas';
 import { MangaInspector } from '../components/manga/mangaInspector';
@@ -8,9 +8,9 @@ import { MangaPageStrip } from '../components/manga/mangaPageStrip';
 import { MangaStatusBar } from '../components/manga/mangaStatusBar';
 import { MangaTopBar } from '../components/manga/mangaTopBar';
 import { useI18n } from '../contexts/I18nContext';
-import { MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeBox, MangaCanvasRuntimeOverlay, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode, translateMangaEnum } from '../components/manga/shared';
+import { MangaBlockDraft, MangaBrushStrokePayload, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeBox, MangaCanvasRuntimeOverlay, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode, translateMangaEnum } from '../components/manga/shared';
 import { DataService } from '../services/DataService';
-import { MangaJob, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
+import { MangaJob, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
 
 type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -58,7 +58,13 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
   'render current page': 'manga_action_render',
   'validate runtime': 'manga_action_validate_runtime',
   'load runtime validation report': 'manga_action_runtime_report',
+  'diff runtime validation reports': 'manga_action_runtime_diff',
+  'delete runtime validation report': 'manga_action_delete_runtime_history',
+  'retry runtime validation stage': 'manga_action_retry_runtime_stage',
   'add block': 'manga_action_add',
+  'delete block': 'manga_action_delete',
+  'brush mask': 'manga_action_brush_mask',
+  'restore mask': 'manga_action_restore_mask',
   undo: 'manga_action_undo',
   redo: 'manga_action_redo',
   'save project': 'manga_action_save',
@@ -76,28 +82,44 @@ const getActionLabelKey = (action: string) => (
 );
 
 const createDefaultLayerControls = (viewMode: MangaViewMode): MangaLayerControls => ({
+  sourceReference: { visible: true, opacity: 0.32 },
   segment: { visible: false, opacity: 0.35 },
   bubble: { visible: false, opacity: 0.35 },
   brush: { visible: false, opacity: 0.35 },
+  restore: { visible: false, opacity: 0.42 },
   overlay: { visible: viewMode === 'overlay', opacity: 1 },
 });
 
 const RECENT_MANGA_PROJECTS_KEY = 'ainiee:manga:recent-projects';
+const PINNED_MANGA_PROJECTS_KEY = 'ainiee:manga:pinned-projects';
 
-const loadRecentProjectPaths = () => {
+const loadStoredProjectPaths = (storageKey: string, limit: number) => {
   try {
-    const payload = JSON.parse(window.localStorage.getItem(RECENT_MANGA_PROJECTS_KEY) || '[]');
-    return Array.isArray(payload) ? payload.filter((value): value is string => typeof value === 'string').slice(0, 5) : [];
+    const payload = JSON.parse(window.localStorage.getItem(storageKey) || '[]');
+    return Array.isArray(payload) ? payload.filter((value): value is string => typeof value === 'string').slice(0, limit) : [];
   } catch {
     return [];
   }
 };
+
+const loadRecentProjectPaths = () => loadStoredProjectPaths(RECENT_MANGA_PROJECTS_KEY, 5);
+const loadPinnedProjectPaths = () => loadStoredProjectPaths(PINNED_MANGA_PROJECTS_KEY, 8);
 
 const rememberRecentProjectPath = (path: string) => {
   const next = [path, ...loadRecentProjectPaths().filter((item) => item !== path)].slice(0, 5);
   window.localStorage.setItem(RECENT_MANGA_PROJECTS_KEY, JSON.stringify(next));
   return next;
 };
+
+const compactProjectPath = (path: string) => (
+  path
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .slice(-3)
+    .join('/')
+    || path
+);
 
 const areBboxesEqual = (left: number[] = [], right: number[] = []) => (
   left.length >= 4
@@ -124,6 +146,10 @@ const buildProjectAssetUrl = (projectId: string, relativePath: string) => {
   if (!projectId || !relativePath) return '';
   return `/api/manga/projects/${projectId}/assets/${relativePath.split('/').map(encodeURIComponent).join('/')}`;
 };
+
+const pickOverlayBaseImageUrl = (page: MangaPageDetail) => (
+  page.layers.rendered_url || page.layers.inpainted_url || page.layers.source_url
+);
 
 const pickRuntimeStageImageUrl = (stage: MangaRuntimeValidationStage, projectId: string) => {
   const urls = stage.artifact_urls || {};
@@ -163,10 +189,15 @@ const normalizeRuntimeBoxes = (
   });
 };
 
+const extractRuntimeRunId = (outputDir: string) => (
+  outputDir.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+);
+
 export const MangaEditor: React.FC = () => {
   const { t } = useI18n();
   const [projectPath, setProjectPath] = useState(getInitialProjectPath());
   const [recentProjectPaths, setRecentProjectPaths] = useState<string[]>(loadRecentProjectPaths());
+  const [pinnedProjectPaths, setPinnedProjectPaths] = useState<string[]>(loadPinnedProjectPaths());
   const [openProjects, setOpenProjects] = useState<MangaOpenProjectSummary[]>([]);
   const [project, setProject] = useState<MangaProjectSummary | null>(null);
   const [scene, setScene] = useState<MangaSceneSummary | null>(null);
@@ -182,18 +213,25 @@ export const MangaEditor: React.FC = () => {
   const [activeJob, setActiveJob] = useState<MangaJob | null>(null);
   const [runtimeValidation, setRuntimeValidation] = useState<MangaRuntimeValidationResult | null>(null);
   const [runtimeValidationHistory, setRuntimeValidationHistory] = useState<MangaRuntimeValidationHistoryItem[]>([]);
+  const [runtimeValidationDiff, setRuntimeValidationDiff] = useState<MangaRuntimeValidationDiffResult | null>(null);
   const [activeRuntimeStage, setActiveRuntimeStage] = useState('');
   const [blockDrafts, setBlockDrafts] = useState<Record<string, MangaBlockDraft>>({});
   const [canvasCommand, setCanvasCommand] = useState<MangaCanvasCommand>({ kind: 'fit', token: 0 });
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
   const [canvasPointer, setCanvasPointer] = useState<MangaCanvasPointer | null>(null);
   const [layerControls, setLayerControls] = useState<MangaLayerControls>(createDefaultLayerControls('rendered'));
+  const [brushRadius, setBrushRadius] = useState(24);
 
   const selectedCount = selectedPageIds.length || (selectedPageId ? 1 : 0);
+  const unpinnedRecentProjectPaths = useMemo(
+    () => recentProjectPaths.filter((path) => !pinnedProjectPaths.includes(path)),
+    [pinnedProjectPaths, recentProjectPaths],
+  );
 
   const currentImageUrl = useMemo(() => {
     if (!page) return '';
-    if (viewMode === 'original' || viewMode === 'overlay') return page.layers.source_url;
+    if (viewMode === 'overlay') return pickOverlayBaseImageUrl(page);
+    if (viewMode === 'original') return page.layers.source_url;
     if (viewMode === 'inpainted') return page.layers.inpainted_url;
     return page.layers.rendered_url;
   }, [page, viewMode]);
@@ -377,11 +415,26 @@ export const MangaEditor: React.FC = () => {
     }));
   };
 
+  const togglePinnedProjectPath = (path: string) => {
+    const trimmedPath = path.trim();
+    if (!trimmedPath) return;
+    setPinnedProjectPaths((current) => {
+      const next = current.includes(trimmedPath)
+        ? current.filter((item) => item !== trimmedPath)
+        : [trimmedPath, ...current].slice(0, 8);
+      window.localStorage.setItem(PINNED_MANGA_PROJECTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const isProjectPathPinned = (path: string) => pinnedProjectPaths.includes(path.trim());
+
   const loadPage = async (projectId: string, pageId: string) => {
     const detail = await DataService.getMangaPage(projectId, pageId);
     setPage(detail);
     setSelectedPageId(pageId);
     setRuntimeValidation(null);
+    setRuntimeValidationDiff(null);
     setDraftsFromPage(detail);
     setScene((current) => (current ? { ...current, current_page_id: pageId } : current));
     try {
@@ -429,7 +482,7 @@ export const MangaEditor: React.FC = () => {
     options?: { maxAttempts?: number; intervalMs?: number },
   ) => {
     setActiveJob(initialJob);
-    if (!initialJob.job_id || initialJob.status === 'completed' || initialJob.status === 'failed') {
+    if (!initialJob.job_id || ['completed', 'failed', 'cancelled'].includes(initialJob.status)) {
       return initialJob;
     }
 
@@ -440,7 +493,7 @@ export const MangaEditor: React.FC = () => {
       await delay(intervalMs);
       latest = await DataService.getMangaJob(projectId, initialJob.job_id);
       setActiveJob(latest);
-      if (latest.status === 'completed' || latest.status === 'failed') {
+      if (['completed', 'failed', 'cancelled'].includes(latest.status)) {
         break;
       }
     }
@@ -608,6 +661,11 @@ export const MangaEditor: React.FC = () => {
     await withBusyAction('validate runtime', async () => {
       const job = await DataService.startMangaRuntimeValidation(project.project_id, selectedPageId);
       const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      if (settled.status === 'cancelled') {
+        setRuntimeValidationHistory(await DataService.listMangaRuntimeValidationHistory(project.project_id, selectedPageId));
+        showNotice('warning', t('manga_notice_runtime_validation_cancelled'));
+        return;
+      }
       const result = (
         settled.result && Array.isArray((settled.result as MangaRuntimeValidationResult).stages)
           ? settled.result as MangaRuntimeValidationResult
@@ -617,6 +675,7 @@ export const MangaEditor: React.FC = () => {
         throw new Error(settled.error_message || settled.message || t('manga_error_runtime_validation_no_report'));
       }
       setRuntimeValidation(result);
+      setRuntimeValidationDiff(null);
       setActiveRuntimeStage(result.stages.find((stage) => !stage.ok)?.stage || result.stages[0]?.stage || '');
       setRuntimeValidationHistory(await DataService.listMangaRuntimeValidationHistory(project.project_id, selectedPageId));
       const runtimeCount = result.summary?.runtime_stage_count ?? 0;
@@ -624,6 +683,47 @@ export const MangaEditor: React.FC = () => {
       showNotice(
         result.ok ? 'success' : 'warning',
         t('manga_notice_runtime_validation_finished', runtimeCount, fallbackCount),
+      );
+    });
+  };
+
+  const handleCancelRuntimeValidation = async () => {
+    if (!project || !selectedPageId || !activeJob?.job_id) return;
+    try {
+      const job = await DataService.stopMangaRuntimeValidation(project.project_id, selectedPageId);
+      setActiveJob(job);
+      showNotice('warning', t('manga_notice_runtime_validation_cancelling'));
+    } catch (err: any) {
+      setError(err.message || t('manga_error_failed_action', t('manga_action_cancel_runtime_validation')));
+    }
+  };
+
+  const handleRetryRuntimeValidationStage = async (stage: string) => {
+    if (!project || !selectedPageId || !stage) return;
+
+    await withBusyAction('retry runtime validation stage', async () => {
+      const job = await DataService.startMangaRuntimeValidationStageRetry(project.project_id, selectedPageId, stage);
+      const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      if (settled.status === 'cancelled') {
+        setRuntimeValidationHistory(await DataService.listMangaRuntimeValidationHistory(project.project_id, selectedPageId));
+        showNotice('warning', t('manga_notice_runtime_validation_cancelled'));
+        return;
+      }
+      const result = (
+        settled.result && Array.isArray((settled.result as MangaRuntimeValidationResult).stages)
+          ? settled.result as MangaRuntimeValidationResult
+          : await DataService.getLatestMangaRuntimeValidation(project.project_id, selectedPageId)
+      );
+      if (!result) {
+        throw new Error(settled.error_message || settled.message || t('manga_error_runtime_validation_no_report'));
+      }
+      setRuntimeValidation(result);
+      setRuntimeValidationDiff(null);
+      setActiveRuntimeStage(stage);
+      setRuntimeValidationHistory(await DataService.listMangaRuntimeValidationHistory(project.project_id, selectedPageId));
+      showNotice(
+        result.ok ? 'success' : 'warning',
+        t('manga_notice_runtime_stage_retry_finished', translateMangaEnum('manga_runtime_stage', stage, t)),
       );
     });
   };
@@ -657,6 +757,38 @@ export const MangaEditor: React.FC = () => {
       setRuntimeValidation(result);
       setActiveRuntimeStage(result.stages.find((stage) => !stage.ok)?.stage || result.stages[0]?.stage || '');
       showNotice('info', t('manga_notice_runtime_report_loaded'));
+    });
+  };
+
+  const handleDiffRuntimeValidationHistory = async (beforeRunId: string, afterRunId: string) => {
+    if (!project || !selectedPageId || !beforeRunId || !afterRunId || beforeRunId === afterRunId) return;
+
+    await withBusyAction('diff runtime validation reports', async () => {
+      const diff = await DataService.diffMangaRuntimeValidationHistory(project.project_id, selectedPageId, beforeRunId, afterRunId);
+      setRuntimeValidationDiff(diff);
+      showNotice('info', t('manga_notice_runtime_diff_loaded'));
+    });
+  };
+
+  const handleDeleteRuntimeValidationHistory = async (runId: string) => {
+    if (!project || !selectedPageId || !runId) return;
+    if (!window.confirm(t('manga_confirm_delete_runtime_history'))) return;
+
+    await withBusyAction('delete runtime validation report', async () => {
+      await DataService.deleteMangaRuntimeValidationHistory(project.project_id, selectedPageId, runId);
+      const nextHistory = await DataService.listMangaRuntimeValidationHistory(project.project_id, selectedPageId);
+      setRuntimeValidationHistory(nextHistory);
+      setRuntimeValidationDiff((current) => (
+        current?.before_run_id === runId || current?.after_run_id === runId ? null : current
+      ));
+
+      if (extractRuntimeRunId(runtimeValidation?.output_dir || '') === runId) {
+        const latestValidation = await DataService.getLatestMangaRuntimeValidation(project.project_id, selectedPageId);
+        setRuntimeValidation(latestValidation);
+        setActiveRuntimeStage(latestValidation?.stages.find((stage) => !stage.ok)?.stage || latestValidation?.stages[0]?.stage || '');
+      }
+
+      showNotice('success', t('manga_notice_runtime_history_deleted'));
     });
   };
 
@@ -706,6 +838,26 @@ export const MangaEditor: React.FC = () => {
     });
   };
 
+  const handleSwitchProject = () => {
+    if (dirtyBlockCount > 0) {
+      showNotice('warning', t('manga_notice_save_before_switch'));
+      return;
+    }
+    setProject(null);
+    setScene(null);
+    setPage(null);
+    setSelectedPageId('');
+    setSelectedPageIds([]);
+    setActiveBlockId('');
+    setActiveJob(null);
+    setRuntimeValidation(null);
+    setRuntimeValidationHistory([]);
+    setRuntimeValidationDiff(null);
+    setActiveRuntimeStage('');
+    setError('');
+    void refreshOpenProjects();
+  };
+
   const handleAddBlock = async (bboxOverride?: number[]) => {
     if (!project || !page) return;
 
@@ -740,6 +892,61 @@ export const MangaEditor: React.FC = () => {
       setActiveBlockId(blockId);
       setViewMode('overlay');
       showNotice('success', t('manga_notice_manual_block_added'));
+    });
+  };
+
+  const handleDeleteBlock = async (blockIdOverride?: string) => {
+    if (!project || !page) return;
+    const blockId = blockIdOverride || activeBlockId;
+    if (!blockId) {
+      showNotice('info', t('manga_notice_no_block_changes'));
+      return;
+    }
+
+    await withBusyAction('delete block', async () => {
+      await DataService.applyMangaOps(project.project_id, [
+        {
+          type: 'RemoveTextBlock',
+          page_id: page.page_id,
+          block_id: blockId,
+        },
+      ]);
+      await syncProjectState(project.project_id, page.page_id);
+      showNotice('success', t('manga_notice_deleted_block'));
+    });
+  };
+
+  const handleApplyBrushStroke = async (stroke: MangaBrushStrokePayload) => {
+    if (!project || !page || stroke.points.length === 0) return;
+
+    await withBusyAction(stroke.mode === 'restore' ? 'restore mask' : 'brush mask', async () => {
+      if (stroke.mode === 'restore') {
+        await DataService.applyMangaRestoreMaskStroke(project.project_id, page.page_id, stroke);
+        setLayerControls((current) => ({
+          ...current,
+          restore: {
+            ...current.restore,
+            visible: true,
+            opacity: Math.max(current.restore.opacity, 0.55),
+          },
+        }));
+        setViewMode('rendered');
+        await refreshCurrentPage(project.project_id, page.page_id);
+        showNotice('success', t('manga_notice_restore_mask_painted'));
+        return;
+      }
+
+      await DataService.applyMangaBrushMaskStroke(project.project_id, page.page_id, stroke);
+      setLayerControls((current) => ({
+        ...current,
+        brush: {
+          ...current.brush,
+          visible: false,
+        },
+      }));
+      setViewMode('rendered');
+      await refreshCurrentPage(project.project_id, page.page_id);
+      showNotice('success', t('manga_notice_brush_mask_painted'));
     });
   };
 
@@ -784,24 +991,40 @@ export const MangaEditor: React.FC = () => {
     ));
   };
 
-  const toggleLayer = (layer: MangaOverlayLayerKey) => {
-    setLayerControls((current) => ({
-      ...current,
-      [layer]: {
-        ...current[layer],
-        visible: !current[layer].visible,
-      },
+  const handleFocusRuntimeBox = (box: MangaCanvasRuntimeBox) => {
+    if (!box.bbox?.length) return;
+    setCanvasCommand((current) => ({
+      kind: 'focusBox',
+      token: current.token + 1,
+      bbox: box.bbox,
+      label: box.label,
     }));
   };
 
+  const toggleLayer = (layer: MangaOverlayLayerKey) => {
+    setLayerControls((current) => {
+      const layerControl = current[layer] || createDefaultLayerControls(viewMode)[layer];
+      return {
+        ...current,
+        [layer]: {
+          ...layerControl,
+          visible: !layerControl.visible,
+        },
+      };
+    });
+  };
+
   const setLayerOpacity = (layer: MangaOverlayLayerKey, opacity: number) => {
-    setLayerControls((current) => ({
-      ...current,
-      [layer]: {
-        ...current[layer],
-        opacity,
-      },
-    }));
+    setLayerControls((current) => {
+      const layerControl = current[layer] || createDefaultLayerControls(viewMode)[layer];
+      return {
+        ...current,
+        [layer]: {
+          ...layerControl,
+          opacity,
+        },
+      };
+    });
   };
 
   useEffect(() => {
@@ -810,7 +1033,11 @@ export const MangaEditor: React.FC = () => {
   }, [page?.page_id, viewMode]);
 
   useEffect(() => {
-    setLayerControls(createDefaultLayerControls(viewMode));
+    const defaults = createDefaultLayerControls(viewMode);
+    setLayerControls((current) => ({
+      ...defaults,
+      sourceReference: current.sourceReference || defaults.sourceReference,
+    }));
   }, [page?.page_id, viewMode]);
 
   useEffect(() => {
@@ -845,6 +1072,7 @@ export const MangaEditor: React.FC = () => {
         pageCount={scene?.pages.length || project?.page_count || 0}
         zoomPercent={canvasZoomPercent}
         onBack={() => { window.location.hash = '/task'; }}
+        onSwitchProject={handleSwitchProject}
         onSetViewMode={setViewMode}
         onFitCanvas={() => { setCanvasCommand((current) => ({ kind: 'fit', token: current.token + 1 })); }}
         onResetZoom={() => { setCanvasCommand((current) => ({ kind: 'actual', token: current.token + 1 })); }}
@@ -868,7 +1096,28 @@ export const MangaEditor: React.FC = () => {
       />
 
       {!project && (
-      <div className="mx-4 my-3 max-w-4xl rounded-xl border border-slate-800 bg-slate-950/78 p-3 shadow-2xl shadow-slate-950/30">
+      <div className="mx-4 my-3 max-w-5xl rounded-xl border border-slate-800 bg-slate-950/78 p-3 shadow-2xl shadow-slate-950/30">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-100">{t('manga_project_entry_title')}</div>
+            <div className="mt-1 text-xs text-slate-500">{t('manga_project_entry_desc')}</div>
+          </div>
+          {projectPath.trim() && (
+            <button
+              type="button"
+              onClick={() => togglePinnedProjectPath(projectPath)}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${
+                isProjectPathPinned(projectPath)
+                  ? 'border-amber-300/35 bg-amber-300/12 text-amber-100'
+                  : 'border-slate-800 bg-slate-900/70 text-slate-400 hover:border-amber-300/45 hover:text-amber-100'
+              }`}
+            >
+              <Star size={13} fill={isProjectPathPinned(projectPath) ? 'currentColor' : 'none'} />
+              {isProjectPathPinned(projectPath) ? t('manga_unpin_project') : t('manga_pin_project')}
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <div className="shrink-0 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{t('manga_project_path')}</div>
           <input
@@ -876,46 +1125,92 @@ export const MangaEditor: React.FC = () => {
             value={projectPath}
             onChange={(event) => setProjectPath(event.target.value)}
             placeholder={t('manga_project_path_placeholder')}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100 placeholder:text-slate-600 outline-none focus:border-primary"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100 placeholder:text-slate-600 outline-none focus:border-primary"
           />
           <button
             onClick={() => void openProject()}
             disabled={isLoading}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-xs font-bold text-slate-900 disabled:opacity-60"
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-xs font-bold text-slate-900 disabled:opacity-60"
           >
             {isLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             {t('manga_open_project')}
           </button>
         </div>
+        {pinnedProjectPaths.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-200/80">{t('manga_pinned_projects')}</div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {pinnedProjectPaths.map((path) => (
+                <div key={path} className="flex min-w-0 items-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/10 px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { setProjectPath(path); void openProject(path); }}
+                    className="min-w-0 flex-1 text-left"
+                    title={path}
+                  >
+                    <div className="truncate text-xs font-semibold text-amber-100">{compactProjectPath(path)}</div>
+                    <div className="truncate text-[11px] text-amber-100/45">{path}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => togglePinnedProjectPath(path)}
+                    title={t('manga_unpin_project')}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-amber-100 hover:bg-amber-300/12"
+                  >
+                    <Star size={13} fill="currentColor" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {openProjects.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
             <span className="uppercase tracking-[0.16em]">{t('manga_open_sessions')}</span>
             {openProjects.map((item) => (
-              <button
-                key={item.project_id}
-                type="button"
-                onClick={() => { setProjectPath(item.project_path); void openProject(item.project_path); }}
-                className="max-w-72 truncate rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-cyan-100 transition-colors hover:border-cyan-200"
-                title={item.project_path}
-              >
-                {item.name} · {t('manga_nav_page_count', item.page_count)}
-              </button>
+              <span key={item.project_id} className="inline-flex max-w-80 items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-cyan-100">
+                <button
+                  type="button"
+                  onClick={() => { setProjectPath(item.project_path); void openProject(item.project_path); }}
+                  className="min-w-0 truncate"
+                  title={item.project_path}
+                >
+                  {item.name} · {t('manga_nav_page_count', item.page_count)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => togglePinnedProjectPath(item.project_path)}
+                  title={isProjectPathPinned(item.project_path) ? t('manga_unpin_project') : t('manga_pin_project')}
+                  className="shrink-0 rounded-full p-0.5 text-cyan-100/80 hover:bg-cyan-300/12"
+                >
+                  <Star size={11} fill={isProjectPathPinned(item.project_path) ? 'currentColor' : 'none'} />
+                </button>
+              </span>
             ))}
           </div>
         )}
-        {recentProjectPaths.length > 0 && (
+        {unpinnedRecentProjectPaths.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
             <span className="uppercase tracking-[0.16em]">{t('manga_recent_projects')}</span>
-            {recentProjectPaths.map((path) => (
-              <button
-                key={path}
-                type="button"
-                onClick={() => { setProjectPath(path); void openProject(path); }}
-                className="max-w-64 truncate rounded-full border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-slate-300 transition-colors hover:border-primary"
-                title={path}
-              >
-                {path}
-              </button>
+            {unpinnedRecentProjectPaths.map((path) => (
+              <span key={path} className="inline-flex max-w-72 items-center gap-1 rounded-full border border-slate-800 bg-slate-900/70 px-2 py-1 text-slate-300 transition-colors hover:border-primary">
+                <button
+                  type="button"
+                  onClick={() => { setProjectPath(path); void openProject(path); }}
+                  className="min-w-0 truncate"
+                  title={path}
+                >
+                  {compactProjectPath(path)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => togglePinnedProjectPath(path)}
+                  title={t('manga_pin_project')}
+                  className="shrink-0 rounded-full p-0.5 text-slate-500 hover:bg-slate-800 hover:text-amber-100"
+                >
+                  <Star size={11} />
+                </button>
+              </span>
             ))}
           </div>
         )}
@@ -958,10 +1253,13 @@ export const MangaEditor: React.FC = () => {
           activeJob={activeJobSummary}
           runtimeOverlay={runtimeOverlay}
           layerControls={layerControls}
+          brushRadius={brushRadius}
           zoomCommand={canvasCommand}
           onSelectBlock={setActiveBlockId}
           onUpdateDraft={updateDraft}
           onCreateBlock={(bbox) => { void handleAddBlock(bbox); }}
+          onDeleteBlock={(blockId) => { void handleDeleteBlock(blockId); }}
+          onApplyBrushStroke={(stroke) => { void handleApplyBrushStroke(stroke); }}
           onViewportChange={setCanvasZoomPercent}
           onPointerChange={setCanvasPointer}
         />
@@ -975,22 +1273,31 @@ export const MangaEditor: React.FC = () => {
             engineCards={engineCards}
             runtimeValidation={runtimeValidation}
             runtimeValidationHistory={runtimeValidationHistory}
+            runtimeValidationDiff={runtimeValidationDiff}
             activeRuntimeStage={selectedRuntimeStage?.stage || ''}
             busyAction={busyAction}
             hasProject={Boolean(project)}
+            canCancelRuntimeValidation={Boolean(activeJob?.stage.startsWith('runtime_validation') && activeJob.status === 'running')}
             dirtyBlockCount={dirtyBlockCount}
             activeBlockDirty={activeBlockDirty}
             onSelectRuntimeStage={setActiveRuntimeStage}
             onLoadRuntimeValidationHistory={(runId) => { void handleLoadRuntimeValidationHistory(runId); }}
+            onDiffRuntimeValidationHistory={(beforeRunId, afterRunId) => { void handleDiffRuntimeValidationHistory(beforeRunId, afterRunId); }}
+            onDeleteRuntimeValidationHistory={(runId) => { void handleDeleteRuntimeValidationHistory(runId); }}
+            onCancelRuntimeValidation={() => { void handleCancelRuntimeValidation(); }}
+            onRetryRuntimeValidationStage={(stage) => { void handleRetryRuntimeValidationStage(stage); }}
             onValidateRuntime={() => { void handleValidateRuntime(); }}
             onDownloadModel={(modelId) => { void handleDownloadMangaModel(modelId); }}
+            onFocusRuntimeBox={handleFocusRuntimeBox}
           />
           <MangaLayersPanel
             page={page}
             viewMode={viewMode}
             layerControls={layerControls}
+            brushRadius={brushRadius}
             onToggleLayer={toggleLayer}
             onSetLayerOpacity={setLayerOpacity}
+            onSetBrushRadius={setBrushRadius}
           />
           <MangaBlocksPanel
             page={page}
@@ -1004,6 +1311,7 @@ export const MangaEditor: React.FC = () => {
             onUpdateDraft={updateDraft}
             onSaveActiveBlock={() => { void applyActiveBlockChanges(); }}
             onSavePageChanges={() => { void applyDraftChanges(); }}
+            onDeleteActiveBlock={() => { void handleDeleteBlock(); }}
           />
         </aside>
       </div>

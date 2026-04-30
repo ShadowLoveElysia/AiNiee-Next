@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Eraser, MousePointer2, Paintbrush, SquareDashedMousePointer, Type } from 'lucide-react';
+import { MousePointer2, Paintbrush, RotateCcw, SquareDashedMousePointer, Type } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail } from '../../types/manga';
-import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeOverlay, MangaLayerControls, MangaViewMode, translateMangaEnum } from './shared';
+import { MangaActiveJobSummary, MangaBlockDraft, MangaBrushStrokePayload, MangaBrushStrokePoint, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeOverlay, MangaLayerControls, MangaViewMode, translateMangaEnum } from './shared';
 
 interface DragState {
   pointerId: number;
@@ -25,7 +25,13 @@ interface BlockTransformState {
   startBbox: number[];
 }
 
-type CanvasTool = 'select' | 'region' | 'text' | 'brush' | 'erase';
+type CanvasTool = 'select' | 'region' | 'text' | 'brush' | 'restore';
+type InlineEditField = 'source_text' | 'translation';
+
+interface InlineEditState {
+  blockId: string;
+  field: InlineEditField;
+}
 
 interface CreateRegionState {
   pointerId: number;
@@ -33,6 +39,18 @@ interface CreateRegionState {
   startY: number;
   currentX: number;
   currentY: number;
+}
+
+interface BrushStrokeState {
+  pointerId: number;
+  mode: 'brush' | 'restore';
+  radius: number;
+  points: MangaBrushStrokePoint[];
+}
+
+interface FocusHighlightState {
+  bbox: number[];
+  label: string;
 }
 
 export interface MangaCanvasProps {
@@ -44,10 +62,13 @@ export interface MangaCanvasProps {
   activeJob: MangaActiveJobSummary | null;
   runtimeOverlay: MangaCanvasRuntimeOverlay | null;
   layerControls: MangaLayerControls;
+  brushRadius: number;
   zoomCommand: MangaCanvasCommand;
   onSelectBlock: (blockId: string) => void;
   onUpdateDraft: (blockId: string, patch: Partial<MangaBlockDraft>) => void;
   onCreateBlock: (bbox: number[]) => void;
+  onDeleteBlock: (blockId: string) => void;
+  onApplyBrushStroke: (stroke: MangaBrushStrokePayload) => void;
   onViewportChange: (zoomPercent: number) => void;
   onPointerChange: (pointer: MangaCanvasPointer | null) => void;
 }
@@ -77,6 +98,7 @@ const clampScale = (scale: number, fitScale: number) => {
 const clampValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const MIN_BLOCK_SIZE = 12;
+const clampBrushRadius = (radius: number) => Math.max(1, Math.min(256, Math.round(Number(radius) || 24)));
 
 const normalizeBlockBbox = (bbox: number[], pageWidth: number, pageHeight: number) => {
   const values = bbox.slice(0, 4).map((value) => Math.round(Number(value) || 0));
@@ -153,12 +175,99 @@ const moveBlockBbox = (
   return [nextX1, nextY1, nextX1 + width, nextY1 + height].map(Math.round);
 };
 
+const resizeBlockBbox = (
+  bbox: number[],
+  dx: number,
+  dy: number,
+  pageWidth: number,
+  pageHeight: number,
+) => {
+  const [x1, y1, x2, y2] = normalizeBlockBbox(bbox, pageWidth, pageHeight);
+  const minWidth = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageWidth));
+  const minHeight = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageHeight));
+  const nextX2 = clampValue(x2 + dx, x1 + minWidth, pageWidth);
+  const nextY2 = clampValue(y2 + dy, y1 + minHeight, pageHeight);
+  return [x1, y1, nextX2, nextY2].map(Math.round);
+};
+
+const fitScaleForBbox = (
+  bbox: number[],
+  viewport: DOMRect,
+  fitScale: number,
+) => {
+  const [x1, y1, x2, y2] = bbox;
+  const width = Math.max(1, x2 - x1);
+  const height = Math.max(1, y2 - y1);
+  const availableWidth = Math.max(120, viewport.width - 144);
+  const availableHeight = Math.max(120, viewport.height - 144);
+  const rawScale = Math.min(availableWidth / width, availableHeight / height) * 0.58;
+  return clampScale(Math.max(fitScale, Math.min(3.2, rawScale)), fitScale);
+};
+
+const panForCenteredBbox = (
+  bbox: number[],
+  scale: number,
+  pageWidth: number,
+  pageHeight: number,
+) => {
+  const [x1, y1, x2, y2] = bbox;
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+  return {
+    x: Math.round(-scale * (centerX - (pageWidth / 2))),
+    y: Math.round(-scale * (centerY - (pageHeight / 2))),
+  };
+};
+
+const buildStrokePolyline = (points: MangaBrushStrokePoint[]) => points.map((point) => `${point.x},${point.y}`).join(' ');
+
+const appendBrushPoint = (
+  stroke: BrushStrokeState,
+  point: MangaBrushStrokePoint,
+): BrushStrokeState => {
+  const lastPoint = stroke.points[stroke.points.length - 1];
+  if (lastPoint && Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) < 2) {
+    return stroke;
+  }
+  return {
+    ...stroke,
+    points: [...stroke.points, point],
+  };
+};
+
+const buildBlockTextStyle = (
+  block: MangaPageDetail['blocks'][number],
+  draft: MangaBlockDraft | undefined,
+): React.CSSProperties => {
+  const fontSize = Math.max(8, Number(draft?.font_size ?? block.style.font_size ?? 24));
+  const lineSpacing = Math.max(0.8, Number(draft?.line_spacing ?? block.style.line_spacing ?? 1.2));
+  const strokeWidth = Math.max(0, Number(draft?.stroke_width ?? block.style.stroke_width ?? 0));
+  const strokeColor = String(draft?.stroke_color ?? block.style.stroke_color ?? '#ffffff');
+  const fill = String(draft?.fill ?? block.style.fill ?? '#111111');
+  const fontFamily = String(draft?.font_family ?? block.style.font_family ?? 'serif');
+  const isVertical = block.rendered_direction === 'vertical';
+
+  return {
+    color: fill,
+    fontFamily,
+    fontSize,
+    lineHeight: lineSpacing,
+    padding: Math.max(4, Math.round(fontSize * 0.12)),
+    textOrientation: isVertical ? 'mixed' : undefined,
+    textShadow: strokeWidth > 0 ? `0 0 ${Math.max(1, strokeWidth)}px ${strokeColor}` : undefined,
+    WebkitTextStroke: strokeWidth > 0 ? `${strokeWidth}px ${strokeColor}` : undefined,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
+  };
+};
+
 const CANVAS_TOOLS: Array<{ id: CanvasTool; labelKey: string; icon: typeof MousePointer2 }> = [
   { id: 'select', labelKey: 'manga_tool_select', icon: MousePointer2 },
   { id: 'region', labelKey: 'manga_tool_region', icon: SquareDashedMousePointer },
   { id: 'text', labelKey: 'manga_tool_text', icon: Type },
   { id: 'brush', labelKey: 'manga_tool_brush', icon: Paintbrush },
-  { id: 'erase', labelKey: 'manga_tool_erase', icon: Eraser },
+  { id: 'restore', labelKey: 'manga_tool_restore_brush', icon: RotateCcw },
 ];
 
 const BLOCK_RESIZE_HANDLES: Array<{ mode: BlockTransformMode; className: string }> = [
@@ -181,10 +290,13 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   activeJob,
   runtimeOverlay,
   layerControls,
+  brushRadius,
   zoomCommand,
   onSelectBlock,
   onUpdateDraft,
   onCreateBlock,
+  onDeleteBlock,
+  onApplyBrushStroke,
   onViewportChange,
   onPointerChange,
 }) => {
@@ -196,7 +308,10 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [blockTransform, setBlockTransform] = useState<BlockTransformState | null>(null);
   const [createRegion, setCreateRegion] = useState<CreateRegionState | null>(null);
+  const [brushStroke, setBrushStroke] = useState<BrushStrokeState | null>(null);
+  const [focusHighlight, setFocusHighlight] = useState<FocusHighlightState | null>(null);
   const [activeTool, setActiveTool] = useState<CanvasTool>('select');
+  const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [scaleMode, setScaleMode] = useState<'fit' | 'actual' | 'manual'>('fit');
   const pageRef = useRef<MangaPageDetail | null>(page);
   const scaleRef = useRef(scale);
@@ -243,6 +358,9 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
     }
     setPan({ x: 0, y: 0 });
     setScaleMode('fit');
+    setInlineEdit(null);
+    setBrushStroke(null);
+    setFocusHighlight(null);
   }, [page, viewMode, onPointerChange]);
 
   useEffect(() => {
@@ -257,12 +375,32 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
       setScaleMode('fit');
       setPan({ x: 0, y: 0 });
       setScale(fitScale);
+      setFocusHighlight(null);
+      return;
+    }
+    if (zoomCommand.kind === 'focusBox' && zoomCommand.bbox && viewportRef.current) {
+      const bbox = normalizeBlockBbox(zoomCommand.bbox, page.width, page.height);
+      const nextScale = fitScaleForBbox(bbox, viewportRef.current.getBoundingClientRect(), fitScale);
+      setScaleMode('manual');
+      setScale(nextScale);
+      setPan(panForCenteredBbox(bbox, nextScale, page.width, page.height));
+      setFocusHighlight({
+        bbox,
+        label: zoomCommand.label || '',
+      });
       return;
     }
     setScaleMode('actual');
     setPan({ x: 0, y: 0 });
     setScale(1);
+    setFocusHighlight(null);
   }, [fitScale, page, zoomCommand]);
+
+  useEffect(() => {
+    if (!focusHighlight) return undefined;
+    const timeout = window.setTimeout(() => setFocusHighlight(null), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [focusHighlight]);
 
   useEffect(() => {
     onViewportChange(Math.round(scale * 100));
@@ -365,12 +503,30 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
     });
   };
 
+  const startInlineEdit = (
+    event: React.SyntheticEvent,
+    blockId: string,
+    field: InlineEditField,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectBlock(blockId);
+    setInlineEdit({ blockId, field });
+  };
+
   const handleBlockKeyDown = (
     event: React.KeyboardEvent<HTMLElement>,
     blockId: string,
     bbox: number[],
   ) => {
     if (!page) return;
+
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      event.stopPropagation();
+      onDeleteBlock(blockId);
+      return;
+    }
 
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -385,6 +541,13 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
     onSelectBlock(blockId);
 
     const step = event.shiftKey ? 10 : 1;
+    if (event.altKey) {
+      const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+      const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+      onUpdateDraft(blockId, { bbox: resizeBlockBbox(bbox, dx, dy, page.width, page.height) });
+      return;
+    }
+
     const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
     const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
     onUpdateDraft(blockId, { bbox: moveBlockBbox(bbox, dx, dy, page.width, page.height) });
@@ -400,6 +563,20 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!page || event.button !== 0) return;
+    if (activeTool === 'brush' || activeTool === 'restore') {
+      const point = getPagePoint(event.clientX, event.clientY);
+      if (!point?.inPage) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setBrushStroke({
+        pointerId: event.pointerId,
+        mode: activeTool,
+        radius: clampBrushRadius(brushRadius),
+        points: [{ x: point.x, y: point.y }],
+      });
+      return;
+    }
+
     if (activeTool === 'text') {
       const point = getPagePoint(event.clientX, event.clientY);
       if (!point?.inPage) return;
@@ -427,6 +604,18 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!page) return;
     updatePointer(event.clientX, event.clientY);
+    if (brushStroke?.pointerId === event.pointerId) {
+      const point = getPagePoint(event.clientX, event.clientY);
+      if (point) {
+        setBrushStroke((current) => (
+          current?.pointerId === event.pointerId
+            ? appendBrushPoint(current, { x: point.x, y: point.y })
+            : current
+        ));
+      }
+      return;
+    }
+
     if (createRegion?.pointerId === event.pointerId) {
       const point = getPagePoint(event.clientX, event.clientY);
       if (point) {
@@ -447,6 +636,19 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (brushStroke?.pointerId === event.pointerId) {
+      const stroke = brushStroke;
+      setBrushStroke(null);
+      if (stroke.points.length > 0) {
+        onApplyBrushStroke({
+          mode: stroke.mode,
+          radius: stroke.radius,
+          points: stroke.points,
+        });
+      }
+      return;
+    }
+
     if (page && createRegion?.pointerId === event.pointerId) {
       const bbox = normalizeBlockBbox([
         createRegion.startX,
@@ -484,7 +686,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
       <div
         ref={viewportRef}
         className={`flex-1 min-h-0 relative overflow-hidden p-6 ${
-          page ? (activeTool === 'text' ? 'cursor-crosshair' : blockTransform ? 'cursor-default' : dragState ? 'cursor-grabbing' : 'cursor-grab') : ''
+          page ? (activeTool === 'brush' || activeTool === 'restore' || activeTool === 'text' ? 'cursor-crosshair' : blockTransform ? 'cursor-default' : dragState ? 'cursor-grabbing' : 'cursor-grab') : ''
         } bg-[linear-gradient(45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(-45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(45deg,transparent_75%,rgba(15,23,42,0.92)_75%),linear-gradient(-45deg,transparent_75%,rgba(15,23,42,0.92)_75%)] bg-[length:28px_28px] bg-[position:0_0,0_14px,14px_-14px,-14px_0px]`}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
@@ -537,6 +739,16 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                 />
 
+                {viewMode === 'overlay' && layerControls.sourceReference.visible && page.layers.source_url && (
+                  <img
+                    src={page.layers.source_url}
+                    alt={t('manga_layer_source_reference')}
+                    draggable={false}
+                    className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
+                    style={{ opacity: layerControls.sourceReference.opacity }}
+                  />
+                )}
+
                 {layerControls.segment.visible && (
                   <img
                     src={page.masks.segment_url}
@@ -564,6 +776,16 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                     draggable={false}
                     className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
                     style={{ opacity: layerControls.brush.opacity }}
+                  />
+                )}
+
+                {layerControls.restore.visible && (
+                  <img
+                    src={page.masks.restore_url}
+                    alt={t('manga_layer_restore_mask')}
+                    draggable={false}
+                    className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
+                    style={{ opacity: layerControls.restore.opacity }}
                   />
                 )}
 
@@ -598,6 +820,19 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   );
                 })}
 
+                {focusHighlight && (
+                  <div
+                    className="absolute rounded-md border-2 border-rose-300 bg-rose-400/12 pointer-events-none shadow-[0_0_0_2px_rgba(251,113,133,0.24),0_0_28px_rgba(251,113,133,0.38)]"
+                    style={buildOverlayBoxStyle(focusHighlight.bbox)}
+                  >
+                    {focusHighlight.label && (
+                      <span className="absolute -top-6 left-0 max-w-full truncate rounded bg-rose-950/90 px-1.5 py-0.5 text-[10px] font-semibold text-rose-50">
+                        {focusHighlight.label}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {createRegion && (
                   <div
                     className="absolute rounded-md border border-dashed border-primary bg-primary/10 pointer-events-none"
@@ -614,12 +849,47 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   </div>
                 )}
 
+                {brushStroke && (
+                  <svg
+                    className="absolute inset-0 pointer-events-none"
+                    width={page.width}
+                    height={page.height}
+                    viewBox={`0 0 ${page.width} ${page.height}`}
+                  >
+                    {brushStroke.points.length === 1 ? (
+                      <circle
+                        cx={brushStroke.points[0].x}
+                        cy={brushStroke.points[0].y}
+                        r={brushStroke.radius}
+                        fill={brushStroke.mode === 'brush' ? 'rgba(34,211,238,0.48)' : 'rgba(251,146,60,0.48)'}
+                      />
+                    ) : (
+                      <polyline
+                        points={buildStrokePolyline(brushStroke.points)}
+                        fill="none"
+                        stroke={brushStroke.mode === 'brush' ? 'rgba(34,211,238,0.62)' : 'rgba(251,146,60,0.62)'}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={brushStroke.radius * 2}
+                      />
+                    )}
+                  </svg>
+                )}
+
                 {layerControls.overlay.visible && page.blocks.map((block) => {
                   const draft = blockDrafts[block.block_id];
                   const isActive = block.block_id === activeBlockId;
+                  const isInlineEditing = inlineEdit?.blockId === block.block_id;
+                  const inlineEditField = inlineEdit?.field || 'translation';
                   const sourceText = draft?.source_text ?? block.source_text ?? '';
                   const translation = draft?.translation ?? block.translation ?? '';
+                  const inlineEditValue = inlineEditField === 'source_text' ? sourceText : translation;
+                  const inlineEditPlaceholder = inlineEditField === 'source_text'
+                    ? block.source_text || block.block_id
+                    : sourceText || block.block_id;
                   const bbox = draft?.bbox || block.bbox;
+                  const overlayLabel = buildOverlayLabel(sourceText, translation, block.block_id);
+                  const previewTextStyle = buildBlockTextStyle(block, draft);
 
                   return (
                     <div
@@ -628,7 +898,12 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                       tabIndex={0}
                       onPointerDown={(event) => beginBlockTransform(event, block.block_id, bbox, 'move')}
                       onKeyDown={(event) => handleBlockKeyDown(event, block.block_id, bbox)}
+                      onDoubleClick={(event) => {
+                        startInlineEdit(event, block.block_id, 'translation');
+                      }}
                       className={`absolute rounded-lg border text-left transition-all ${
+                        activeTool === 'brush' || activeTool === 'restore' ? 'pointer-events-none' : ''
+                      } ${
                         isActive
                           ? 'cursor-move border-cyan-300 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]'
                           : 'cursor-pointer border-amber-300/70 bg-slate-950/20 hover:border-cyan-300/80'
@@ -637,11 +912,67 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                         ...buildOverlayBoxStyle(bbox),
                         opacity: layerControls.overlay.opacity,
                       }}
-                      title={`${block.block_id} | ${buildOverlayLabel(sourceText, translation, block.block_id)}`}
+                      title={`${block.block_id} | ${overlayLabel}`}
                     >
                       <span className="absolute -top-7 left-0 max-w-full truncate rounded-md bg-slate-950/85 px-2 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-100">
-                        {buildOverlayLabel(sourceText, translation, block.block_id)}
+                        {overlayLabel}
                       </span>
+                      {isActive && (
+                        <span className="absolute -top-7 right-0 flex items-center overflow-hidden rounded-md border border-slate-700 bg-slate-950/90 text-[10px] font-bold text-slate-300 shadow-lg shadow-slate-950/35">
+                          <button
+                            type="button"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => startInlineEdit(event, block.block_id, 'source_text')}
+                            className={`px-1.5 py-1 transition-colors ${
+                              isInlineEditing && inlineEditField === 'source_text'
+                                ? 'bg-primary text-slate-950'
+                                : 'hover:bg-slate-800 hover:text-slate-100'
+                            }`}
+                          >
+                            {t('manga_ocr_label')}
+                          </button>
+                          <button
+                            type="button"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => startInlineEdit(event, block.block_id, 'translation')}
+                            className={`border-l border-slate-700 px-1.5 py-1 transition-colors ${
+                              isInlineEditing && inlineEditField === 'translation'
+                                ? 'bg-primary text-slate-950'
+                                : 'hover:bg-slate-800 hover:text-slate-100'
+                            }`}
+                          >
+                            {t('manga_tl_label')}
+                          </button>
+                        </span>
+                      )}
+                      {!isInlineEditing && (
+                        <span
+                          className="pointer-events-none absolute inset-0 block overflow-hidden rounded-md bg-white/5"
+                          style={previewTextStyle}
+                        >
+                          {translation || sourceText || block.block_id}
+                        </span>
+                      )}
+                      {isInlineEditing && (
+                        <textarea
+                          autoFocus
+                          value={inlineEditValue}
+                          placeholder={inlineEditPlaceholder}
+                          onChange={(event) => onUpdateDraft(block.block_id, { [inlineEditField]: event.target.value })}
+                          onBlur={() => setInlineEdit(null)}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key === 'Enter')) {
+                              event.preventDefault();
+                              setInlineEdit(null);
+                            }
+                          }}
+                          className="absolute inset-0 resize-none rounded-md border border-cyan-300/45 bg-slate-950/92 outline-none shadow-xl shadow-slate-950/50 placeholder:text-slate-600"
+                          style={previewTextStyle}
+                        />
+                      )}
                       {isActive && BLOCK_RESIZE_HANDLES.map((handle) => (
                         <span
                           key={handle.mode}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,3 +38,20 @@ class BatchTranslateRequest(BaseModel):
 
 class ApplyOpsRequest(BaseModel):
     ops: list[dict[str, Any]]
+
+
+class BrushStrokePoint(BaseModel):
+    x: float
+    y: float
+
+
+class BrushMaskStrokeRequest(BaseModel):
+    mode: Literal["brush"] = "brush"
+    radius: int = Field(default=24, ge=1, le=256)
+    points: list[BrushStrokePoint]
+
+
+class RestoreMaskStrokeRequest(BaseModel):
+    mode: Literal["restore"] = "restore"
+    radius: int = Field(default=24, ge=1, le=256)
+    points: list[BrushStrokePoint]

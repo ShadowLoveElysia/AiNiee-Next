@@ -24,6 +24,7 @@ DEFAULT_MASK_PATHS = {
     "segment": "segmentMask.png",
     "bubble": "bubbleMask.png",
     "brush": "brushMask.png",
+    "restore": "restoreMask.png",
 }
 
 DEFAULT_TEXT_STYLE = {

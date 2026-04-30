@@ -46,8 +46,10 @@ export interface MangaEngineCard {
 }
 
 export interface MangaCanvasCommand {
-  kind: 'fit' | 'actual';
+  kind: 'fit' | 'actual' | 'focusBox';
   token: number;
+  bbox?: number[];
+  label?: string;
 }
 
 export interface MangaCanvasPointer {
@@ -71,7 +73,20 @@ export interface MangaCanvasRuntimeOverlay {
   message: string;
 }
 
-export type MangaOverlayLayerKey = 'segment' | 'bubble' | 'brush' | 'overlay';
+export type MangaBrushStrokeMode = 'brush' | 'restore';
+
+export interface MangaBrushStrokePoint {
+  x: number;
+  y: number;
+}
+
+export interface MangaBrushStrokePayload {
+  mode: MangaBrushStrokeMode;
+  radius: number;
+  points: MangaBrushStrokePoint[];
+}
+
+export type MangaOverlayLayerKey = 'sourceReference' | 'segment' | 'bubble' | 'brush' | 'restore' | 'overlay';
 
 export interface MangaLayerControl {
   visible: boolean;

@@ -30,6 +30,7 @@ class MangaMaskSet:
     segment: str = ""
     bubble: str = ""
     brush: str = ""
+    restore: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -42,4 +43,5 @@ class MangaMaskSet:
             segment=str(data.get("segment", "")),
             bubble=str(data.get("bubble", "")),
             brush=str(data.get("brush", "")),
+            restore=str(data.get("restore", "")),
         )

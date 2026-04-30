@@ -9,27 +9,45 @@ export interface MangaLayersPanelProps {
   page: MangaPageDetail | null;
   viewMode: MangaViewMode;
   layerControls: MangaLayerControls;
+  brushRadius: number;
   onToggleLayer: (layer: MangaOverlayLayerKey) => void;
   onSetLayerOpacity: (layer: MangaOverlayLayerKey, opacity: number) => void;
+  onSetBrushRadius: (radius: number) => void;
 }
 
 const LAYER_LABELS: Record<MangaOverlayLayerKey, string> = {
+  sourceReference: 'manga_layer_source_reference',
   segment: 'manga_layer_segment_mask',
   bubble: 'manga_layer_bubble_mask',
   brush: 'manga_layer_brush_mask',
+  restore: 'manga_layer_restore_mask',
   overlay: 'manga_layer_text_overlay',
+};
+
+const getCurrentBaseLabelKey = (page: MangaPageDetail, viewMode: MangaViewMode) => {
+  if (viewMode === 'overlay') {
+    if (page.layers.rendered_url) return 'manga_layer_rendered';
+    if (page.layers.inpainted_url) return 'manga_layer_inpainted';
+    return 'manga_layer_source';
+  }
+  return `manga_view_${viewMode}`;
 };
 
 export const MangaLayersPanel: React.FC<MangaLayersPanelProps> = ({
   page,
   viewMode,
   layerControls,
+  brushRadius,
   onToggleLayer,
   onSetLayerOpacity,
+  onSetBrushRadius,
 }) => {
   const { t } = useI18n();
+  const layerKeys: MangaOverlayLayerKey[] = viewMode === 'overlay'
+    ? ['sourceReference', 'segment', 'bubble', 'brush', 'restore', 'overlay']
+    : ['segment', 'bubble', 'brush', 'restore', 'overlay'];
   const baseEntries = page ? [
-    [t('manga_layer_current_base'), t(`manga_view_${viewMode}`)],
+    [t('manga_layer_current_base'), t(getCurrentBaseLabelKey(page, viewMode))],
     [t('manga_layer_source'), page.layers.source_url],
     [t('manga_layer_rendered'), page.layers.rendered_url],
     [t('manga_layer_inpainted'), page.layers.inpainted_url],
@@ -57,7 +75,23 @@ export const MangaLayersPanel: React.FC<MangaLayersPanelProps> = ({
             ))}
           </div>
 
-          {(['segment', 'bubble', 'brush', 'overlay'] as MangaOverlayLayerKey[]).map((layerKey) => (
+          <div className="rounded-lg border border-slate-800 bg-slate-950/45 px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-slate-200">{t('manga_brush_radius')}</span>
+              <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{brushRadius}px</span>
+            </div>
+            <input
+              type="range"
+              min="4"
+              max="96"
+              step="1"
+              value={brushRadius}
+              onChange={(event) => onSetBrushRadius(Number(event.target.value))}
+              className="mt-3 w-full accent-primary"
+            />
+          </div>
+
+          {layerKeys.map((layerKey) => (
             <div key={layerKey} className="rounded-lg border border-slate-800 bg-slate-950/45 px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <label className="flex items-center gap-2 text-sm text-slate-200">

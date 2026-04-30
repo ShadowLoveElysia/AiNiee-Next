@@ -23,6 +23,7 @@ export interface MangaJob {
   page_count?: number;
   result?: Record<string, any>;
   error_message?: string;
+  cancel_requested?: boolean;
 }
 
 export interface MangaOperationResult {
@@ -143,6 +144,7 @@ export interface MangaPageDetail {
     segment_url: string;
     bubble_url: string;
     brush_url: string;
+    restore_url: string;
   };
   blocks: MangaTextBlock[];
 }
@@ -183,4 +185,29 @@ export interface MangaRuntimeValidationHistoryItem {
   runtime_stage_count: number;
   fallback_stage_count: number;
   seed_count: number;
+}
+
+export interface MangaRuntimeValidationDiffChange {
+  key: string;
+  before: any;
+  after: any;
+}
+
+export interface MangaRuntimeValidationStageDiff {
+  stage: string;
+  changes: MangaRuntimeValidationDiffChange[];
+}
+
+export interface MangaRuntimeValidationDiffResult {
+  before_run_id: string;
+  after_run_id: string;
+  before_created_at: string;
+  after_created_at: string;
+  summary_changes: MangaRuntimeValidationDiffChange[];
+  stage_changes: MangaRuntimeValidationStageDiff[];
+}
+
+export interface MangaDeleteRuntimeValidationHistoryResult {
+  ok: boolean;
+  deleted: string;
 }

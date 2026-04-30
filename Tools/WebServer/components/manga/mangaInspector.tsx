@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, FileJson, ImageIcon, PackageCheck, PlayCircle } from 'lucide-react';
+import { Activity, ChevronDown, ExternalLink, FileJson, GitCompareArrows, ImageIcon, Link2, LocateFixed, PackageCheck, PlayCircle, RotateCcw, Search, Square, SquareStack, Trash2 } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
-import { MangaPageDetail, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
-import { MangaActiveJobSummary, MangaBlockDraft, MangaEngineCard, translateMangaEnum } from './shared';
+import { MangaPageDetail, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
+import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasRuntimeBox, MangaEngineCard, translateMangaEnum } from './shared';
 
 export interface MangaInspectorProps {
   page: MangaPageDetail | null;
@@ -13,15 +13,47 @@ export interface MangaInspectorProps {
   engineCards: MangaEngineCard[];
   runtimeValidation: MangaRuntimeValidationResult | null;
   runtimeValidationHistory: MangaRuntimeValidationHistoryItem[];
+  runtimeValidationDiff: MangaRuntimeValidationDiffResult | null;
   activeRuntimeStage: string;
   busyAction: string;
   hasProject: boolean;
+  canCancelRuntimeValidation: boolean;
   dirtyBlockCount: number;
   activeBlockDirty: boolean;
   onSelectRuntimeStage: (stage: string) => void;
   onLoadRuntimeValidationHistory: (runId: string) => void;
+  onDiffRuntimeValidationHistory: (beforeRunId: string, afterRunId: string) => void;
+  onDeleteRuntimeValidationHistory: (runId: string) => void;
+  onCancelRuntimeValidation: () => void;
+  onRetryRuntimeValidationStage: (stage: string) => void;
   onValidateRuntime: () => void;
   onDownloadModel: (modelId: string) => void;
+  onFocusRuntimeBox: (box: MangaCanvasRuntimeBox) => void;
+}
+
+interface OcrSeedRow {
+  seedId: string;
+  sourceText: string;
+  confidence: number | null;
+  direction: string;
+  bbox: number[];
+  searchText: string;
+}
+
+interface DetectRegionRow {
+  regionId: string;
+  kind: string;
+  score: number | null;
+  bbox: number[];
+  searchText: string;
+}
+
+interface DetectOcrMatchRow {
+  region: DetectRegionRow;
+  seeds: Array<{
+    seed: OcrSeedRow;
+    overlap: number;
+  }>;
 }
 
 interface InspectorSectionProps {
@@ -112,6 +144,136 @@ const truncateArtifactText = (value: string) => (
   value.length > 16000 ? `${value.slice(0, 16000)}\n...` : value
 );
 
+const normalizeBoxValues = (value: unknown) => {
+  if (!Array.isArray(value) || value.length < 4) return [];
+  const bbox = value.slice(0, 4).map((item) => Number(item));
+  return bbox.some((item) => Number.isNaN(item)) ? [] : bbox;
+};
+
+const normalizeSeedBbox = (record: Record<string, any>) => {
+  const bbox = Array.isArray(record.bbox)
+    ? record.bbox
+    : Array.isArray(record.inner_bbox)
+      ? record.inner_bbox
+      : Array.isArray(record.component_bbox)
+        ? record.component_bbox
+        : [];
+  return normalizeBoxValues(bbox);
+};
+
+const normalizeOcrSeeds = (records: unknown): OcrSeedRow[] => {
+  if (!Array.isArray(records)) return [];
+  return records.flatMap((record, index) => {
+    if (!record || typeof record !== 'object') return [];
+    const data = record as Record<string, any>;
+    const bbox = normalizeSeedBbox(data);
+    if (bbox.length < 4) return [];
+    const seedId = String(data.seed_id || data.id || `seed_${index + 1}`);
+    const sourceText = String(data.source_text || data.text || '');
+    const direction = String(data.direction || data.source_direction || '');
+    const confidenceValue = Number(data.confidence ?? data.ocr_confidence);
+    const confidence = Number.isFinite(confidenceValue) ? confidenceValue : null;
+    return [{
+      seedId,
+      sourceText,
+      confidence,
+      direction,
+      bbox,
+      searchText: [seedId, sourceText, direction, bbox.join(',')].join(' ').toLowerCase(),
+    }];
+  });
+};
+
+const normalizeDetectRegions = (records: unknown): DetectRegionRow[] => {
+  if (!Array.isArray(records)) return [];
+  return records.flatMap((record, index) => {
+    if (!record || typeof record !== 'object') return [];
+    const data = record as Record<string, any>;
+    const bbox = normalizeBoxValues(data.bbox);
+    if (bbox.length < 4) return [];
+    const regionId = String(data.region_id || data.id || `region_${index + 1}`);
+    const kind = String(data.kind || data.type || 'text');
+    const scoreValue = Number(data.score ?? data.confidence);
+    const score = Number.isFinite(scoreValue) ? scoreValue : null;
+    return [{
+      regionId,
+      kind,
+      score,
+      bbox,
+      searchText: [regionId, kind, bbox.join(',')].join(' ').toLowerCase(),
+    }];
+  });
+};
+
+const bboxArea = (bbox: number[]) => (
+  Math.max(0, (bbox[2] || 0) - (bbox[0] || 0)) * Math.max(0, (bbox[3] || 0) - (bbox[1] || 0))
+);
+
+const bboxIntersectionArea = (left: number[], right: number[]) => {
+  const x1 = Math.max(left[0] || 0, right[0] || 0);
+  const y1 = Math.max(left[1] || 0, right[1] || 0);
+  const x2 = Math.min(left[2] || 0, right[2] || 0);
+  const y2 = Math.min(left[3] || 0, right[3] || 0);
+  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+};
+
+const seedKey = (seed: OcrSeedRow) => `${seed.seedId}:${seed.bbox.map((value) => Math.round(value)).join(',')}`;
+
+const buildDetectOcrMatches = (regions: DetectRegionRow[], seeds: OcrSeedRow[]) => {
+  const matchedSeedKeys = new Set<string>();
+  const rows: DetectOcrMatchRow[] = regions.map((region) => {
+    const regionArea = Math.max(1, bboxArea(region.bbox));
+    const matchedSeeds = seeds
+      .map((seed) => {
+        const intersection = bboxIntersectionArea(region.bbox, seed.bbox);
+        const seedArea = Math.max(1, bboxArea(seed.bbox));
+        const union = Math.max(1, regionArea + seedArea - intersection);
+        const seedCoverage = intersection / seedArea;
+        const regionCoverage = intersection / regionArea;
+        const iou = intersection / union;
+        return {
+          seed,
+          overlap: Math.max(seedCoverage, regionCoverage, iou),
+        };
+      })
+      .filter((match) => match.overlap >= 0.2)
+      .sort((left, right) => right.overlap - left.overlap);
+
+    matchedSeeds.forEach((match) => matchedSeedKeys.add(seedKey(match.seed)));
+    return { region, seeds: matchedSeeds };
+  });
+
+  return {
+    rows,
+    unmatchedSeeds: seeds.filter((seed) => !matchedSeedKeys.has(seedKey(seed))),
+    emptyRegions: rows.filter((row) => row.seeds.length === 0).map((row) => row.region),
+  };
+};
+
+const formatConfidence = (confidence: number | null) => (
+  confidence === null ? '-' : confidence.toFixed(3)
+);
+
+const formatScore = (score: number | null) => (
+  score === null ? '-' : score.toFixed(3)
+);
+
+const formatDiffValue = (value: any) => {
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(3);
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const extractRuntimeRunId = (outputDir: string) => (
+  outputDir.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+);
+
 export const MangaInspector: React.FC<MangaInspectorProps> = ({
   page,
   activeBlock,
@@ -120,15 +282,22 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   engineCards,
   runtimeValidation,
   runtimeValidationHistory,
+  runtimeValidationDiff,
   activeRuntimeStage,
   busyAction,
   hasProject,
+  canCancelRuntimeValidation,
   dirtyBlockCount,
   activeBlockDirty,
   onSelectRuntimeStage,
   onLoadRuntimeValidationHistory,
+  onDiffRuntimeValidationHistory,
+  onDeleteRuntimeValidationHistory,
+  onCancelRuntimeValidation,
+  onRetryRuntimeValidationStage,
   onValidateRuntime,
   onDownloadModel,
+  onFocusRuntimeBox,
 }) => {
   const { t } = useI18n();
   const blockWidth = activeBlock ? Math.max(0, activeBlock.bbox[2] - activeBlock.bbox[0]) : 0;
@@ -143,6 +312,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const translationPreview = activeBlockDraft?.translation ?? activeBlock?.translation ?? '';
   const isBusy = Boolean(busyAction);
   const isRuntimeBusy = busyAction === 'validate runtime';
+  const isRuntimeStageRetryBusy = busyAction === 'retry runtime validation stage';
   const canValidateRuntime = Boolean(hasProject && page && !isBusy);
   const missingEngineCount = engineCards.filter((card) => !card.available).length;
   const missingPackages = engineCards
@@ -162,9 +332,53 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const [artifactText, setArtifactText] = useState('');
   const [artifactError, setArtifactError] = useState('');
   const [artifactLoading, setArtifactLoading] = useState(false);
+  const [seedSearch, setSeedSearch] = useState('');
+  const [lowConfidenceOnly, setLowConfidenceOnly] = useState(false);
+  const [confidenceThreshold, setConfidenceThreshold] = useState(0.85);
+  const ocrStage = useMemo(() => (
+    runtimeValidation?.stages.find((stage) => stage.stage === 'ocr') || null
+  ), [runtimeValidation]);
+  const detectStage = useMemo(() => (
+    runtimeValidation?.stages.find((stage) => stage.stage === 'detect') || null
+  ), [runtimeValidation]);
+  const ocrSeeds = useMemo(() => normalizeOcrSeeds(ocrStage?.metrics?.seeds), [ocrStage]);
+  const detectRegions = useMemo(() => normalizeDetectRegions(detectStage?.metrics?.text_regions), [detectStage]);
+  const detectOcrMatches = useMemo(() => buildDetectOcrMatches(detectRegions, ocrSeeds), [detectRegions, ocrSeeds]);
+  const visibleRuntimeHistory = useMemo(() => runtimeValidationHistory.slice(0, 6), [runtimeValidationHistory]);
+  const activeRuntimeRunId = useMemo(() => extractRuntimeRunId(runtimeValidation?.output_dir || ''), [runtimeValidation?.output_dir]);
+  const filteredOcrSeeds = useMemo(() => {
+    const query = seedSearch.trim().toLowerCase();
+    return ocrSeeds.filter((seed) => {
+      if (query && !seed.searchText.includes(query)) return false;
+      if (lowConfidenceOnly && (seed.confidence === null || seed.confidence >= confidenceThreshold)) return false;
+      return true;
+    });
+  }, [confidenceThreshold, lowConfidenceOnly, ocrSeeds, seedSearch]);
+  const focusDetectRegion = (region: DetectRegionRow) => {
+    onSelectRuntimeStage('detect');
+    onFocusRuntimeBox({
+      bbox: region.bbox,
+      label: `${region.regionId} · ${region.kind}`,
+      tone: 'cyan',
+    });
+  };
+  const focusOcrSeed = (seed: OcrSeedRow) => {
+    onSelectRuntimeStage('ocr');
+    onFocusRuntimeBox({
+      bbox: seed.bbox,
+      label: seed.sourceText || seed.seedId,
+      tone: 'amber',
+    });
+  };
+  const getHistoryDiffTarget = (item: MangaRuntimeValidationHistoryItem, index: number) => {
+    if (activeRuntimeRunId && activeRuntimeRunId !== item.run_id) return activeRuntimeRunId;
+    return visibleRuntimeHistory[index + 1]?.run_id || visibleRuntimeHistory[index - 1]?.run_id || '';
+  };
 
   useEffect(() => {
     setActiveArtifactKey('');
+    setSeedSearch('');
+    setLowConfidenceOnly(false);
   }, [activeRuntimeStage, runtimeValidation?.created_at]);
 
   useEffect(() => {
@@ -237,15 +451,27 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                 : t('manga_runtime_validation_empty')}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onValidateRuntime}
-            disabled={!canValidateRuntime}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-cyan-300/25 bg-cyan-300/10 px-2.5 text-[11px] font-bold text-cyan-100 transition-colors hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {isRuntimeBusy ? <Activity size={13} className="animate-pulse" /> : <PlayCircle size={13} />}
-            {t('manga_action_validate_runtime')}
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {canCancelRuntimeValidation && (
+              <button
+                type="button"
+                onClick={onCancelRuntimeValidation}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-300/25 bg-rose-300/10 px-2.5 text-[11px] font-bold text-rose-100 transition-colors hover:border-rose-200"
+              >
+                <Square size={12} fill="currentColor" />
+                {t('manga_action_cancel_runtime_validation')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onValidateRuntime}
+              disabled={!canValidateRuntime}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-cyan-300/25 bg-cyan-300/10 px-2.5 text-[11px] font-bold text-cyan-100 transition-colors hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {isRuntimeBusy ? <Activity size={13} className="animate-pulse" /> : <PlayCircle size={13} />}
+              {t('manga_action_validate_runtime')}
+            </button>
+          </div>
         </div>
 
         {runtimeValidation && (
@@ -303,30 +529,296 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
               {t('manga_validation_history')}
               <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
             </summary>
-            <div className="grid gap-1.5 border-t border-slate-800 px-2.5 py-2">
-              {runtimeValidationHistory.slice(0, 6).map((item) => (
-                <button
-                  key={item.run_id}
-                  type="button"
-                  onClick={() => onLoadRuntimeValidationHistory(item.run_id)}
-                  disabled={Boolean(busyAction)}
-                  className={`grid gap-1 rounded-md border px-2.5 py-2 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    runtimeValidation?.output_dir === item.output_dir
-                      ? 'border-cyan-300/55 bg-cyan-300/10'
-                      : 'border-slate-800 bg-slate-900/65 hover:border-cyan-300/40'
-                  }`}
-                >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate font-semibold text-slate-200">{formatDateTime(item.created_at) || item.run_id}</span>
-                    <StatusPill tone={item.ok ? 'emerald' : 'amber'}>
-                      {item.ok ? t('manga_complete') : t('manga_needs_review')}
-                    </StatusPill>
+            <div className="space-y-2 border-t border-slate-800 px-2.5 py-2">
+              <div className="grid gap-1.5">
+                {visibleRuntimeHistory.map((item, index) => {
+                  const diffTarget = getHistoryDiffTarget(item, index);
+                  return (
+                    <div
+                      key={item.run_id}
+                      className={`grid gap-1 rounded-md border px-2.5 py-2 text-xs transition-colors ${
+                        activeRuntimeRunId === item.run_id
+                          ? 'border-cyan-300/55 bg-cyan-300/10'
+                          : 'border-slate-800 bg-slate-900/65'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onLoadRuntimeValidationHistory(item.run_id)}
+                          disabled={Boolean(busyAction)}
+                          className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <span className="flex items-center justify-between gap-2">
+                            <span className="truncate font-semibold text-slate-200">{formatDateTime(item.created_at) || item.run_id}</span>
+                            <StatusPill tone={item.ok ? 'emerald' : 'amber'}>
+                              {item.ok ? t('manga_complete') : t('manga_needs_review')}
+                            </StatusPill>
+                          </span>
+                          <span className="mt-1 block text-slate-500">
+                            {t('manga_history_summary', item.runtime_stage_count, item.fallback_stage_count, item.seed_count)}
+                          </span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => diffTarget && onDiffRuntimeValidationHistory(item.run_id, diffTarget)}
+                            disabled={Boolean(busyAction) || !diffTarget}
+                            title={t('manga_diff_history')}
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-800 bg-slate-950/70 text-slate-400 transition-colors hover:border-cyan-300/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <GitCompareArrows size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteRuntimeValidationHistory(item.run_id)}
+                            disabled={Boolean(busyAction)}
+                            title={t('manga_delete_history')}
+                            className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-800 bg-slate-950/70 text-slate-500 transition-colors hover:border-rose-300/35 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {runtimeValidationDiff && (
+                <div className="rounded-md border border-slate-800 bg-slate-900/58 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100">
+                      {t('manga_runtime_diff')}
+                    </div>
+                    <span className="shrink-0 text-[10px] text-slate-500">
+                      {runtimeValidationDiff.before_run_id}{' -> '}{runtimeValidationDiff.after_run_id}
+                    </span>
+                  </div>
+                  {runtimeValidationDiff.summary_changes.length === 0 && runtimeValidationDiff.stage_changes.length === 0 ? (
+                    <div className="mt-2 text-xs text-slate-500">{t('manga_runtime_diff_empty')}</div>
+                  ) : (
+                    <div className="mt-2 space-y-2">
+                      {runtimeValidationDiff.summary_changes.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{t('manga_runtime_diff_summary')}</div>
+                          <div className="space-y-1">
+                            {runtimeValidationDiff.summary_changes.slice(0, 8).map((change) => (
+                              <div key={change.key} className="grid gap-0.5 rounded border border-slate-800/80 bg-slate-950/45 px-2 py-1.5 text-[11px]">
+                                <span className="font-semibold text-slate-300">{change.key}</span>
+                                <span className="truncate text-slate-500" title={`${formatDiffValue(change.before)} -> ${formatDiffValue(change.after)}`}>
+                                  {formatDiffValue(change.before)}{' -> '}{formatDiffValue(change.after)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {runtimeValidationDiff.stage_changes.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{t('manga_runtime_diff_stages')}</div>
+                          <div className="space-y-1">
+                            {runtimeValidationDiff.stage_changes.slice(0, 6).map((stage) => (
+                              <div key={stage.stage} className="rounded border border-slate-800/80 bg-slate-950/45 px-2 py-1.5 text-[11px]">
+                                <div className="font-semibold text-slate-300">{translateMangaEnum('manga_runtime_stage', stage.stage, t)}</div>
+                                <div className="mt-1 space-y-0.5">
+                                  {stage.changes.slice(0, 4).map((change) => (
+                                    <div key={`${stage.stage}-${change.key}`} className="truncate text-slate-500" title={`${change.key}: ${formatDiffValue(change.before)} -> ${formatDiffValue(change.after)}`}>
+                                      {change.key}: {formatDiffValue(change.before)}{' -> '}{formatDiffValue(change.after)}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
+        )}
+
+        {runtimeValidation && (detectRegions.length > 0 || ocrSeeds.length > 0) && (
+          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38" open={activeRuntimeStage === 'detect' || activeRuntimeStage === 'ocr'}>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <span>{t('manga_detect_ocr_matches')}</span>
+              <span className="flex items-center gap-2">
+                <span>{detectOcrMatches.rows.filter((row) => row.seeds.length > 0).length}/{detectRegions.length}</span>
+                <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+              </span>
+            </summary>
+            <div className="space-y-2 border-t border-slate-800 px-2.5 py-2">
+              <div className="grid grid-cols-3 gap-2">
+                <MetricTile label={t('manga_detect_regions')} value={detectRegions.length} tone="text-cyan-200" />
+                <MetricTile label={t('manga_summary_seeds')} value={ocrSeeds.length} tone="text-amber-200" />
+                <MetricTile label={t('manga_empty_detect_regions')} value={detectOcrMatches.emptyRegions.length} tone="text-slate-200" />
+              </div>
+
+              <div className="max-h-80 space-y-1.5 overflow-auto pr-1">
+                {detectOcrMatches.rows.length === 0 && (
+                  <div className="rounded-md border border-dashed border-slate-800 bg-slate-950/40 px-3 py-4 text-sm text-slate-500">
+                    {t('manga_no_detect_ocr_matches')}
+                  </div>
+                )}
+                {detectOcrMatches.rows.map((row) => (
+                  <div key={`${row.region.regionId}-${row.region.bbox.join(',')}`} className="rounded-md border border-slate-800 bg-slate-900/58 px-2.5 py-2">
+                    <button
+                      type="button"
+                      onClick={() => focusDetectRegion(row.region)}
+                      className="w-full text-left transition-colors hover:text-cyan-100"
+                      title={t('manga_focus_region')}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-xs font-semibold text-slate-100">
+                          <SquareStack size={12} className="shrink-0 text-cyan-300" />
+                          <span className="truncate">{row.region.regionId}</span>
+                        </span>
+                        <span className="shrink-0 text-[11px] font-semibold text-slate-500">
+                          {t('manga_match_seed_count', row.seeds.length)}
+                        </span>
+                      </span>
+                      <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                        <span className="min-w-0 truncate">{row.region.kind} · {formatScore(row.region.score)}</span>
+                        <span className="inline-flex shrink-0 items-center gap-1">
+                          <LocateFixed size={11} />
+                          {row.region.bbox.map((value) => Math.round(value)).join(',')}
+                        </span>
+                      </span>
+                    </button>
+
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {row.seeds.length === 0 ? (
+                        <span className="rounded-full border border-slate-800 bg-slate-950/55 px-2 py-1 text-[11px] text-slate-500">
+                          {t('manga_no_ocr_text')}
+                        </span>
+                      ) : row.seeds.map((match) => (
+                        <button
+                          key={`${row.region.regionId}-${seedKey(match.seed)}`}
+                          type="button"
+                          onClick={() => focusOcrSeed(match.seed)}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:border-amber-200/55"
+                          title={`${match.seed.sourceText || match.seed.seedId} · ${Math.round(match.overlap * 100)}%`}
+                        >
+                          <Link2 size={11} className="shrink-0" />
+                          <span className="truncate">{match.seed.sourceText || match.seed.seedId}</span>
+                          <span className="shrink-0 text-amber-100/55">{Math.round(match.overlap * 100)}%</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {detectOcrMatches.unmatchedSeeds.length > 0 && (
+                <details className="group rounded-md border border-slate-800 bg-slate-900/58">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    {t('manga_unmatched_ocr_seeds')}
+                    <span className="inline-flex items-center gap-2">
+                      {detectOcrMatches.unmatchedSeeds.length}
+                      <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+                    </span>
+                  </summary>
+                  <div className="flex flex-wrap gap-1.5 border-t border-slate-800 px-2.5 py-2">
+                    {detectOcrMatches.unmatchedSeeds.slice(0, 24).map((seed) => (
+                      <button
+                        key={`unmatched-${seedKey(seed)}`}
+                        type="button"
+                        onClick={() => focusOcrSeed(seed)}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-950/55 px-2 py-1 text-[11px] text-slate-300 transition-colors hover:border-amber-300/45 hover:text-amber-100"
+                        title={seed.sourceText || seed.seedId}
+                      >
+                        <LocateFixed size={11} className="shrink-0" />
+                        <span className="truncate">{seed.sourceText || seed.seedId}</span>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </details>
+        )}
+
+        {runtimeValidation && ocrSeeds.length > 0 && (
+          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38" open={activeRuntimeStage === 'ocr'}>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <span>{t('manga_ocr_seed_browser')}</span>
+              <span className="flex items-center gap-2">
+                <span>{filteredOcrSeeds.length}/{ocrSeeds.length}</span>
+                <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+              </span>
+            </summary>
+            <div className="space-y-2 border-t border-slate-800 px-2.5 py-2">
+              <label className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-300">
+                <Search size={13} className="shrink-0 text-slate-500" />
+                <input
+                  type="search"
+                  value={seedSearch}
+                  onChange={(event) => setSeedSearch(event.target.value)}
+                  placeholder={t('manga_ocr_seed_search_placeholder')}
+                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-600"
+                />
+              </label>
+
+              <div className="rounded-md border border-slate-800 bg-slate-900/58 px-2.5 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-xs text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={lowConfidenceOnly}
+                      onChange={(event) => setLowConfidenceOnly(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-primary"
+                    />
+                    {t('manga_ocr_low_confidence_only')}
+                  </label>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    {confidenceThreshold.toFixed(2)}
                   </span>
-                  <span className="text-slate-500">
-                    {t('manga_history_summary', item.runtime_stage_count, item.fallback_stage_count, item.seed_count)}
-                  </span>
-                </button>
-              ))}
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="1"
+                  step="0.01"
+                  value={confidenceThreshold}
+                  onChange={(event) => setConfidenceThreshold(Number(event.target.value))}
+                  className="mt-2 w-full accent-primary"
+                />
+              </div>
+
+              <div className="max-h-72 space-y-1.5 overflow-auto pr-1">
+                {filteredOcrSeeds.length === 0 && (
+                  <div className="rounded-md border border-dashed border-slate-800 bg-slate-950/40 px-3 py-4 text-sm text-slate-500">
+                    {t('manga_ocr_seed_empty')}
+                  </div>
+                )}
+                {filteredOcrSeeds.map((seed) => (
+                  <button
+                    key={`${seed.seedId}-${seed.bbox.join(',')}`}
+                    type="button"
+                    onClick={() => focusOcrSeed(seed)}
+                    className="w-full rounded-md border border-slate-800 bg-slate-900/65 px-2.5 py-2 text-left text-xs transition-colors hover:border-amber-300/45 hover:bg-amber-300/10"
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-semibold text-slate-100" title={seed.sourceText || seed.seedId}>
+                        {seed.sourceText || seed.seedId}
+                      </span>
+                      <span className={`shrink-0 font-bold ${seed.confidence !== null && seed.confidence < confidenceThreshold ? 'text-amber-200' : 'text-slate-400'}`}>
+                        {formatConfidence(seed.confidence)}
+                      </span>
+                    </span>
+                    <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                      <span className="min-w-0 truncate">{seed.seedId} · {seed.direction || '-'}</span>
+                      <span className="inline-flex shrink-0 items-center gap-1">
+                        <LocateFixed size={11} />
+                        {seed.bbox.map((value) => Math.round(value)).join(',')}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </details>
         )}
@@ -342,25 +834,48 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
             {runtimeValidation.stages.map((stage) => {
               const mode = stage.execution_mode || (stage.used_runtime ? 'configured_runtime' : 'heuristic_fallback');
               return (
-                <button
+                <div
                   key={stage.stage}
-                  type="button"
-                  onClick={() => onSelectRuntimeStage(stage.stage)}
-                  className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  className={`rounded-lg border px-3 py-2.5 transition-colors ${
                     activeRuntimeStage === stage.stage
                       ? 'border-cyan-300/60 bg-cyan-300/10'
-                      : 'border-slate-800 bg-slate-950/42 hover:border-slate-700'
+                      : 'border-slate-800 bg-slate-950/42'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0 truncate text-sm font-semibold text-slate-100">
-                      {translateMangaEnum('manga_runtime_stage', stage.stage, t)}
+                    <button
+                      type="button"
+                      onClick={() => onSelectRuntimeStage(stage.stage)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate text-sm font-semibold text-slate-100">
+                        {translateMangaEnum('manga_runtime_stage', stage.stage, t)}
+                      </div>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <StatusPill tone={getExecutionTone(mode)}>
+                        {translateMangaEnum('manga_execution_mode', mode, t)}
+                      </StatusPill>
+                      <button
+                        type="button"
+                        onClick={() => onRetryRuntimeValidationStage(stage.stage)}
+                        disabled={Boolean(busyAction)}
+                        title={t('manga_retry_runtime_stage')}
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-800 bg-slate-950/70 text-slate-400 transition-colors hover:border-cyan-300/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {isRuntimeStageRetryBusy && activeRuntimeStage === stage.stage ? (
+                          <Activity size={13} className="animate-pulse" />
+                        ) : (
+                          <RotateCcw size={13} />
+                        )}
+                      </button>
                     </div>
-                    <StatusPill tone={getExecutionTone(mode)}>
-                      {translateMangaEnum('manga_execution_mode', mode, t)}
-                    </StatusPill>
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+                  <button
+                    type="button"
+                    onClick={() => onSelectRuntimeStage(stage.stage)}
+                    className="mt-2 grid w-full grid-cols-2 gap-2 text-left text-[11px] text-slate-500"
+                  >
                     <div>
                       <div className="uppercase tracking-[0.14em]">{t('manga_runtime')}</div>
                       <div className="mt-0.5 truncate text-slate-300" title={stage.runtime_engine_id || '-'}>
@@ -371,7 +886,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                       <div className="uppercase tracking-[0.14em]">{t('manga_elapsed')}</div>
                       <div className="mt-0.5 text-slate-300">{t('manga_elapsed_ms', stage.elapsed_ms)}</div>
                     </div>
-                  </div>
+                  </button>
                   {(stage.warning_message || stage.error_message) && (
                     <div className="mt-2 rounded-md border border-amber-300/20 bg-amber-300/10 px-2.5 py-2 text-xs text-amber-100">
                       {stage.error_message || stage.warning_message}
@@ -382,7 +897,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                       {stage.fallback_reason}
                     </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

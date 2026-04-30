@@ -16,6 +16,7 @@ export interface MangaBlocksPanelProps {
   onUpdateDraft: (blockId: string, patch: Partial<MangaBlockDraft>) => void;
   onSaveActiveBlock: () => void;
   onSavePageChanges: () => void;
+  onDeleteActiveBlock: () => void;
 }
 
 const previewText = (value: string, emptyLabel: string) => {
@@ -35,6 +36,7 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
   onUpdateDraft,
   onSaveActiveBlock,
   onSavePageChanges,
+  onDeleteActiveBlock,
 }) => {
   const { t } = useI18n();
   const blocks = page?.blocks || [];
@@ -64,6 +66,14 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
             className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-primary disabled:opacity-50"
           >
             {t('manga_action_save')}
+          </button>
+          <button
+            type="button"
+            onClick={onDeleteActiveBlock}
+            disabled={!hasProject || !page || !activeBlockId || !!busyAction}
+            className="rounded-lg border border-rose-300/25 bg-rose-300/10 px-3 py-2 text-xs font-semibold text-rose-100 transition-colors hover:border-rose-200 disabled:opacity-45"
+          >
+            {t('manga_action_delete')}
           </button>
         </div>
       </div>

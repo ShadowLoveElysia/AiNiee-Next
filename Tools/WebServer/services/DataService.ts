@@ -1,5 +1,6 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
-import { MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
+import type { MangaBrushStrokePayload } from '../components/manga/shared';
+import { MangaDeleteRuntimeValidationHistoryResult, MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -498,6 +499,28 @@ export const DataService = {
         return data;
     },
 
+    async applyMangaBrushMaskStroke(projectId: string, pageId: string, stroke: MangaBrushStrokePayload): Promise<any> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/brush-mask/strokes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...stroke, mode: 'brush' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to apply manga brush mask stroke');
+        return data;
+    },
+
+    async applyMangaRestoreMaskStroke(projectId: string, pageId: string, stroke: MangaBrushStrokePayload): Promise<any> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/restore-mask/strokes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...stroke, mode: 'restore' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to apply manga restore mask stroke');
+        return data;
+    },
+
     async saveMangaProject(projectId: string): Promise<MangaOperationResult> {
         const res = await fetch(`${API_BASE}/manga/projects/save`, {
             method: 'POST',
@@ -574,6 +597,24 @@ export const DataService = {
         return data;
     },
 
+    async stopMangaRuntimeValidation(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/stop`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to stop manga runtime validation');
+        return data;
+    },
+
+    async startMangaRuntimeValidationStageRetry(projectId: string, pageId: string, stage: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/stages/${encodeURIComponent(stage)}/retry/start`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to retry manga runtime validation stage');
+        return data;
+    },
+
     async getLatestMangaRuntimeValidation(projectId: string, pageId: string): Promise<MangaRuntimeValidationResult | null> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/latest`);
         const data = await res.json();
@@ -592,6 +633,22 @@ export const DataService = {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/history/${encodeURIComponent(runId)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga runtime validation report');
+        return data;
+    },
+
+    async diffMangaRuntimeValidationHistory(projectId: string, pageId: string, beforeRunId: string, afterRunId: string): Promise<MangaRuntimeValidationDiffResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/history/${encodeURIComponent(beforeRunId)}/diff/${encodeURIComponent(afterRunId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to diff manga runtime validation reports');
+        return data;
+    },
+
+    async deleteMangaRuntimeValidationHistory(projectId: string, pageId: string, runId: string): Promise<MangaDeleteRuntimeValidationHistoryResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/history/${encodeURIComponent(runId)}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to delete manga runtime validation report');
         return data;
     },
 

@@ -7,6 +7,7 @@ import {
   Download,
   FileArchive,
   FileText,
+  FolderOpen,
   Layers3,
   Loader2,
   Paintbrush,
@@ -53,6 +54,7 @@ export interface MangaTopBarProps {
   pageCount: number;
   zoomPercent: number;
   onBack: () => void;
+  onSwitchProject: () => void;
   onSetViewMode: (mode: MangaViewMode) => void;
   onFitCanvas: () => void;
   onResetZoom: () => void;
@@ -125,6 +127,9 @@ const BUSY_LABEL_KEYS: Record<string, string> = {
   'validate runtime': 'manga_busy_validate_runtime',
   'load runtime validation report': 'manga_busy_load_runtime_report',
   'add block': 'manga_busy_add_block',
+  'delete block': 'manga_busy_delete_block',
+  'brush mask': 'manga_busy_brush_mask',
+  'restore mask': 'manga_busy_restore_mask',
   undo: 'manga_busy_undo',
   redo: 'manga_busy_redo',
   'save project': 'manga_busy_save',
@@ -153,6 +158,7 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
   pageCount,
   zoomPercent,
   onBack,
+  onSwitchProject,
   onSetViewMode,
   onFitCanvas,
   onResetZoom,
@@ -199,6 +205,15 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
             <div className="truncate text-sm font-semibold">{projectName}</div>
             <div className="text-[11px] text-slate-500">{t('manga_workbench')} · {t('manga_page_short')} {pageLabel} · {zoomPercent}%</div>
           </div>
+          <button
+            type="button"
+            onClick={onSwitchProject}
+            disabled={!hasProject || isBusy}
+            className="hidden h-7 items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/55 px-2 text-[11px] font-semibold text-slate-400 transition-colors hover:border-primary hover:text-slate-100 disabled:opacity-45 lg:inline-flex"
+          >
+            <FolderOpen size={13} />
+            {t('manga_switch_project')}
+          </button>
         </div>
 
         <div className="ml-auto flex items-center gap-2">
