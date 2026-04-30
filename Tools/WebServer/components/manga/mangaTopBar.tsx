@@ -123,6 +123,7 @@ const BUSY_LABEL_KEYS: Record<string, string> = {
   'inpaint current page': 'manga_busy_inpaint',
   'render current page': 'manga_busy_render',
   'validate runtime': 'manga_busy_validate_runtime',
+  'load runtime validation report': 'manga_busy_load_runtime_report',
   'add block': 'manga_busy_add_block',
   undo: 'manga_busy_undo',
   redo: 'manga_busy_redo',

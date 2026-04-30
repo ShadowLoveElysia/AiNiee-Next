@@ -1,5 +1,5 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
-import { MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
+import { MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -477,6 +477,13 @@ export const DataService = {
         return data;
     },
 
+    async listOpenMangaProjects(): Promise<MangaOpenProjectSummary[]> {
+        const res = await fetch(`${API_BASE}/manga/projects`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to list open manga projects');
+        return Array.isArray(data) ? data : [];
+    },
+
     async getMangaScene(projectId: string): Promise<MangaSceneSummary> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/scene`);
         const data = await res.json();
@@ -558,10 +565,33 @@ export const DataService = {
         return data;
     },
 
+    async startMangaRuntimeValidation(projectId: string, pageId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/start`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to start manga runtime validation');
+        return data;
+    },
+
     async getLatestMangaRuntimeValidation(projectId: string, pageId: string): Promise<MangaRuntimeValidationResult | null> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/latest`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to fetch latest manga runtime validation');
+        return data;
+    },
+
+    async listMangaRuntimeValidationHistory(projectId: string, pageId: string): Promise<MangaRuntimeValidationHistoryItem[]> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/history`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga runtime validation history');
+        return Array.isArray(data) ? data : [];
+    },
+
+    async getMangaRuntimeValidationHistoryItem(projectId: string, pageId: string, runId: string): Promise<MangaRuntimeValidationResult> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/runtime-validation/history/${encodeURIComponent(runId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga runtime validation report');
         return data;
     },
 

@@ -1,8 +1,8 @@
-import React from 'react';
-import { Activity, ChevronDown, PackageCheck, PlayCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, ChevronDown, ExternalLink, FileJson, ImageIcon, PackageCheck, PlayCircle } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
-import { MangaPageDetail, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
+import { MangaPageDetail, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
 import { MangaActiveJobSummary, MangaBlockDraft, MangaEngineCard, translateMangaEnum } from './shared';
 
 export interface MangaInspectorProps {
@@ -12,12 +12,14 @@ export interface MangaInspectorProps {
   activeJob: MangaActiveJobSummary | null;
   engineCards: MangaEngineCard[];
   runtimeValidation: MangaRuntimeValidationResult | null;
+  runtimeValidationHistory: MangaRuntimeValidationHistoryItem[];
   activeRuntimeStage: string;
   busyAction: string;
   hasProject: boolean;
   dirtyBlockCount: number;
   activeBlockDirty: boolean;
   onSelectRuntimeStage: (stage: string) => void;
+  onLoadRuntimeValidationHistory: (runId: string) => void;
   onValidateRuntime: () => void;
   onDownloadModel: (modelId: string) => void;
 }
@@ -96,6 +98,20 @@ const getExecutionTone = (mode: string): 'cyan' | 'emerald' | 'amber' | 'rose' |
   return 'amber';
 };
 
+const isImageArtifact = (path: string) => /\.(png|jpe?g|webp|gif|bmp)$/i.test(path.split('?')[0] || '');
+
+const formatArtifactText = (value: string) => {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+};
+
+const truncateArtifactText = (value: string) => (
+  value.length > 16000 ? `${value.slice(0, 16000)}\n...` : value
+);
+
 export const MangaInspector: React.FC<MangaInspectorProps> = ({
   page,
   activeBlock,
@@ -103,12 +119,14 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   activeJob,
   engineCards,
   runtimeValidation,
+  runtimeValidationHistory,
   activeRuntimeStage,
   busyAction,
   hasProject,
   dirtyBlockCount,
   activeBlockDirty,
   onSelectRuntimeStage,
+  onLoadRuntimeValidationHistory,
   onValidateRuntime,
   onDownloadModel,
 }) => {
@@ -130,6 +148,54 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const missingPackages = engineCards
     .flatMap((card) => card.packages)
     .filter((pkg) => !pkg.available);
+  const selectedRuntimeStage = runtimeValidation?.stages.find((stage) => stage.stage === activeRuntimeStage) || runtimeValidation?.stages[0] || null;
+  const selectedStageArtifacts = useMemo(() => (
+    Object.entries(selectedRuntimeStage?.artifacts || {}).map(([key, path]) => ({
+      key,
+      path,
+      url: selectedRuntimeStage?.artifact_urls?.[key] || '',
+      isImage: isImageArtifact(path),
+    }))
+  ), [selectedRuntimeStage]);
+  const [activeArtifactKey, setActiveArtifactKey] = useState('');
+  const activeArtifact = selectedStageArtifacts.find((artifact) => artifact.key === activeArtifactKey) || selectedStageArtifacts[0] || null;
+  const [artifactText, setArtifactText] = useState('');
+  const [artifactError, setArtifactError] = useState('');
+  const [artifactLoading, setArtifactLoading] = useState(false);
+
+  useEffect(() => {
+    setActiveArtifactKey('');
+  }, [activeRuntimeStage, runtimeValidation?.created_at]);
+
+  useEffect(() => {
+    setArtifactText('');
+    setArtifactError('');
+    if (!activeArtifact?.url || activeArtifact.isImage) {
+      setArtifactLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setArtifactLoading(true);
+    fetch(activeArtifact.url)
+      .then((response) => {
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        return response.text();
+      })
+      .then((text) => {
+        if (!cancelled) setArtifactText(truncateArtifactText(formatArtifactText(text)));
+      })
+      .catch((error: any) => {
+        if (!cancelled) setArtifactError(error?.message || String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setArtifactLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeArtifact]);
 
   return (
     <div className="space-y-3 px-3 py-3">
@@ -230,6 +296,40 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
             </div>
           </div>
         )}
+
+        {runtimeValidationHistory.length > 0 && (
+          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              {t('manga_validation_history')}
+              <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="grid gap-1.5 border-t border-slate-800 px-2.5 py-2">
+              {runtimeValidationHistory.slice(0, 6).map((item) => (
+                <button
+                  key={item.run_id}
+                  type="button"
+                  onClick={() => onLoadRuntimeValidationHistory(item.run_id)}
+                  disabled={Boolean(busyAction)}
+                  className={`grid gap-1 rounded-md border px-2.5 py-2 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    runtimeValidation?.output_dir === item.output_dir
+                      ? 'border-cyan-300/55 bg-cyan-300/10'
+                      : 'border-slate-800 bg-slate-900/65 hover:border-cyan-300/40'
+                  }`}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-slate-200">{formatDateTime(item.created_at) || item.run_id}</span>
+                    <StatusPill tone={item.ok ? 'emerald' : 'amber'}>
+                      {item.ok ? t('manga_complete') : t('manga_needs_review')}
+                    </StatusPill>
+                  </span>
+                  <span className="text-slate-500">
+                    {t('manga_history_summary', item.runtime_stage_count, item.fallback_stage_count, item.seed_count)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
       </section>
 
       {runtimeValidation && (
@@ -286,6 +386,65 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
               );
             })}
           </div>
+          {selectedRuntimeStage && Object.keys(selectedRuntimeStage.artifacts || {}).length > 0 && (
+            <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/45 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('manga_stage_artifacts')}
+                </div>
+                {activeArtifact?.url && (
+                  <a
+                    href={activeArtifact.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-200 hover:text-cyan-100"
+                  >
+                    {t('manga_open_artifact')}
+                    <ExternalLink size={12} />
+                  </a>
+                )}
+              </div>
+              <div className="mt-2 grid gap-1.5">
+                {selectedStageArtifacts.map((artifact) => (
+                  <button
+                    key={artifact.key}
+                    type="button"
+                    onClick={() => setActiveArtifactKey(artifact.key)}
+                    className={`grid gap-0.5 rounded-md border px-2.5 py-2 text-left text-xs transition-colors ${
+                      activeArtifact?.key === artifact.key
+                        ? 'border-cyan-300/55 bg-cyan-300/10'
+                        : 'border-slate-800 bg-slate-900/65 hover:border-cyan-300/40'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 font-semibold text-cyan-100">
+                      {artifact.isImage ? <ImageIcon size={12} /> : <FileJson size={12} />}
+                      {artifact.key}
+                    </span>
+                    <span className="truncate text-slate-500" title={artifact.path}>{artifact.path}</span>
+                  </button>
+                ))}
+              </div>
+              {activeArtifact && (
+                <div className="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/70">
+                  {activeArtifact.isImage && activeArtifact.url ? (
+                    <img
+                      src={activeArtifact.url}
+                      alt={activeArtifact.key}
+                      className="max-h-64 w-full object-contain"
+                    />
+                  ) : artifactLoading ? (
+                    <div className="px-3 py-4 text-sm text-slate-500">{t('manga_loading_artifact')}</div>
+                  ) : artifactError ? (
+                    <div className="px-3 py-4 text-sm text-rose-200">{t('manga_artifact_load_failed', artifactError)}</div>
+                  ) : artifactText ? (
+                    <pre className="max-h-80 overflow-auto p-3 text-[11px] leading-relaxed text-slate-300">{artifactText}</pre>
+                  ) : (
+                    <div className="px-3 py-4 text-sm text-slate-500">{t('manga_artifact_preview_empty')}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </InspectorSection>
       )}
 

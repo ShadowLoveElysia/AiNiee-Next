@@ -10,6 +10,7 @@ export const translateMangaEnum = (prefix: string, value: string, t: MangaTransl
 };
 
 export interface MangaBlockDraft {
+  bbox: number[];
   source_text: string;
   translation: string;
   font_family: string;

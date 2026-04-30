@@ -13,6 +13,28 @@ interface DragState {
   originY: number;
 }
 
+type BlockResizeDirection = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
+type BlockTransformMode = 'move' | `resize-${BlockResizeDirection}`;
+
+interface BlockTransformState {
+  pointerId: number;
+  blockId: string;
+  mode: BlockTransformMode;
+  startX: number;
+  startY: number;
+  startBbox: number[];
+}
+
+type CanvasTool = 'select' | 'region' | 'text' | 'brush' | 'erase';
+
+interface CreateRegionState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
 export interface MangaCanvasProps {
   page: MangaPageDetail | null;
   currentImageUrl: string;
@@ -24,6 +46,8 @@ export interface MangaCanvasProps {
   layerControls: MangaLayerControls;
   zoomCommand: MangaCanvasCommand;
   onSelectBlock: (blockId: string) => void;
+  onUpdateDraft: (blockId: string, patch: Partial<MangaBlockDraft>) => void;
+  onCreateBlock: (bbox: number[]) => void;
   onViewportChange: (zoomPercent: number) => void;
   onPointerChange: (pointer: MangaCanvasPointer | null) => void;
 }
@@ -50,12 +74,102 @@ const clampScale = (scale: number, fitScale: number) => {
   return Math.max(minScale, Math.min(4, scale));
 };
 
-const CANVAS_TOOLS: Array<{ labelKey: string; icon: typeof MousePointer2 }> = [
-  { labelKey: 'manga_tool_select', icon: MousePointer2 },
-  { labelKey: 'manga_tool_region', icon: SquareDashedMousePointer },
-  { labelKey: 'manga_tool_text', icon: Type },
-  { labelKey: 'manga_tool_brush', icon: Paintbrush },
-  { labelKey: 'manga_tool_erase', icon: Eraser },
+const clampValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const MIN_BLOCK_SIZE = 12;
+
+const normalizeBlockBbox = (bbox: number[], pageWidth: number, pageHeight: number) => {
+  const values = bbox.slice(0, 4).map((value) => Math.round(Number(value) || 0));
+  let [x1, y1, x2, y2] = values.length >= 4 ? values : [0, 0, MIN_BLOCK_SIZE, MIN_BLOCK_SIZE];
+  if (x2 < x1) [x1, x2] = [x2, x1];
+  if (y2 < y1) [y1, y2] = [y2, y1];
+
+  const minWidth = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageWidth));
+  const minHeight = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageHeight));
+  x1 = clampValue(x1, 0, Math.max(0, pageWidth - minWidth));
+  y1 = clampValue(y1, 0, Math.max(0, pageHeight - minHeight));
+  x2 = clampValue(Math.max(x2, x1 + minWidth), x1 + minWidth, pageWidth);
+  y2 = clampValue(Math.max(y2, y1 + minHeight), y1 + minHeight, pageHeight);
+  return [x1, y1, x2, y2];
+};
+
+const transformBlockBbox = (
+  state: BlockTransformState,
+  clientX: number,
+  clientY: number,
+  scale: number,
+  pageWidth: number,
+  pageHeight: number,
+) => {
+  const dx = Math.round((clientX - state.startX) / Math.max(scale, 0.001));
+  const dy = Math.round((clientY - state.startY) / Math.max(scale, 0.001));
+  const [startX1, startY1, startX2, startY2] = normalizeBlockBbox(state.startBbox, pageWidth, pageHeight);
+  const width = startX2 - startX1;
+  const height = startY2 - startY1;
+
+  if (state.mode === 'move') {
+    const x1 = clampValue(startX1 + dx, 0, Math.max(0, pageWidth - width));
+    const y1 = clampValue(startY1 + dy, 0, Math.max(0, pageHeight - height));
+    return [x1, y1, x1 + width, y1 + height].map(Math.round);
+  }
+
+  let x1 = startX1;
+  let y1 = startY1;
+  let x2 = startX2;
+  let y2 = startY2;
+  const minWidth = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageWidth));
+  const minHeight = Math.min(MIN_BLOCK_SIZE, Math.max(1, pageHeight));
+
+  const resizeDirection = state.mode.replace('resize-', '') as BlockResizeDirection;
+
+  if (resizeDirection.includes('w')) {
+    x1 = clampValue(startX1 + dx, 0, startX2 - minWidth);
+  }
+  if (resizeDirection.includes('e')) {
+    x2 = clampValue(startX2 + dx, startX1 + minWidth, pageWidth);
+  }
+  if (resizeDirection.includes('n')) {
+    y1 = clampValue(startY1 + dy, 0, startY2 - minHeight);
+  }
+  if (resizeDirection.includes('s')) {
+    y2 = clampValue(startY2 + dy, startY1 + minHeight, pageHeight);
+  }
+
+  return [x1, y1, x2, y2].map(Math.round);
+};
+
+const moveBlockBbox = (
+  bbox: number[],
+  dx: number,
+  dy: number,
+  pageWidth: number,
+  pageHeight: number,
+) => {
+  const [x1, y1, x2, y2] = normalizeBlockBbox(bbox, pageWidth, pageHeight);
+  const width = x2 - x1;
+  const height = y2 - y1;
+  const nextX1 = clampValue(x1 + dx, 0, Math.max(0, pageWidth - width));
+  const nextY1 = clampValue(y1 + dy, 0, Math.max(0, pageHeight - height));
+  return [nextX1, nextY1, nextX1 + width, nextY1 + height].map(Math.round);
+};
+
+const CANVAS_TOOLS: Array<{ id: CanvasTool; labelKey: string; icon: typeof MousePointer2 }> = [
+  { id: 'select', labelKey: 'manga_tool_select', icon: MousePointer2 },
+  { id: 'region', labelKey: 'manga_tool_region', icon: SquareDashedMousePointer },
+  { id: 'text', labelKey: 'manga_tool_text', icon: Type },
+  { id: 'brush', labelKey: 'manga_tool_brush', icon: Paintbrush },
+  { id: 'erase', labelKey: 'manga_tool_erase', icon: Eraser },
+];
+
+const BLOCK_RESIZE_HANDLES: Array<{ mode: BlockTransformMode; className: string }> = [
+  { mode: 'resize-nw', className: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize' },
+  { mode: 'resize-n', className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize' },
+  { mode: 'resize-ne', className: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize' },
+  { mode: 'resize-e', className: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'resize-w', className: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'resize-sw', className: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize' },
+  { mode: 'resize-s', className: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 cursor-ns-resize' },
+  { mode: 'resize-se', className: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize' },
 ];
 
 export const MangaCanvas: React.FC<MangaCanvasProps> = ({
@@ -69,6 +183,8 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   layerControls,
   zoomCommand,
   onSelectBlock,
+  onUpdateDraft,
+  onCreateBlock,
   onViewportChange,
   onPointerChange,
 }) => {
@@ -78,7 +194,13 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [blockTransform, setBlockTransform] = useState<BlockTransformState | null>(null);
+  const [createRegion, setCreateRegion] = useState<CreateRegionState | null>(null);
+  const [activeTool, setActiveTool] = useState<CanvasTool>('select');
   const [scaleMode, setScaleMode] = useState<'fit' | 'actual' | 'manual'>('fit');
+  const pageRef = useRef<MangaPageDetail | null>(page);
+  const scaleRef = useRef(scale);
+  const onUpdateDraftRef = useRef(onUpdateDraft);
 
   const canvasFrameStyle = useMemo<React.CSSProperties | undefined>(() => (
     page
@@ -146,23 +268,126 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
     onViewportChange(Math.round(scale * 100));
   }, [onViewportChange, scale]);
 
-  const updatePointer = (clientX: number, clientY: number) => {
-    if (!page || !viewportRef.current) return;
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
+
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+
+  useEffect(() => {
+    onUpdateDraftRef.current = onUpdateDraft;
+  }, [onUpdateDraft]);
+
+  useEffect(() => {
+    if (!blockTransform) return;
+
+    const handleBlockPointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== blockTransform.pointerId) return;
+      const currentPage = pageRef.current;
+      if (!currentPage) return;
+      event.preventDefault();
+      const bbox = transformBlockBbox(
+        blockTransform,
+        event.clientX,
+        event.clientY,
+        scaleRef.current,
+        currentPage.width,
+        currentPage.height,
+      );
+      onUpdateDraftRef.current(blockTransform.blockId, { bbox });
+    };
+
+    const handleBlockPointerEnd = (event: PointerEvent) => {
+      if (event.pointerId === blockTransform.pointerId) {
+        setBlockTransform(null);
+      }
+    };
+
+    window.addEventListener('pointermove', handleBlockPointerMove);
+    window.addEventListener('pointerup', handleBlockPointerEnd);
+    window.addEventListener('pointercancel', handleBlockPointerEnd);
+    return () => {
+      window.removeEventListener('pointermove', handleBlockPointerMove);
+      window.removeEventListener('pointerup', handleBlockPointerEnd);
+      window.removeEventListener('pointercancel', handleBlockPointerEnd);
+    };
+  }, [blockTransform]);
+
+  const getPagePoint = (clientX: number, clientY: number) => {
+    if (!page || !viewportRef.current) return null;
     const rect = viewportRef.current.getBoundingClientRect();
     const relativeX = clientX - rect.left - (rect.width / 2) - pan.x;
     const relativeY = clientY - rect.top - (rect.height / 2) - pan.y;
     const x = Math.round((relativeX / Math.max(scale, 0.001)) + (page.width / 2));
     const y = Math.round((relativeY / Math.max(scale, 0.001)) + (page.height / 2));
-    if (x < 0 || y < 0 || x > page.width || y > page.height) {
+    return {
+      x: clampValue(x, 0, page.width),
+      y: clampValue(y, 0, page.height),
+      inPage: x >= 0 && y >= 0 && x <= page.width && y <= page.height,
+    };
+  };
+
+  const updatePointer = (clientX: number, clientY: number) => {
+    if (!page) return;
+    const point = getPagePoint(clientX, clientY);
+    if (!point?.inPage) {
       onPointerChange(null);
       return;
     }
     onPointerChange({
-      x,
-      y,
-      normalizedX: x / Math.max(page.width, 1),
-      normalizedY: y / Math.max(page.height, 1),
+      x: point.x,
+      y: point.y,
+      normalizedX: point.x / Math.max(page.width, 1),
+      normalizedY: point.y / Math.max(page.height, 1),
     });
+  };
+
+  const beginBlockTransform = (
+    event: React.PointerEvent<HTMLElement>,
+    blockId: string,
+    bbox: number[],
+    mode: BlockTransformMode,
+  ) => {
+    if (!page || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.focus();
+    onSelectBlock(blockId);
+    setBlockTransform({
+      pointerId: event.pointerId,
+      blockId,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      startBbox: normalizeBlockBbox(bbox, page.width, page.height),
+    });
+  };
+
+  const handleBlockKeyDown = (
+    event: React.KeyboardEvent<HTMLElement>,
+    blockId: string,
+    bbox: number[],
+  ) => {
+    if (!page) return;
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectBlock(blockId);
+      return;
+    }
+
+    if (!event.key.startsWith('Arrow')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectBlock(blockId);
+
+    const step = event.shiftKey ? 10 : 1;
+    const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+    const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+    onUpdateDraft(blockId, { bbox: moveBlockBbox(bbox, dx, dy, page.width, page.height) });
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -175,6 +400,20 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!page || event.button !== 0) return;
+    if (activeTool === 'text') {
+      const point = getPagePoint(event.clientX, event.clientY);
+      if (!point?.inPage) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setCreateRegion({
+        pointerId: event.pointerId,
+        startX: point.x,
+        startY: point.y,
+        currentX: point.x,
+        currentY: point.y,
+      });
+      return;
+    }
+
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragState({
       pointerId: event.pointerId,
@@ -188,6 +427,17 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!page) return;
     updatePointer(event.clientX, event.clientY);
+    if (createRegion?.pointerId === event.pointerId) {
+      const point = getPagePoint(event.clientX, event.clientY);
+      if (point) {
+        setCreateRegion({
+          ...createRegion,
+          currentX: point.x,
+          currentY: point.y,
+        });
+      }
+      return;
+    }
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     setScaleMode('manual');
     setPan({
@@ -197,6 +447,19 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (page && createRegion?.pointerId === event.pointerId) {
+      const bbox = normalizeBlockBbox([
+        createRegion.startX,
+        createRegion.startY,
+        createRegion.currentX,
+        createRegion.currentY,
+      ], page.width, page.height);
+      setCreateRegion(null);
+      setActiveTool('select');
+      onCreateBlock(bbox);
+      return;
+    }
+
     if (dragState?.pointerId === event.pointerId) {
       setDragState(null);
     }
@@ -221,7 +484,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
       <div
         ref={viewportRef}
         className={`flex-1 min-h-0 relative overflow-hidden p-6 ${
-          page ? (dragState ? 'cursor-grabbing' : 'cursor-grab') : ''
+          page ? (activeTool === 'text' ? 'cursor-crosshair' : blockTransform ? 'cursor-default' : dragState ? 'cursor-grabbing' : 'cursor-grab') : ''
         } bg-[linear-gradient(45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(-45deg,rgba(15,23,42,0.92)_25%,transparent_25%),linear-gradient(45deg,transparent_75%,rgba(15,23,42,0.92)_75%),linear-gradient(-45deg,transparent_75%,rgba(15,23,42,0.92)_75%)] bg-[length:28px_28px] bg-[position:0_0,0_14px,14px_-14px,-14px_0px]`}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
@@ -230,15 +493,17 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
         onPointerLeave={() => onPointerChange(null)}
       >
         <div className="absolute left-4 top-4 z-20 hidden w-12 flex-col items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/88 p-2 shadow-xl shadow-slate-950/40 md:flex">
-          {CANVAS_TOOLS.map(({ labelKey, icon: ToolIcon }, index) => {
+          {CANVAS_TOOLS.map(({ id, labelKey, icon: ToolIcon }) => {
             const label = t(labelKey);
             return (
               <button
-                key={labelKey}
+                key={id}
                 type="button"
                 title={label}
+                onClick={() => setActiveTool(id)}
+                onPointerDown={(event) => event.stopPropagation()}
                 className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                  index === 0 ? 'bg-primary text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
+                  activeTool === id ? 'bg-primary text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
                 }`}
               >
                 <ToolIcon size={16} />
@@ -333,24 +598,43 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   );
                 })}
 
+                {createRegion && (
+                  <div
+                    className="absolute rounded-md border border-dashed border-primary bg-primary/10 pointer-events-none"
+                    style={buildOverlayBoxStyle(normalizeBlockBbox([
+                      createRegion.startX,
+                      createRegion.startY,
+                      createRegion.currentX,
+                      createRegion.currentY,
+                    ], page.width, page.height))}
+                  >
+                    <span className="absolute -top-6 left-0 rounded bg-slate-950/88 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                      {t('manga_tool_text')}
+                    </span>
+                  </div>
+                )}
+
                 {layerControls.overlay.visible && page.blocks.map((block) => {
                   const draft = blockDrafts[block.block_id];
                   const isActive = block.block_id === activeBlockId;
                   const sourceText = draft?.source_text ?? block.source_text ?? '';
                   const translation = draft?.translation ?? block.translation ?? '';
+                  const bbox = draft?.bbox || block.bbox;
 
                   return (
-                    <button
+                    <div
                       key={block.block_id}
-                      onClick={() => onSelectBlock(block.block_id)}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      role="button"
+                      tabIndex={0}
+                      onPointerDown={(event) => beginBlockTransform(event, block.block_id, bbox, 'move')}
+                      onKeyDown={(event) => handleBlockKeyDown(event, block.block_id, bbox)}
                       className={`absolute rounded-lg border text-left transition-all ${
                         isActive
-                          ? 'border-cyan-300 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]'
-                          : 'border-amber-300/70 bg-slate-950/20 hover:border-cyan-300/80'
+                          ? 'cursor-move border-cyan-300 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]'
+                          : 'cursor-pointer border-amber-300/70 bg-slate-950/20 hover:border-cyan-300/80'
                       }`}
                       style={{
-                        ...buildOverlayBoxStyle(block.bbox),
+                        ...buildOverlayBoxStyle(bbox),
                         opacity: layerControls.overlay.opacity,
                       }}
                       title={`${block.block_id} | ${buildOverlayLabel(sourceText, translation, block.block_id)}`}
@@ -358,7 +642,15 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                       <span className="absolute -top-7 left-0 max-w-full truncate rounded-md bg-slate-950/85 px-2 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-100">
                         {buildOverlayLabel(sourceText, translation, block.block_id)}
                       </span>
-                    </button>
+                      {isActive && BLOCK_RESIZE_HANDLES.map((handle) => (
+                        <span
+                          key={handle.mode}
+                          aria-hidden="true"
+                          onPointerDown={(event) => beginBlockTransform(event, block.block_id, bbox, handle.mode)}
+                          className={`absolute h-3 w-3 rounded-sm border border-cyan-100 bg-slate-950 shadow-[0_0_0_1px_rgba(8,47,73,0.85)] ${handle.className}`}
+                        />
+                      ))}
+                    </div>
                   );
                 })}
               </div>

@@ -5,6 +5,13 @@ export interface MangaProjectSummary {
   current_page_id: string;
 }
 
+export interface MangaOpenProjectSummary {
+  project_id: string;
+  name: string;
+  page_count: number;
+  project_path: string;
+}
+
 export interface MangaJob {
   job_id: string;
   page_id?: string;
@@ -166,4 +173,14 @@ export interface MangaRuntimeValidationResult {
   created_at: string;
   stages: MangaRuntimeValidationStage[];
   summary: Record<string, any>;
+}
+
+export interface MangaRuntimeValidationHistoryItem {
+  run_id: string;
+  created_at: string;
+  ok: boolean;
+  output_dir: string;
+  runtime_stage_count: number;
+  fallback_stage_count: number;
+  seed_count: number;
 }

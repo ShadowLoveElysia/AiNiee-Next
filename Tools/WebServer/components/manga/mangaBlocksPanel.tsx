@@ -80,6 +80,7 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
           const isActive = block.block_id === activeBlockId;
           const sourceText = draft?.source_text ?? block.source_text ?? '';
           const translation = draft?.translation ?? block.translation ?? '';
+          const bbox = draft?.bbox ?? block.bbox;
 
           return (
             <section
@@ -107,7 +108,7 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
                     <span className="truncate text-sm font-semibold text-slate-200">{previewText(translation || sourceText, t('manga_empty_block'))}</span>
                   </span>
                   <span className="mt-1 block truncate text-xs text-slate-500">
-                    {block.origin} · {block.rendered_direction} · {t('manga_field_bbox')} {block.bbox.join(', ')}
+                    {block.origin} · {block.rendered_direction} · {t('manga_field_bbox')} {bbox.join(', ')}
                     {isActive && activeBlockDirty ? ` · ${t('manga_unsaved')}` : ''}
                   </span>
                 </span>
