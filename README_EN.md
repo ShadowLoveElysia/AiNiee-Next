@@ -362,10 +362,20 @@ This project utilizes a Wrapper / Adapter pattern:
 
 ## Manga Reference
 
-This project references **hgmzhn / manga-translator-ui** for manga image processing related workflows and implementation ideas:
+The MangaCore subsystem uses a layered design: fully automatic batch translation and manual page refinement are treated as separate workflows instead of being merged into one entry point.
+
+**The fully automatic manga translation workflow** primarily references the workflow represented by `manga-translator-ui-main` and its upstream project **hgmzhn / manga-translator-ui**:
 
 - GitHub: https://github.com/hgmzhn/manga-translator-ui
 - Gitee mirror: https://gitee.com/hgmzhn/manga-translator-ui
+
+This part mainly references its staged workflow and runtime asset organization: image/archive import, text detection, OCR, translation, inpainting, text rendering, and final export. In AiNiee-Next, this low-interaction batch workflow is carried by `translate ... --manga`, the Web task page Manga Mode, and the `MangaCore` batch pipeline.
+
+**Manual refinement and manga editor logic** primarily references **mayocream / Koharu**:
+
+- GitHub: https://github.com/mayocream/koharu
+
+This part mainly references Koharu's manual refinement ideas, including project/page/text-block models, layered page states, current-page reruns, text block position and style adjustments, inpaint result inspection, and editable final exports.
 
 If related core modules are referenced, integrated, or reused in later stages, this project will continue to preserve source attribution and acknowledgement, and will comply with the corresponding open-source license terms.
 

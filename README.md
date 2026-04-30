@@ -362,10 +362,20 @@ UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi
 
 ## 漫画处理参考
 
-本项目在漫画图像处理相关能力的设计与规划中，参考了 **hgmzhn / manga-translator-ui** 的实现与工作流：
+本项目的 MangaCore 漫画子系统采用“自动跑批”和“人工精修”分层设计，不把整册自动翻译任务与页级编辑工作台混成同一个入口。
+
+**全自动漫画翻译工作流** 主要参考 `manga-translator-ui-main` 所代表的工作流，以及其上游 **hgmzhn / manga-translator-ui**：
 
 - GitHub: https://github.com/hgmzhn/manga-translator-ui
 - Gitee 备份: https://gitee.com/hgmzhn/manga-translator-ui
+
+该部分主要参考其“导入图片/压缩包 -> 文本检测 -> OCR -> 翻译 -> 修补 -> 嵌字渲染 -> 导出”的阶段拆分、运行时资产组织和整册自动处理思路。AiNiee-Next 侧会以 `translate ... --manga`、Web 任务页 Manga Mode 和 `MangaCore` 批处理管线承载这一类少交互、可挂机的自动任务。
+
+**人工精修与漫画编辑器逻辑** 主要参考 **mayocream / Koharu**：
+
+- GitHub: https://github.com/mayocream/koharu
+
+该部分主要参考 Koharu 的人工精修思路，包括工程/页面/文本块、图层化页面状态、当前页局部重跑、文本块位置与样式微调、修补结果检查、可编辑成品导出等精修链路。
 
 后续若参考、接入或复用相关核心模块，本项目会持续保留来源说明与鸣谢信息，并遵守对应开源协议。
 
