@@ -342,16 +342,23 @@ class TaskQueueMenu:
             task.platform
             and self.config.get("platforms", {}).get(task.platform, {}).get("api_format") == "Anthropic"
         )
+        is_deepseek = bool(task.platform and task.platform.lower() == "deepseek")
         if is_anthropic:
             task.think_depth = Prompt.ask(
                 f"{self.i18n.get('prompt_think_depth_claude')}{self.i18n.get('tip_follow_profile')}",
                 choices=["low", "medium", "high", ""],
                 default=current_think_depth,
             ) or None
+        elif is_deepseek:
+            task.think_depth = Prompt.ask(
+                f"{self.i18n.get('prompt_think_depth')}{self.i18n.get('tip_follow_profile')}",
+                choices=["low", "medium", "high", "xhigh", "max", ""],
+                default=current_think_depth,
+            ) or None
         else:
             task.think_depth = Prompt.ask(
                 f"{self.i18n.get('prompt_think_depth')}{self.i18n.get('tip_follow_profile')}",
-                choices=["minimal", "low", "medium", "high", ""],
+                choices=["minimal", "low", "medium", "high", "xhigh", ""],
                 default=current_think_depth,
             ) or None
 

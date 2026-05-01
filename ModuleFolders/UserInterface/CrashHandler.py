@@ -345,13 +345,13 @@ class CrashHandler:
             elif selected_config.get("target_platform") == "deepseek":
                 selected_config["think_depth"] = Prompt.ask(
                     self.i18n.get("prompt_temp_think_depth"),
-                    choices=["low", "medium", "high", "max"],
+                    choices=["low", "medium", "high", "xhigh", "max"],
                     default="low",
                 )
             else:
                 selected_config["think_depth"] = Prompt.ask(
                     self.i18n.get("prompt_temp_think_depth"),
-                    choices=["minimal", "low", "medium", "high"],
+                    choices=["minimal", "low", "medium", "high", "xhigh"],
                     default="low",
                 )
             console.print(f"[dim]{self.i18n.get('hint_think_budget') or '提示: 0=关闭, -1=无上限'}[/dim]")

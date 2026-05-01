@@ -809,8 +809,8 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server"]
-            colors = ["green", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta"]
+            menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server"]
+            colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta"]
             
             for i, (m, c) in enumerate(zip(menus, colors)): 
                 label = i18n.get(f"menu_{m}")
@@ -822,6 +822,8 @@ class CLIMenu:
                     label = i18n.get("menu_task_queue")
                 if m == "start_all_in_one" and label == f"menu_{m}":
                     label = i18n.get("menu_start_all_in_one")
+                if m == "start_manga_translation" and label == f"menu_{m}":
+                    label = "漫画翻译 (MangaCore)"
                 table.add_row(f"[{c}]{i+1}.[/]", label)
                 
             table.add_row("[red]0.[/]", i18n.get("menu_exit")); console.print(table)
@@ -829,13 +831,14 @@ class CLIMenu:
             console.print("\n")
 
             # 记录用户操作
-            menu_names = ["退出", "开始翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器"]
+            menu_names = ["退出", "开始翻译", "漫画翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器"]
             if choice < len(menu_names):
                 self.operation_logger.log(f"主菜单 -> {menu_names[choice]}", "MENU")
 
             actions = [
                 sys.exit,
                 lambda: self.run_task(TaskType.TRANSLATION),
+                self.run_manga_translation,
                 lambda: self.run_task(TaskType.POLISH),
                 self.run_all_in_one,
                 self.run_export_only,
@@ -1901,6 +1904,61 @@ class CLIMenu:
     def run_export_only(self, target_path=None, non_interactive=False):
         self.export_flow.run_export_only(target_path, non_interactive)
 
+    def run_manga_translation(self):
+        start_path = self.config.get("label_input_path", ".")
+        if os.path.isfile(start_path):
+            start_path = os.path.dirname(start_path)
+        target_path = self.file_selector.select_path(
+            start_path=start_path,
+            select_file=True,
+            select_dir=True,
+        )
+        if not target_path:
+            return
+
+        args = argparse.Namespace(
+            task="translate",
+            input_path=target_path,
+            output_path=None,
+            profile=None,
+            rules_profile=None,
+            queue_file=None,
+            source_lang=None,
+            target_lang=None,
+            project_type=None,
+            resume=False,
+            non_interactive=False,
+            threads=None,
+            retry=None,
+            rounds=None,
+            timeout=None,
+            platform=None,
+            model=None,
+            api_url=None,
+            api_key=None,
+            think_depth=None,
+            thinking_budget=None,
+            failover=None,
+            web_mode=False,
+            manga=True,
+            manga_strict_models=False,
+            manga_ocr_engine=None,
+            manga_detect_engine=None,
+            manga_segment_engine=None,
+            manga_inpaint_engine=None,
+            lines=None,
+            tokens=None,
+            pre_lines=None,
+            mcp=False,
+            mcp_stdio=False,
+            mcp_http=False,
+            mcp_transport="stdio",
+        )
+        exit_code = self.run_non_interactive(args) or 0
+        if exit_code:
+            console.print(f"[red]MangaCore task exited with code {exit_code}.[/red]")
+        Prompt.ask(f"\n{i18n.get('msg_press_enter')}")
+
     def start_web_server(self):
         self.web_runtime_bridge.start_web_server()
 
@@ -1921,7 +1979,7 @@ def main():
     parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')
 
     # 核心任务参数
-    parser.add_argument('task', nargs='?', choices=['translate', 'polish', 'export', 'all_in_one', 'queue', 'mcp'], help=i18n.get('help_task'))
+    parser.add_argument('task', nargs='?', choices=['translate', 'manga', 'polish', 'export', 'all_in_one', 'queue', 'mcp'], help=i18n.get('help_task'))
     parser.add_argument('input_path', nargs='?', help=i18n.get('help_input'))
     
     # 路径与环境
@@ -1946,12 +2004,21 @@ def main():
     parser.add_argument('--model', help="Model name")
     parser.add_argument('--api-url', help="Base URL for the API")
     parser.add_argument('--api-key', help="API Key")
-    parser.add_argument('--think-depth', type=int, help="Reasoning depth (0-10000)")
+    parser.add_argument('--think-depth', help="Reasoning depth (minimal/low/medium/high/xhigh/max or 0-10000)")
     parser.add_argument('--thinking-budget', type=int, help="Thinking budget limit")
     parser.add_argument('--failover', choices=['on', 'off'], help="Enable or disable API failover")
     
     parser.add_argument('--web-mode', action='store_true', help="Enable Web Server compatible output mode")
     parser.add_argument('--manga', action='store_true', help="Enable the MangaCore batch bootstrap pipeline for manga/image sources")
+    parser.add_argument(
+        '--manga-strict-models',
+        action='store_true',
+        help="Fail MangaCore startup if default visual model packages are missing instead of using fallback runtimes.",
+    )
+    parser.add_argument('--manga-ocr-engine', help="MangaCore OCR engine id (default: paddleocr-vl-1.5)")
+    parser.add_argument('--manga-detect-engine', help="MangaCore bubble/text detector id (default: comic-text-bubble-detector)")
+    parser.add_argument('--manga-segment-engine', help="MangaCore text segmenter id (default: comic-text-detector)")
+    parser.add_argument('--manga-inpaint-engine', help="MangaCore inpaint engine id (default: aot-inpainting)")
     parser.add_argument(
         '--mcp',
         action='store_true',
@@ -2006,6 +2073,10 @@ def main():
 
     if args.mcp or args.mcp_stdio or args.mcp_http:
         args.task = 'mcp'
+
+    if args.task == 'manga':
+        args.task = 'translate'
+        args.manga = True
 
     if args.mcp_stdio:
         args.mcp_transport = 'stdio'

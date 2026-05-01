@@ -62,6 +62,7 @@ export interface MangaTopBarProps {
   onOcr: () => void;
   onTranslateCurrent: () => void;
   onTranslateSelected: () => void;
+  onFirstPassSelected: () => void;
   onPlanSelected: () => void;
   onInpaint: () => void;
   onRender: () => void;
@@ -121,6 +122,7 @@ const BUSY_LABEL_KEYS: Record<string, string> = {
   'ocr current page': 'manga_busy_ocr',
   'translate current page': 'manga_busy_translate_current',
   'translate selected pages': 'manga_busy_translate_selected',
+  'first pass selected pages': 'manga_busy_first_pass_selected',
   'plan selected pages': 'manga_busy_plan_selected',
   'inpaint current page': 'manga_busy_inpaint',
   'render current page': 'manga_busy_render',
@@ -166,6 +168,7 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
   onOcr,
   onTranslateCurrent,
   onTranslateSelected,
+  onFirstPassSelected,
   onPlanSelected,
   onInpaint,
   onRender,
@@ -293,6 +296,14 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
         </ToolbarGroup>
 
         <ToolbarGroup label={t('manga_toolbar_finish')}>
+          <ToolbarButton
+            label={t('manga_action_first_pass')}
+            onClick={onFirstPassSelected}
+            disabled={!hasProject || !hasSelectedPage || isBusy}
+            busy={busyAction === 'first pass selected pages'}
+            tone="primary"
+            icon={<Sparkles size={16} />}
+          />
           <ToolbarButton
             label={t('manga_action_inpaint')}
             onClick={onInpaint}

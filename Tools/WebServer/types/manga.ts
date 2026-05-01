@@ -22,6 +22,8 @@ export interface MangaJob {
   updated_at?: string;
   page_count?: number;
   result?: Record<string, any>;
+  exports?: Record<string, string>;
+  export_warnings?: string[];
   error_message?: string;
   cancel_requested?: boolean;
 }

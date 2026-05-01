@@ -43,14 +43,15 @@ class OpenaiRequester(Base):
             "type": "enabled" if think_switch else "disabled",
         }
         if think_switch and think_depth not in (None, "", 0, "0"):
-            thinking["reasoning_effort"] = think_depth
+            request_body["reasoning_effort"] = think_depth
+        else:
+            request_body.pop("reasoning_effort", None)
 
         if use_sdk:
             self._merge_extra_body(request_body, {"thinking": thinking}, nested=True)
         else:
             request_body["thinking"] = thinking
 
-        request_body.pop("reasoning_effort", None)
         if tool_mode:
             request_body.pop("tool_choice", None)
 

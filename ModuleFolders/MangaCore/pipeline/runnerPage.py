@@ -348,6 +348,7 @@ class MangaPageRunner:
         total_translated_blocks = 0
         translation_warnings = 0
         inpainted_pages = 0
+        no_text_pages = 0
         try:
             for page_id in page_ids:
                 page = session.get_page(page_id)
@@ -370,6 +371,8 @@ class MangaPageRunner:
                 page.status = "needs_review" if blocks else "failed"
                 page.last_pipeline_stage = "batch_typesetting_planning" if blocks else "batch_failed"
                 total_blocks += len(blocks)
+                if not blocks:
+                    no_text_pages += 1
                 self._write_seed_artifacts(session, page, seeds, assignments)
 
                 if run_translation:
@@ -433,6 +436,16 @@ class MangaPageRunner:
                     page.last_pipeline_stage = "batch_rendering"
 
                 processed += 1
+                if run_translation:
+                    self.logger(
+                        f"[MangaCore] Page {processed}/{len(page_ids)} done: "
+                        f"{len(blocks)} block(s), {translated_blocks} translated."
+                    )
+                else:
+                    self.logger(
+                        f"[MangaCore] Page {processed}/{len(page_ids)} done: "
+                        f"{len(blocks)} editable block(s)."
+                    )
                 JobRegistry.update(
                     job.job_id,
                     progress=int(processed * 100 / max(1, len(page_ids))),
@@ -447,6 +460,15 @@ class MangaPageRunner:
                         auto_inpaint=auto_inpaint,
                         inpainted_pages=inpainted_pages,
                     ),
+                    result={
+                        "page_count": len(page_ids),
+                        "processed_pages": processed,
+                        "total_blocks": total_blocks,
+                        "total_translated_blocks": total_translated_blocks,
+                        "translation_warnings": translation_warnings,
+                        "no_text_pages": no_text_pages,
+                        "inpainted_pages": inpainted_pages,
+                    },
                 )
 
             MangaProjectPersistence.save_session(session)
@@ -464,6 +486,15 @@ class MangaPageRunner:
                     auto_inpaint=auto_inpaint,
                     inpainted_pages=inpainted_pages,
                 ),
+                result={
+                    "page_count": len(page_ids),
+                    "processed_pages": processed,
+                    "total_blocks": total_blocks,
+                    "total_translated_blocks": total_translated_blocks,
+                    "translation_warnings": translation_warnings,
+                    "no_text_pages": no_text_pages,
+                    "inpainted_pages": inpainted_pages,
+                },
             )
             return updated or job
         except Exception as exc:
@@ -473,6 +504,16 @@ class MangaPageRunner:
                 status="failed",
                 progress=0,
                 message=f"Batch page pipeline failed: {exc}",
+                error_message=str(exc),
+                result={
+                    "page_count": len(page_ids),
+                    "processed_pages": processed,
+                    "total_blocks": total_blocks,
+                    "total_translated_blocks": total_translated_blocks,
+                    "translation_warnings": translation_warnings,
+                    "no_text_pages": no_text_pages,
+                    "inpainted_pages": inpainted_pages,
+                },
             )
             return updated or job
 

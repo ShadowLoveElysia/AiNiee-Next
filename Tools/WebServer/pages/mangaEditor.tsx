@@ -53,6 +53,7 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
   'ocr current page': 'manga_action_ocr',
   'translate current page': 'manga_action_generate',
   'translate selected pages': 'manga_action_selected',
+  'first pass selected pages': 'manga_action_first_pass',
   'plan selected pages': 'manga_action_plan',
   'inpaint current page': 'manga_action_inpaint',
   'render current page': 'manga_action_render',
@@ -810,6 +811,34 @@ export const MangaEditor: React.FC = () => {
     });
   };
 
+  const handleFirstPassSelectedPages = async () => {
+    if (!project) return;
+
+    const pageIds = selectedPageIds.length > 0 ? selectedPageIds : (selectedPageId ? [selectedPageId] : []);
+    if (pageIds.length === 0) {
+      showNotice('warning', t('manga_notice_select_page_for_batch'));
+      return;
+    }
+
+    await withBusyAction('first pass selected pages', async () => {
+      const job = await DataService.translateSelectedMangaPages(project.project_id, pageIds, {
+        autoInpaint: true,
+        autoRender: true,
+      });
+      const settled = await waitForJob(project.project_id, job);
+      await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
+      setViewMode('rendered');
+      const settledMessage = String(settled.message || '');
+      const completedWithWarnings = /warning|failed|need review/i.test(settledMessage);
+      showNotice(
+        settled.status === 'completed' && !completedWithWarnings ? 'success' : 'warning',
+        settled.status === 'completed'
+          ? `${t('manga_notice_first_pass_finished', pageIds.length)} ${settledMessage}`.trim()
+          : settledMessage,
+      );
+    });
+  };
+
   const handlePlanSelectedPages = async () => {
     if (!project) return;
 
@@ -1046,7 +1075,7 @@ export const MangaEditor: React.FC = () => {
     params.set('project_path', projectPath);
     if (selectedPageId) params.set('page_id', selectedPageId);
     params.set('view', viewMode);
-    window.history.replaceState(null, '', `#/manga?${params.toString()}`);
+    window.history.replaceState(null, '', `#/manga-editor?${params.toString()}`);
   }, [project, projectPath, selectedPageId, viewMode]);
 
   useEffect(() => {
@@ -1080,6 +1109,7 @@ export const MangaEditor: React.FC = () => {
         onOcr={() => { void handleOcrPage(); }}
         onTranslateCurrent={() => { void handleTranslateCurrentPage(); }}
         onTranslateSelected={() => { void handleTranslateSelectedPages(); }}
+        onFirstPassSelected={() => { void handleFirstPassSelectedPages(); }}
         onPlanSelected={() => { void handlePlanSelectedPages(); }}
         onInpaint={() => { void handleInpaintPage(); }}
         onRender={() => { void handleRenderPage(); }}

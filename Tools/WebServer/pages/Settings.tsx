@@ -352,6 +352,7 @@ export const Settings: React.FC = () => {
   const activePlatformConfig = config.platforms?.[activePlatformKey] || {};
   const isAnthropicThinking = activePlatformConfig.api_format === 'Anthropic';
   const isDeepSeekThinking = activePlatformKey.toLowerCase() === 'deepseek';
+  const isOpenAIThinking = activePlatformConfig.api_format === 'OpenAI';
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
       <div className="flex justify-between items-center sticky top-0 bg-background/95 backdrop-blur z-20 py-4 border-b border-slate-800">
@@ -658,7 +659,7 @@ export const Settings: React.FC = () => {
                                         <label className="text-xs font-semibold text-slate-400 uppercase">
                                             {t('menu_api_think_depth')}
                                         </label>
-                                        {isAnthropicThinking || isDeepSeekThinking ? (
+                                        {isAnthropicThinking || isDeepSeekThinking || isOpenAIThinking ? (
                                             <select
                                                 value={config.think_depth || 'low'}
                                                 onChange={(e) => {
@@ -677,9 +678,11 @@ export const Settings: React.FC = () => {
                                                 }}
                                                 className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm"
                                             >
+                                                {!isAnthropicThinking && <option value="minimal">Minimal</option>}
                                                 <option value="low">Low</option>
                                                 <option value="medium">Medium</option>
                                                 <option value="high">High</option>
+                                                {!isAnthropicThinking && <option value="xhigh">XHigh</option>}
                                                 {isDeepSeekThinking && <option value="max">Max</option>}
                                             </select>
                                         ) : (

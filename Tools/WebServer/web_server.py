@@ -1796,7 +1796,7 @@ async def run_task(payload: TaskPayload):
         raise HTTPException(status_code=409, detail="A task is already running.")
 
     if payload.manga:
-        manga_status = get_manga_feature_status(require_models=True)
+        manga_status = get_manga_feature_status(require_models=False)
         if not manga_status.available:
             raise HTTPException(status_code=503, detail=manga_status.user_message())
     

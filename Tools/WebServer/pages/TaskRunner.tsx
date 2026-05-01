@@ -8,6 +8,25 @@ import { TaskStats, LogEntry, TaskType, TaskPayload } from '../types';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useI18n } from '../contexts/I18nContext';
 
+const trimPathEnd = (value: string) => value.replace(/[\\/]+$/, '');
+
+const resolveMangaProjectPath = (outputPath?: string, inputPath?: string) => {
+  const configuredOutput = trimPathEnd(String(outputPath || '').trim());
+  if (configuredOutput) return `${configuredOutput}/mangaProject`;
+
+  const input = trimPathEnd(String(inputPath || '').trim());
+  if (!input) return 'mangaProject';
+
+  const normalized = input.replace(/\\/g, '/');
+  const slashIndex = normalized.lastIndexOf('/');
+  const parent = slashIndex >= 0 ? normalized.slice(0, slashIndex) : '';
+  const leaf = slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+  const looksLikeFile = /\.(png|jpe?g|webp|bmp|gif|pdf|zip|cbz|rar|7z)$/i.test(leaf);
+  const baseName = looksLikeFile ? leaf.replace(/\.[^/.]+$/, '') : leaf;
+  const derivedOutput = `${parent ? `${parent}/` : ''}${baseName}_AiNiee_Output`;
+  return `${derivedOutput}/mangaProject`;
+};
+
 export const TaskRunner: React.FC = () => {
   const { t } = useI18n();
   const { config, taskState, setTaskState } = useGlobal(); // Use persistent global state
@@ -24,7 +43,7 @@ export const TaskRunner: React.FC = () => {
   const [showUploadArea, setShowUploadArea] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mangaMode = !!taskState.isMangaMode;
-  const mangaProjectPath = `${config?.label_output_path || ''}/mangaProject`;
+  const mangaProjectPath = resolveMangaProjectPath(config?.label_output_path, taskState.customInputPath);
 
   // --- Helper Functions (Hoisted) ---
 

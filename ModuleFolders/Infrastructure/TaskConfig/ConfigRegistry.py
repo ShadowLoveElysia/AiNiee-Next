@@ -722,7 +722,7 @@ register_config(ConfigItem(
     level=ConfigLevel.ADVANCED,
     config_type=ConfigType.CHOICE,
     i18n_key="menu_api_think_depth",
-    choices=["low", "medium", "high"],
+    choices=["minimal", "low", "medium", "high", "xhigh", "max"],
     depends_on="think_switch",
     category="advanced",
     online_only=True

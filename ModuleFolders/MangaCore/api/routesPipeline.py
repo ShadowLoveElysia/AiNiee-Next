@@ -32,7 +32,7 @@ def _ensure_project_and_page(project_id: str, page_id: str | None = None) -> Man
 def _ensure_manga_translation_ready(session: MangaProjectSession) -> None:
     status = get_manga_feature_status(
         config_snapshot=session.config_snapshot,
-        require_models=True,
+        require_models=False,
     )
     if not status.available:
         raise HTTPException(status_code=503, detail=status.user_message())
@@ -483,6 +483,12 @@ def translate_selected_pages(project_id: str, request: BatchTranslateRequest) ->
     )
     payload = job.to_dict()
     payload["page_count"] = len(request.page_ids)
+    if request.auto_export and job.status == "completed":
+        from ModuleFolders.MangaCore.export.packageExporter import PackageExporter
+
+        export_result = PackageExporter().export(session)
+        payload["exports"] = dict(export_result.exported_paths)
+        payload["export_warnings"] = list(export_result.warnings)
     return payload
 
 

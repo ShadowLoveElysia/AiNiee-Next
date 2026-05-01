@@ -670,16 +670,20 @@ export const DataService = {
         return data;
     },
 
-    async translateSelectedMangaPages(projectId: string, pageIds: string[]): Promise<MangaJob> {
+    async translateSelectedMangaPages(
+        projectId: string,
+        pageIds: string[],
+        options: { autoInpaint?: boolean; autoRender?: boolean; autoExport?: boolean } = {}
+    ): Promise<MangaJob> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/batch/translate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 page_ids: pageIds,
                 generate_text_blocks: true,
-                auto_inpaint: false,
-                auto_render: false,
-                auto_export: false
+                auto_inpaint: options.autoInpaint ?? false,
+                auto_render: options.autoRender ?? false,
+                auto_export: options.autoExport ?? false
             })
         });
         const data = await res.json();

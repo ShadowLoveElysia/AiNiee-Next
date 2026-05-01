@@ -750,8 +750,16 @@ class QueueManager(Base):
                 cfg["tokens_limit_switch"] = True
                 cfg["tokens_limit"] = task.tokens_limit
                 
-            if task.think_depth is not None: cfg["think_depth"] = task.think_depth
-            if task.thinking_budget is not None: cfg["thinking_budget"] = task.thinking_budget
+            if task.think_depth is not None:
+                cfg["think_depth"] = task.think_depth
+                tp = cfg.get("target_platform")
+                if tp and tp in cfg.get("platforms", {}):
+                    cfg["platforms"][tp]["think_depth"] = task.think_depth
+            if task.thinking_budget is not None:
+                cfg["thinking_budget"] = task.thinking_budget
+                tp = cfg.get("target_platform")
+                if tp and tp in cfg.get("platforms", {}):
+                    cfg["platforms"][tp]["thinking_budget"] = task.thinking_budget
 
             # 3. Execute
             # 更新活动时间（心跳）
