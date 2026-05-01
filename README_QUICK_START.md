@@ -18,29 +18,35 @@
 
 首次运行前，双击 `prepare.bat`。脚本会检查 `uv`、创建虚拟环境并安装依赖。
 
-看到类似 `Environment is ready. You can now use Launch.bat to start AiNiee CLI.` 的提示后，说明环境准备完成。
+<p align="center">
+  <img src="README_IMG/2.png" alt="图 2：prepare.bat 正在安装依赖" width="92%">
+  <br>
+  <sub>图 2：prepare.bat 会自动检查 uv、创建虚拟环境并安装依赖。</sub>
+</p>
+
+看到类似 `Environment is ready. You can now use Launch.bat to start AiNiee CLI.` 的提示后，说明环境准备完成。此时按任意键退出准备脚本。
 
 <p align="center">
-  <img src="README_IMG/2.png" alt="图 2：prepare.bat 准备环境完成" width="92%">
+  <img src="README_IMG/3.png" alt="图 3：prepare.bat 环境准备完成" width="92%">
   <br>
-  <sub>图 2：依赖安装完成后，按任意键退出准备脚本。</sub>
+  <sub>图 3：出现 Environment is ready 后，环境准备完成。</sub>
 </p>
 
 ## 3. 启动 AiNiee CLI
 
-环境准备完成后，双击 `Launch.bat` 启动程序。
+环境准备完成后，双击 `Launch.bat` 启动主程序。
 
-如果提示未检测到 Web 编译包，只使用 CLI/TUI 翻译时可以先输入 `0` 跳过；后续需要 Web 面板时，再按提示下载或本地编译 Web 包。
+进入主程序后，如果提示未检测到 Web 编译包，只使用 CLI/TUI 翻译时可以先输入 `0` 跳过；后续需要 Web 面板时，再按提示下载或本地编译 Web 包。
 
 <p align="center">
-  <img src="README_IMG/3.png" alt="图 3：启动 Launch.bat 并跳过 Web 编译包提示" width="92%">
+  <img src="README_IMG/4.png" alt="图 4：Launch.bat 进入主程序后的 Web 编译包提示" width="92%">
   <br>
-  <sub>图 3：启动后如出现 Web 编译包提示，可以先输入 0 暂时跳过。</sub>
+  <sub>图 4：Launch.bat 进入主程序后，如出现 Web 编译包提示，可以先输入 0 暂时跳过。</sub>
 </p>
 
 ## 4. 首次向导：选择语言、目标语言和 API
 
-第一次进入会出现快速设置向导。可以按下面的示例完成前期选择：
+跳过 Web 编译包提示后，第一次进入会出现快速设置向导。可以按下面的示例完成前期选择：
 
 1. 语言选择：`1. 中文（简体）`
 2. 源语言：保持 `auto`
@@ -48,11 +54,7 @@
 4. API 配置：选择 `1. 在线 API（预设）`
 5. 在线 API 预设：选择 `5. deepseek`
 
-<p align="center">
-  <img src="README_IMG/4.png" alt="图 4：首次向导选择中文、在线 API 和 deepseek" width="92%">
-  <br>
-  <sub>图 4：首次向导中选择在线 API 预设，并选择 deepseek。</sub>
-</p>
+这些前期选择对应图 5 的上半部分；选择 `deepseek` 后，会进入同一张图下方的 API 编辑区域。
 
 ## 5. 填写 DeepSeek API Key 和模型
 
