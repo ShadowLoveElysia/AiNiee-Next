@@ -521,7 +521,7 @@ class MangaRuntimeValidator:
                 seeds = self.ocr_engine.run(source_path, regions=region_list)
             except TypeError:
                 seeds = self.ocr_engine.run(source_path)
-            assignments = assign_bubbles(seeds, page.width, page.height)
+            assignments = assign_bubbles(seeds, page.width, page.height, source_path=source_path)
             seed_payload = [seed.to_dict() for seed in seeds]
             MangaProjectPersistence.write_page_artifact(
                 session,

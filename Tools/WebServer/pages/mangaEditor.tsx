@@ -48,6 +48,54 @@ const formatStageLabel = (value: string, t: (key: string) => string) => {
     .join(' ');
 };
 
+const formatQualityIssue = (
+  issue: any,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const key = String(issue?.message_key || '');
+  if (key) {
+    const args = Array.isArray(issue?.message_args) ? issue.message_args : [];
+    const translated = t(key, ...args);
+    if (translated !== key) return translated;
+  }
+  return String(issue?.message || issue?.code || '').trim();
+};
+
+const getQualityNoticeMessage = (
+  job: MangaJob,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const issues = Array.isArray(job.result?.quality_issues) ? job.result?.quality_issues : [];
+  if (!issues.length) return '';
+  const issueText = issues
+    .map((issue) => formatQualityIssue(issue, t))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join('；');
+  return issueText ? t('manga_notice_quality_gate_blocked', issueText) : '';
+};
+
+const formatJobMessage = (
+  job: MangaJob,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const qualityMessage = getQualityNoticeMessage(job, t);
+  if (qualityMessage) return qualityMessage;
+
+  const finalBlockedPages = Number(job.result?.final_blocked_pages || 0);
+  if (finalBlockedPages > 0) {
+    return t('manga_notice_quality_gate_blocked_pages', finalBlockedPages);
+  }
+
+  const key = String(job.message_key || '');
+  if (key) {
+    const args = Array.isArray(job.message_args) ? job.message_args : [];
+    const translated = t(key, ...args);
+    if (translated !== key) return translated;
+  }
+  return String(job.message || '');
+};
+
 const ACTION_LABEL_KEYS: Record<string, string> = {
   'detect current page': 'manga_action_detect',
   'ocr current page': 'manga_action_ocr',
@@ -337,7 +385,7 @@ export const MangaEditor: React.FC = () => {
           stageLabel: formatStageLabel(activeJob.stage, t),
           progress: activeJob.progress,
           status: activeJob.status,
-          message: activeJob.message,
+          message: formatJobMessage(activeJob, t),
         }
       : null
   ), [activeJob, t]);
@@ -629,7 +677,7 @@ export const MangaEditor: React.FC = () => {
       if (options?.nextViewMode) {
         setViewMode(options.nextViewMode);
       }
-      showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
+      showNotice(settled.status === 'completed' ? 'success' : 'warning', formatJobMessage(settled, t));
     });
   };
 
@@ -807,7 +855,7 @@ export const MangaEditor: React.FC = () => {
       const settled = await waitForJob(project.project_id, job);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('overlay');
-      showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
+      showNotice(settled.status === 'completed' ? 'success' : 'warning', formatJobMessage(settled, t));
     });
   };
 
@@ -828,12 +876,25 @@ export const MangaEditor: React.FC = () => {
       const settled = await waitForJob(project.project_id, job);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('rendered');
-      const settledMessage = String(settled.message || '');
-      const completedWithWarnings = /warning|failed|need review/i.test(settledMessage);
+      const settledMessage = formatJobMessage(settled, t);
+      const qualityMessage = getQualityNoticeMessage(settled, t);
+      const finalBlockedPages = Number(settled.result?.final_blocked_pages || 0);
+      const finalBlockedMessage = finalBlockedPages > 0
+        ? t('manga_notice_quality_gate_blocked_pages', finalBlockedPages)
+        : '';
+      const completedWithWarnings = (
+        finalBlockedPages > 0
+        || /warning|failed|need review|blocked/i.test(String(settled.message || ''))
+        || !!qualityMessage
+      );
       showNotice(
         settled.status === 'completed' && !completedWithWarnings ? 'success' : 'warning',
         settled.status === 'completed'
-          ? `${t('manga_notice_first_pass_finished', pageIds.length)} ${settledMessage}`.trim()
+          ? (
+              completedWithWarnings
+                ? `${t('manga_notice_first_pass_finished', pageIds.length)} ${qualityMessage || finalBlockedMessage || settledMessage}`.trim()
+                : t('manga_notice_first_pass_finished', pageIds.length)
+            )
           : settledMessage,
       );
     });
@@ -853,7 +914,7 @@ export const MangaEditor: React.FC = () => {
       const settled = await waitForJob(project.project_id, job);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('overlay');
-      showNotice(settled.status === 'completed' ? 'success' : 'warning', settled.message);
+      showNotice(settled.status === 'completed' ? 'success' : 'warning', formatJobMessage(settled, t));
     });
   };
 

@@ -19,6 +19,8 @@ export interface MangaJob {
   status: string;
   progress: number;
   message: string;
+  message_key?: string;
+  message_args?: any[];
   updated_at?: string;
   page_count?: number;
   result?: Record<string, any>;

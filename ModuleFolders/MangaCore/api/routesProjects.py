@@ -8,9 +8,10 @@ from ModuleFolders.MangaCore.api.schemas import (
     ProjectSaveRequest,
 )
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
+from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
 from ModuleFolders.MangaCore.pipeline.modelStore import build_engine_status
+from ModuleFolders.MangaCore.pipeline.qualityGate import page_blocked_from_final, remove_final_page
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
-from ModuleFolders.MangaCore.render.painter import MangaRenderer
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
 
@@ -69,7 +70,13 @@ def create_project_from_task(request: ProjectCreateFromTaskRequest) -> dict[str,
 @router.post("/projects/save")
 def save_project(request: ProjectSaveRequest) -> dict[str, object]:
     session = _get_session_or_404(request.project_id)
-    MangaRenderer().render_session(session)
+    render_engine = RenderEngine()
+    for page_ref in session.scene.pages:
+        page = session.pages[page_ref.page_id]
+        blocked, _reasons = page_blocked_from_final(session, page)
+        if blocked:
+            remove_final_page(session, page)
+        render_engine.run_page(session, page, write_final=not blocked)
     MangaProjectPersistence.save_session(session)
     return {
         "ok": True,

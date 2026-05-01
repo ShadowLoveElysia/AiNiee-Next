@@ -47,7 +47,7 @@ class MangaRenderer:
     def __init__(self, *, use_source_text_fallback: bool = False) -> None:
         self.use_source_text_fallback = use_source_text_fallback
 
-    def render_page(self, session: MangaProjectSession, page: MangaPage) -> Path:
+    def render_page(self, session: MangaProjectSession, page: MangaPage, *, write_final: bool = True) -> Path:
         template = get_render_template(session.scene.render_preset)
         base_path = _resolve_base_layer(session, page, session.scene.render_preset)
         rendered_path = session.project_path / page.layers.rendered
@@ -64,20 +64,7 @@ class MangaRenderer:
             if not text:
                 continue
 
-            font = load_font(
-                size=block.style.font_size,
-                font_family=block.style.font_family,
-                font_prediction=block.font_prediction,
-            )
-            lines = plan_text_lines(
-                draw=draw,
-                text=text,
-                bbox=block.bbox,
-                font=font,
-                line_spacing=block.style.line_spacing,
-                stroke_width=block.style.stroke_width,
-                direction=block.rendered_direction,
-            )
+            font, lines = self._fit_block_text(draw, block, text)
             for line in lines:
                 draw.text(
                     (line.x, line.y),
@@ -91,10 +78,55 @@ class MangaRenderer:
         canvas = _apply_restore_mask(session, page, canvas)
         canvas.save(rendered_path, format="PNG")
 
-        final_path = session.output_root / "final" / "pages" / f"{page.index:04d}.png"
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(rendered_path, final_path)
+        if write_final:
+            final_path = session.output_root / "final" / "pages" / f"{page.index:04d}.png"
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(rendered_path, final_path)
         return rendered_path
+
+    def _fit_block_text(self, draw, block, text: str):
+        x1, y1, x2, y2 = [int(value) for value in block.bbox]
+        box_width = max(1, x2 - x1)
+        box_height = max(1, y2 - y1)
+        base_size = max(12, min(int(block.style.font_size), max(14, int(min(box_width, box_height) * 0.58))))
+        min_size = max(12, min(24, base_size))
+
+        last_font = load_font(
+            size=base_size,
+            font_family=block.style.font_family,
+            font_prediction=block.font_prediction,
+        )
+        for size in range(base_size, min_size - 1, -2):
+            font = load_font(
+                size=size,
+                font_family=block.style.font_family,
+                font_prediction=block.font_prediction,
+            )
+            lines = plan_text_lines(
+                draw=draw,
+                text=text,
+                bbox=block.bbox,
+                font=font,
+                line_spacing=block.style.line_spacing,
+                stroke_width=block.style.stroke_width,
+                direction=block.rendered_direction,
+                allow_truncate=False,
+            )
+            if lines:
+                return font, lines
+            last_font = font
+
+        lines = plan_text_lines(
+            draw=draw,
+            text=text,
+            bbox=block.bbox,
+            font=last_font,
+            line_spacing=block.style.line_spacing,
+            stroke_width=block.style.stroke_width,
+            direction=block.rendered_direction,
+            allow_truncate=True,
+        )
+        return last_font, lines
 
     def render_session(self, session: MangaProjectSession) -> list[Path]:
         rendered: list[Path] = []

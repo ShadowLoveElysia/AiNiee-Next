@@ -71,6 +71,7 @@ def plan_text_lines(
     line_spacing: float,
     stroke_width: int,
     direction: str = "horizontal",
+    allow_truncate: bool = True,
 ) -> list[PositionedTextLine]:
     x1, y1, x2, y2 = [int(value) for value in bbox]
     available_width = max(1, x2 - x1)
@@ -88,6 +89,8 @@ def plan_text_lines(
     line_gap = max(0, int(sample_height * max(0.0, float(line_spacing) - 1.0)))
     line_height = sample_height + line_gap
     max_lines = max(1, available_height // max(1, line_height))
+    if len(raw_lines) > max_lines and not allow_truncate:
+        return []
 
     lines = list(raw_lines[:max_lines])
     if raw_lines and len(raw_lines) > max_lines:

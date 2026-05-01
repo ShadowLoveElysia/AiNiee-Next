@@ -34,8 +34,8 @@ case "$BACKEND" in
         ;;
 esac
 
-MANGA_VENV_DIR="$PROJECT_ROOT/.venv-manga"
-MANGA_PYTHON="$MANGA_VENV_DIR/bin/python"
+MAIN_VENV_DIR="$PROJECT_ROOT/.venv"
+MAIN_PYTHON="$MAIN_VENV_DIR/bin/python"
 
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
     echo "[ERROR] Missing requirements file: $REQUIREMENTS_FILE"
@@ -66,15 +66,14 @@ else
     echo "uv is already installed."
 fi
 
-echo "[2/4] Creating manga runtime environment..."
-uv venv "$MANGA_VENV_DIR" --python 3.12 --allow-existing
+echo "[2/4] Preparing main AiNiee runtime environment..."
+uv venv "$MAIN_VENV_DIR" --python 3.12 --allow-existing
 
 echo "[3/4] Installing manga runtime dependencies ($BACKEND)..."
-uv pip install --python "$MANGA_PYTHON" -r "$REQUIREMENTS_FILE"
+uv pip install --python "$MAIN_PYTHON" -r "$REQUIREMENTS_FILE"
 
-echo "[4/4] Downloading default MangaCore model assets..."
-"$MANGA_PYTHON" "$PROJECT_ROOT/ModuleFolders/MangaCore/runtime/prepare_models.py"
+echo "[4/4] Downloading default MangaCore model assets with requests..."
+"$MAIN_PYTHON" "$PROJECT_ROOT/ModuleFolders/Service/HttpService/ModelDownload.py"
 
-echo "[Done] Manga runtime environment is ready at $MANGA_VENV_DIR"
-echo "Main CLI dependencies are still managed by ./prepare.sh"
+echo "[Done] MangaCore dependencies and assets are ready in $MAIN_VENV_DIR"
 chmod +x Launch.sh prepare_comic.sh

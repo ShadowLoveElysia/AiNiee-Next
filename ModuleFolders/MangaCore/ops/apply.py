@@ -209,12 +209,15 @@ def _apply_without_history(session: MangaProjectSession, op: Operation) -> int:
         block_payload = op.payload.get("block")
         if not isinstance(block_payload, dict):
             raise OperationError("AddTextBlock requires payload.block")
-        session.get_page(op.page_id).text_blocks.append(MangaTextBlock.from_dict(block_payload))
+        page = session.get_page(op.page_id)
+        page.text_blocks.append(MangaTextBlock.from_dict(block_payload))
+        page.status = "edited"
         return 1
 
     if op.type == "RemoveTextBlock":
         page = session.get_page(op.page_id)
         page.text_blocks = [block for block in page.text_blocks if block.block_id != op.block_id]
+        page.status = "edited"
         return 1
 
     if op.type == "RestorePageAssets":

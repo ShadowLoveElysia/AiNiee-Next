@@ -325,7 +325,7 @@ class TranslateEngine:
     @staticmethod
     def _clean_translation_text(value: object) -> str:
         text = str(value or "").strip().strip('"').strip()
-        return re.sub(r"^\s*\d+\.\s*", "", text, count=1)
+        return re.sub(r"(?m)^\s*\d+(?:\.\d+)*(?:[.．][,，、]?|[,，、])\s*", "", text).strip()
 
     def _load_effective_config(self, session) -> dict[str, object]:
         root_config_path = _PROJECT_ROOT / "Resource" / "config.json"

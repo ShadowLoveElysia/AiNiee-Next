@@ -7,6 +7,13 @@ from ModuleFolders.MangaCore.pipeline.engines.ocr import OcrEngine
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine, RenderResult
 from ModuleFolders.MangaCore.pipeline.engines.translate import TranslateEngine, TranslationBatchResult
 from ModuleFolders.MangaCore.pipeline.progress import JobRegistry, PipelineJob
+from ModuleFolders.MangaCore.pipeline.qualityGate import (
+    PageQualityGate,
+    describe_ocr_last_run,
+    evaluate_automatic_pipeline_quality,
+    remove_final_page,
+    write_quality_gate,
+)
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
 from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed, assign_bubbles
@@ -24,6 +31,7 @@ class MangaPageRunner:
         inpaint_engine: InpaintEngine | None = None,
         render_engine: RenderEngine | None = None,
         renderer: MangaRenderer | None = None,
+        progress_callback=None,
     ) -> None:
         self.logger = logger or (lambda *_args, **_kwargs: None)
         self.ocr_engine = ocr_engine or OcrEngine()
@@ -32,6 +40,15 @@ class MangaPageRunner:
         self.inpaint_engine = inpaint_engine or InpaintEngine()
         self.render_engine = render_engine or RenderEngine(renderer=renderer)
         self.renderer = getattr(self.render_engine, "renderer", renderer or MangaRenderer())
+        self.progress_callback = progress_callback
+
+    def _emit_progress(self, **payload: object) -> None:
+        if not self.progress_callback:
+            return
+        try:
+            self.progress_callback(payload)
+        except Exception:
+            pass
 
     def translate_current_page(
         self,
@@ -224,6 +241,7 @@ class MangaPageRunner:
                 message="OCR started for the current page.",
             )
             seeds, assignments = self._run_seed_stage(session, page)
+            ocr_last_run = describe_ocr_last_run(self.ocr_engine)
             JobRegistry.update(
                 job.job_id,
                 stage="page_typesetting_planning",
@@ -239,7 +257,8 @@ class MangaPageRunner:
 
             detect_result = DetectResult(ok=True)
             translation_result = TranslationBatchResult(ok=True)
-            inpaint_result = InpaintResult(ok=True)
+            inpaint_result: InpaintResult | None = None
+            quality_gate: PageQualityGate | None = None
             translated_blocks = 0
 
             if run_translation:
@@ -286,13 +305,38 @@ class MangaPageRunner:
                 page.last_pipeline_stage = "page_inpainting"
 
             if refresh_render:
+                if run_translation:
+                    quality_gate = evaluate_automatic_pipeline_quality(
+                        detect_result=detect_result,
+                        ocr_last_run=ocr_last_run,
+                        inpaint_result=inpaint_result,
+                        block_count=len(blocks),
+                        translated_blocks=translated_blocks,
+                        translation_result=translation_result,
+                        require_inpaint=True,
+                    )
+                    write_quality_gate(session, page, quality_gate)
+                    if not quality_gate.final_allowed:
+                        page.status = "needs_review"
+                        remove_final_page(session, page)
+                render_blocked = quality_gate is not None and not quality_gate.final_allowed
                 JobRegistry.update(
                     job.job_id,
                     stage="page_rendering",
                     progress=95,
-                    message="Refreshing rendered page preview from current block data.",
+                    message=(
+                        "Refreshing rendered page preview from current block data."
+                        if not render_blocked
+                        else "Rendering draft preview only; quality gate blocked final output."
+                    ),
+                    message_key="manga_job_render_draft_blocked" if render_blocked else "",
+                    message_args=[],
                 )
-                self._run_render_stage(session, page)
+                self._run_render_stage(
+                    session,
+                    page,
+                    write_final=not render_blocked,
+                )
                 page.last_pipeline_stage = "page_rendering"
 
             if save_after_run or refresh_render:
@@ -305,8 +349,9 @@ class MangaPageRunner:
                 run_translation=run_translation,
                 translation_result=translation_result,
                 detect_result=detect_result,
-                inpaint_result=inpaint_result,
+                inpaint_result=inpaint_result or InpaintResult(ok=True),
                 refresh_render=refresh_render,
+                quality_gate=quality_gate,
             )
             updated = JobRegistry.update(
                 job.job_id,
@@ -314,6 +359,23 @@ class MangaPageRunner:
                 status="completed" if blocks else "failed",
                 progress=100 if blocks else 0,
                 message=message,
+                message_key=(
+                    "manga_notice_quality_gate_blocked_count"
+                    if quality_gate is not None and not quality_gate.final_allowed
+                    else ""
+                ),
+                message_args=(
+                    [len(quality_gate.issues)]
+                    if quality_gate is not None and not quality_gate.final_allowed
+                    else []
+                ),
+                result={
+                    "seed_count": len(seeds),
+                    "block_count": len(blocks),
+                    "translated_blocks": translated_blocks,
+                    "final_allowed": True if quality_gate is None else quality_gate.final_allowed,
+                    "quality_issues": [issue.to_dict() for issue in quality_gate.issues] if quality_gate else [],
+                },
             )
             return updated or job
         except Exception as exc:
@@ -349,10 +411,23 @@ class MangaPageRunner:
         translation_warnings = 0
         inpainted_pages = 0
         no_text_pages = 0
+        final_blocked_pages = 0
         try:
             for page_id in page_ids:
                 page = session.get_page(page_id)
                 session.scene.current_page_id = page_id
+                self._emit_progress(
+                    input_path=str(session.config_snapshot.get("input_path", "")),
+                    total_pages=len(page_ids),
+                    processed_pages=processed,
+                    stage="batch_ocr",
+                    message=f"OCR {processed + 1}/{len(page_ids)} page(s).",
+                    total_blocks=total_blocks,
+                    total_translated_blocks=total_translated_blocks,
+                    translation_warnings=translation_warnings,
+                    no_text_pages=no_text_pages,
+                    inpainted_pages=inpainted_pages,
+                )
                 JobRegistry.update(
                     job.job_id,
                     stage="batch_ocr",
@@ -360,6 +435,7 @@ class MangaPageRunner:
                     message=f"OCR {processed + 1}/{len(page_ids)} page(s).",
                 )
                 seeds, assignments = self._run_seed_stage(session, page)
+                ocr_last_run = describe_ocr_last_run(self.ocr_engine)
                 JobRegistry.update(
                     job.job_id,
                     stage="batch_typesetting_planning",
@@ -376,18 +452,45 @@ class MangaPageRunner:
                 self._write_seed_artifacts(session, page, seeds, assignments)
 
                 if run_translation:
+                    self._emit_progress(
+                        input_path=str(session.config_snapshot.get("input_path", "")),
+                        total_pages=len(page_ids),
+                        processed_pages=processed,
+                        stage="batch_detecting",
+                        message=f"Generating cleanup masks for page {processed + 1}/{len(page_ids)}.",
+                        total_blocks=total_blocks,
+                        total_translated_blocks=total_translated_blocks,
+                        translation_warnings=translation_warnings,
+                        no_text_pages=no_text_pages,
+                        inpainted_pages=inpainted_pages,
+                    )
                     JobRegistry.update(
                         job.job_id,
                         stage="batch_detecting",
                         progress=int((processed + 0.55) * 100 / max(1, len(page_ids))),
                         message=f"Generating cleanup masks for page {processed + 1}/{len(page_ids)}.",
                     )
-                    self._run_detect_stage(session, page, seeds=seeds, assignments=assignments)
+                    detect_result = self._run_detect_stage(session, page, seeds=seeds, assignments=assignments)
                     page.last_pipeline_stage = "batch_detecting"
+                else:
+                    detect_result = DetectResult(ok=True)
 
                 translation_result = TranslationBatchResult(ok=True)
                 translated_blocks = 0
+                inpaint_result: InpaintResult | None = None
                 if run_translation and blocks:
+                    self._emit_progress(
+                        input_path=str(session.config_snapshot.get("input_path", "")),
+                        total_pages=len(page_ids),
+                        processed_pages=processed,
+                        stage="batch_translating",
+                        message=f"Translating planned blocks for page {processed + 1}/{len(page_ids)}.",
+                        total_blocks=total_blocks,
+                        total_translated_blocks=total_translated_blocks,
+                        translation_warnings=translation_warnings,
+                        no_text_pages=no_text_pages,
+                        inpainted_pages=inpainted_pages,
+                    )
                     JobRegistry.update(
                         job.job_id,
                         stage="batch_translating",
@@ -414,6 +517,18 @@ class MangaPageRunner:
                     page.status = "translated" if translated_blocks == len(blocks) and len(blocks) > 0 else "needs_review"
 
                 if run_translation and auto_inpaint:
+                    self._emit_progress(
+                        input_path=str(session.config_snapshot.get("input_path", "")),
+                        total_pages=len(page_ids),
+                        processed_pages=processed,
+                        stage="batch_inpainting",
+                        message=f"Refreshing inpainted base for page {processed + 1}/{len(page_ids)}.",
+                        total_blocks=total_blocks,
+                        total_translated_blocks=total_translated_blocks,
+                        translation_warnings=translation_warnings,
+                        no_text_pages=no_text_pages,
+                        inpainted_pages=inpainted_pages,
+                    )
                     JobRegistry.update(
                         job.job_id,
                         stage="batch_inpainting",
@@ -426,15 +541,61 @@ class MangaPageRunner:
                     page.last_pipeline_stage = "batch_inpainting"
 
                 if auto_render:
+                    quality_gate = None
+                    if run_translation:
+                        quality_gate = evaluate_automatic_pipeline_quality(
+                            detect_result=detect_result,
+                            ocr_last_run=ocr_last_run,
+                            inpaint_result=inpaint_result,
+                            block_count=len(blocks),
+                            translated_blocks=translated_blocks,
+                            translation_result=translation_result,
+                            require_inpaint=True,
+                        )
+                        write_quality_gate(session, page, quality_gate)
+                        if not quality_gate.final_allowed:
+                            final_blocked_pages += 1
+                            page.status = "needs_review"
+                            remove_final_page(session, page)
+                    render_blocked = quality_gate is not None and not quality_gate.final_allowed
+                    self._emit_progress(
+                        input_path=str(session.config_snapshot.get("input_path", "")),
+                        total_pages=len(page_ids),
+                        processed_pages=processed,
+                        stage="batch_rendering",
+                        message=(
+                            f"Refreshing rendered page {processed + 1}/{len(page_ids)}."
+                            if not render_blocked
+                            else f"Rendering draft page {processed + 1}/{len(page_ids)}; final output is blocked."
+                        ),
+                        total_blocks=total_blocks,
+                        total_translated_blocks=total_translated_blocks,
+                        translation_warnings=translation_warnings,
+                        no_text_pages=no_text_pages,
+                        inpainted_pages=inpainted_pages,
+                        message_key="manga_job_render_draft_page_blocked" if render_blocked else "",
+                        message_args=[processed + 1, len(page_ids)] if render_blocked else [],
+                    )
                     JobRegistry.update(
                         job.job_id,
                         stage="batch_rendering",
                         progress=int((processed + 0.95) * 100 / max(1, len(page_ids))),
-                        message=f"Refreshing rendered page {processed + 1}/{len(page_ids)}.",
+                        message=(
+                            f"Refreshing rendered page {processed + 1}/{len(page_ids)}."
+                            if not render_blocked
+                            else f"Rendering draft page {processed + 1}/{len(page_ids)}; final output is blocked."
+                        ),
+                        message_key="manga_job_render_draft_page_blocked" if render_blocked else "",
+                        message_args=[processed + 1, len(page_ids)] if render_blocked else [],
                     )
-                    self._run_render_stage(session, page)
+                    self._run_render_stage(
+                        session,
+                        page,
+                        write_final=not render_blocked,
+                    )
                     page.last_pipeline_stage = "batch_rendering"
 
+                MangaProjectPersistence.save_page(session, page)
                 processed += 1
                 if run_translation:
                     self.logger(
@@ -446,6 +607,30 @@ class MangaPageRunner:
                         f"[MangaCore] Page {processed}/{len(page_ids)} done: "
                         f"{len(blocks)} editable block(s)."
                     )
+                self._emit_progress(
+                    input_path=str(session.config_snapshot.get("input_path", "")),
+                    total_pages=len(page_ids),
+                    processed_pages=processed,
+                    stage="batch_translating" if run_translation else "batch_typesetting_planning",
+                    message=self._build_batch_progress_message(
+                        processed=processed,
+                        total=len(page_ids),
+                        total_blocks=total_blocks,
+                        total_translated_blocks=total_translated_blocks,
+                        run_translation=run_translation,
+                        translation_warnings=translation_warnings,
+                        auto_inpaint=auto_inpaint,
+                        inpainted_pages=inpainted_pages,
+                        final_blocked_pages=final_blocked_pages,
+                    ),
+                    total_blocks=total_blocks,
+                    total_translated_blocks=total_translated_blocks,
+                    translation_warnings=translation_warnings,
+                    no_text_pages=no_text_pages,
+                    inpainted_pages=inpainted_pages,
+                    message_key="manga_notice_quality_gate_blocked_pages" if final_blocked_pages else "",
+                    message_args=[final_blocked_pages] if final_blocked_pages else [],
+                )
                 JobRegistry.update(
                     job.job_id,
                     progress=int(processed * 100 / max(1, len(page_ids))),
@@ -459,7 +644,10 @@ class MangaPageRunner:
                         translation_warnings=translation_warnings,
                         auto_inpaint=auto_inpaint,
                         inpainted_pages=inpainted_pages,
+                        final_blocked_pages=final_blocked_pages,
                     ),
+                    message_key="manga_notice_quality_gate_blocked_pages" if final_blocked_pages else "",
+                    message_args=[final_blocked_pages] if final_blocked_pages else [],
                     result={
                         "page_count": len(page_ids),
                         "processed_pages": processed,
@@ -468,10 +656,34 @@ class MangaPageRunner:
                         "translation_warnings": translation_warnings,
                         "no_text_pages": no_text_pages,
                         "inpainted_pages": inpainted_pages,
+                        "final_blocked_pages": final_blocked_pages,
                     },
                 )
 
             MangaProjectPersistence.save_session(session)
+            self._emit_progress(
+                input_path=str(session.config_snapshot.get("input_path", "")),
+                total_pages=len(page_ids),
+                processed_pages=processed,
+                stage="batch_completed",
+                message=self._build_batch_completion_message(
+                    page_count=len(page_ids),
+                    total_blocks=total_blocks,
+                    total_translated_blocks=total_translated_blocks,
+                    run_translation=run_translation,
+                    translation_warnings=translation_warnings,
+                    auto_inpaint=auto_inpaint,
+                    inpainted_pages=inpainted_pages,
+                    final_blocked_pages=final_blocked_pages,
+                ),
+                total_blocks=total_blocks,
+                total_translated_blocks=total_translated_blocks,
+                translation_warnings=translation_warnings,
+                no_text_pages=no_text_pages,
+                inpainted_pages=inpainted_pages,
+                message_key="manga_notice_quality_gate_blocked_pages" if final_blocked_pages else "",
+                message_args=[final_blocked_pages] if final_blocked_pages else [],
+            )
             updated = JobRegistry.update(
                 job.job_id,
                 stage="batch_completed",
@@ -485,7 +697,10 @@ class MangaPageRunner:
                     translation_warnings=translation_warnings,
                     auto_inpaint=auto_inpaint,
                     inpainted_pages=inpainted_pages,
+                    final_blocked_pages=final_blocked_pages,
                 ),
+                message_key="manga_notice_quality_gate_blocked_pages" if final_blocked_pages else "",
+                message_args=[final_blocked_pages] if final_blocked_pages else [],
                 result={
                     "page_count": len(page_ids),
                     "processed_pages": processed,
@@ -494,10 +709,26 @@ class MangaPageRunner:
                     "translation_warnings": translation_warnings,
                     "no_text_pages": no_text_pages,
                     "inpainted_pages": inpainted_pages,
+                    "final_blocked_pages": final_blocked_pages,
                 },
             )
             return updated or job
         except Exception as exc:
+            self._emit_progress(
+                input_path=str(session.config_snapshot.get("input_path", "")),
+                total_pages=len(page_ids),
+                processed_pages=processed,
+                status="failed",
+                stage="batch_failed",
+                message=f"Batch page pipeline failed: {exc}",
+                total_blocks=total_blocks,
+                total_translated_blocks=total_translated_blocks,
+                translation_warnings=translation_warnings,
+                no_text_pages=no_text_pages,
+                inpainted_pages=inpainted_pages,
+                final_blocked_pages=final_blocked_pages,
+                error_count=1,
+            )
             updated = JobRegistry.update(
                 job.job_id,
                 stage="batch_failed",
@@ -513,6 +744,7 @@ class MangaPageRunner:
                     "translation_warnings": translation_warnings,
                     "no_text_pages": no_text_pages,
                     "inpainted_pages": inpainted_pages,
+                    "final_blocked_pages": final_blocked_pages,
                 },
             )
             return updated or job
@@ -594,7 +826,7 @@ class MangaPageRunner:
         else:
             seeds = self.ocr_engine.run(source_path)
 
-        assignments = assign_bubbles(seeds, page.width, page.height)
+        assignments = assign_bubbles(seeds, page.width, page.height, source_path=source_path)
         return seeds, assignments
 
     def _run_detect_stage(
@@ -640,8 +872,10 @@ class MangaPageRunner:
         self,
         session: MangaProjectSession,
         page: MangaPage,
+        *,
+        write_final: bool = True,
     ) -> RenderResult:
-        result = self.render_engine.run_page(session, page)
+        result = self.render_engine.run_page(session, page, write_final=write_final)
         MangaProjectPersistence.write_page_artifact(session, page, "renderResults.json", result.to_dict())
         return result
 
@@ -691,6 +925,7 @@ class MangaPageRunner:
         detect_result: DetectResult,
         inpaint_result: InpaintResult,
         refresh_render: bool,
+        quality_gate: PageQualityGate | None = None,
     ) -> str:
         if block_count == 0:
             return "No OCR text seeds were found on the page."
@@ -711,6 +946,8 @@ class MangaPageRunner:
 
         if refresh_render:
             parts.append(f"inpainted {inpaint_result.mask_pixels} masked pixel(s)")
+        if quality_gate is not None and not quality_gate.final_allowed:
+            parts.append(f"final output blocked by {len(quality_gate.issues)} quality issue(s)")
 
         return "; ".join(parts) + "."
 
@@ -741,14 +978,16 @@ class MangaPageRunner:
         translation_warnings: int,
         auto_inpaint: bool,
         inpainted_pages: int,
+        final_blocked_pages: int = 0,
     ) -> str:
         if not run_translation:
             return f"Processed {processed}/{total} page(s), generated {total_blocks} block(s)."
         warning_suffix = f" {translation_warnings} page(s) have translation warnings." if translation_warnings else ""
         inpaint_suffix = f" Inpaint refreshed for {inpainted_pages} page(s)." if auto_inpaint else ""
+        blocked_suffix = f" {final_blocked_pages} page(s) were kept as draft because quality gates blocked final output." if final_blocked_pages else ""
         return (
             f"Processed {processed}/{total} page(s), generated {total_blocks} block(s), "
-            f"translated {total_translated_blocks} block(s).{warning_suffix}{inpaint_suffix}"
+            f"translated {total_translated_blocks} block(s).{warning_suffix}{inpaint_suffix}{blocked_suffix}"
         )
 
     @staticmethod
@@ -761,12 +1000,14 @@ class MangaPageRunner:
         translation_warnings: int,
         auto_inpaint: bool,
         inpainted_pages: int,
+        final_blocked_pages: int = 0,
     ) -> str:
         if not run_translation:
             return f"Completed {page_count} page(s); generated {total_blocks} editable block(s)."
         warning_suffix = f" {translation_warnings} page(s) need review due to translation warnings." if translation_warnings else ""
         inpaint_suffix = f" Inpaint refreshed for {inpainted_pages} page(s)." if auto_inpaint else ""
+        blocked_suffix = f" {final_blocked_pages} page(s) were kept as draft because quality gates blocked final output." if final_blocked_pages else ""
         return (
             f"Completed {page_count} page(s); generated {total_blocks} editable block(s) and "
-            f"translated {total_translated_blocks} block(s).{warning_suffix}{inpaint_suffix}"
+            f"translated {total_translated_blocks} block(s).{warning_suffix}{inpaint_suffix}{blocked_suffix}"
         )

@@ -1954,10 +1954,90 @@ class CLIMenu:
             mcp_http=False,
             mcp_transport="stdio",
         )
-        exit_code = self.run_non_interactive(args) or 0
-        if exit_code:
-            console.print(f"[red]MangaCore task exited with code {exit_code}.[/red]")
+        self._run_manga_translation_with_tui(args)
         Prompt.ask(f"\n{i18n.get('msg_press_enter')}")
+
+    def _run_manga_translation_with_tui(self, args):
+        from ModuleFolders.UserInterface.TaskUI import TaskUI
+
+        original_stdout, original_stderr = sys.stdout, sys.stderr
+        original_base_print = Base.print
+        self.ui_console = Console(file=original_stdout)
+        self.ui = TaskUI(parent_cli=self, i18n=i18n)
+        TUIHandler.set_ui(self.ui)
+        Base.print = self.ui.log
+        self._manga_tui = self.ui
+        self._manga_tui_started_at = time.time()
+        self._manga_tui_input_path = args.input_path
+        self.task_running = True
+
+        class MangaLogStream:
+            _local = threading.local()
+
+            def __init__(self, ui):
+                self.ui = ui
+
+            def write(self, msg):
+                if getattr(self._local, "is_writing", False):
+                    return
+                if not msg or msg == "\n":
+                    return
+                clean_msg = str(msg).strip()
+                if not clean_msg:
+                    return
+                self._local.is_writing = True
+                try:
+                    self.ui.log(clean_msg)
+                finally:
+                    self._local.is_writing = False
+
+            def flush(self):
+                pass
+
+        sys.stdout = sys.stderr = MangaLogStream(self.ui)
+        exit_code = 1
+        try:
+            self.ui.update_progress(
+                None,
+                {
+                    "line": 0,
+                    "total_line": 1,
+                    "token": 0,
+                    "time": 0,
+                    "file_name": os.path.basename(str(args.input_path)) or "MangaCore",
+                    "file_path_full": args.input_path,
+                    "is_start": True,
+                },
+            )
+            with Live(self.ui.layout, console=self.ui_console, refresh_per_second=10, screen=True, transient=False):
+                self.ui.log("[bold cyan]MangaCore task started.[/bold cyan]")
+                exit_code = self.run_non_interactive(args) or 0
+                if exit_code == 0:
+                    self.ui.update_status(None, {"status": "normal"})
+                    self.ui.log("[bold green]MangaCore task completed.[/bold green]")
+                else:
+                    self.ui.update_status(None, {"status": "error"})
+                    self.ui.log(f"[bold red]MangaCore task exited with code {exit_code}.[/bold red]")
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            exit_code = 130
+            self.ui.update_status(None, {"status": "error"})
+            self.ui.log("[bold red]MangaCore task interrupted by user.[/bold red]")
+            time.sleep(0.5)
+        except Exception as exc:
+            exit_code = 1
+            self.ui.update_status(None, {"status": "error"})
+            self.ui.log(f"[bold red]MangaCore TUI task failed: {exc}[/bold red]")
+            time.sleep(0.5)
+        finally:
+            sys.stdout, sys.stderr = original_stdout, original_stderr
+            Base.print = original_base_print
+            TUIHandler.clear()
+            self.task_running = False
+            for attr in ("_manga_tui", "_manga_tui_started_at", "_manga_tui_input_path"):
+                if hasattr(self, attr):
+                    delattr(self, attr)
+        return exit_code
 
     def start_web_server(self):
         self.web_runtime_bridge.start_web_server()

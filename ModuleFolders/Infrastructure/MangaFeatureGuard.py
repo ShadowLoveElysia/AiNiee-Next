@@ -55,7 +55,9 @@ def get_manga_feature_status(
 
     try:
         model_store_module = importlib.import_module("ModuleFolders.MangaCore.pipeline.modelStore")
+        provider_adapter_module = importlib.import_module("ModuleFolders.MangaCore.bridge.providerAdapter")
         MangaModelStore = getattr(model_store_module, "MangaModelStore")
+        get_runtime_dependency_status = getattr(provider_adapter_module, "get_runtime_dependency_status")
     except Exception as exc:
         return MangaFeatureStatus(
             available=False,
@@ -68,6 +70,7 @@ def get_manga_feature_status(
     required_model_ids = _resolve_required_model_ids(config_snapshot)
     details: list[str] = []
     missing_model_ids: list[str] = []
+    runtime_problem_ids: list[str] = []
 
     for stage, model_id in required_model_ids.items():
         try:
@@ -84,6 +87,16 @@ def get_manga_feature_status(
             details.append(
                 f"{stage}: 缺少模型包 `{model_id}`，请先下载到 `{hint_path}`。"
             )
+            continue
+
+        if bool(status.get("runtime_supported")):
+            dependency_status = get_runtime_dependency_status(model_id)
+            if getattr(dependency_status, "supported", False) and not getattr(dependency_status, "ok", False):
+                runtime_problem_ids.append(model_id)
+                missing_modules = ", ".join(getattr(dependency_status, "missing_modules", ()))
+                details.append(
+                    f"{stage}: 模型包 `{model_id}` 已存在，但视觉 runtime 依赖不可用，缺少 Python 模块: {missing_modules}。"
+                )
 
     if missing_model_ids:
         return MangaFeatureStatus(
@@ -94,6 +107,17 @@ def get_manga_feature_status(
             ),
             details=details + ["主程序其它功能不受影响；仅在使用漫画翻译时需要补齐这些内容。"],
             missing_model_ids=missing_model_ids,
+        )
+
+    if runtime_problem_ids:
+        return MangaFeatureStatus(
+            available=False,
+            message=(
+                "漫画模型文件已存在，但视觉 runtime 依赖不可用。"
+                f" 当前不可运行: {', '.join(runtime_problem_ids)}"
+            ),
+            details=details + ["可用 strict 模式阻止 fallback 成稿；请先补齐依赖后再做自动成稿验收。"],
+            missing_model_ids=runtime_problem_ids,
         )
 
     return MangaFeatureStatus(

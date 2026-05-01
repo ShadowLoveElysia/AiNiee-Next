@@ -7,8 +7,8 @@ from ModuleFolders.MangaCore.export.epubExporter import EpubExporter
 from ModuleFolders.MangaCore.export.pdfExporter import PdfExporter
 from ModuleFolders.MangaCore.export.rarExporter import RarExporter
 from ModuleFolders.MangaCore.export.zipExporter import ZipExporter
+from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
 from ModuleFolders.MangaCore.project.session import SessionRegistry
-from ModuleFolders.MangaCore.render.painter import MangaRenderer
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
 
@@ -23,7 +23,7 @@ def _get_session_or_404(project_id: str):
 @router.post("/projects/{project_id}/export/pdf")
 def export_pdf(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    MangaRenderer().render_session(session)
+    RenderEngine().run_session(session, write_final=False)
     output_path = PdfExporter().export(session)
     return {"ok": output_path is not None, "path": str(output_path) if output_path else None}
 
@@ -31,7 +31,7 @@ def export_pdf(project_id: str) -> dict[str, object]:
 @router.post("/projects/{project_id}/export/epub")
 def export_epub(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    MangaRenderer().render_session(session)
+    RenderEngine().run_session(session, write_final=False)
     try:
         output_path = EpubExporter().export(session)
     except NotImplementedError as exc:
@@ -42,7 +42,7 @@ def export_epub(project_id: str) -> dict[str, object]:
 @router.post("/projects/{project_id}/export/cbz")
 def export_cbz(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    MangaRenderer().render_session(session)
+    RenderEngine().run_session(session, write_final=False)
     try:
         output_path = CbzExporter().export(session)
     except NotImplementedError as exc:
@@ -53,7 +53,7 @@ def export_cbz(project_id: str) -> dict[str, object]:
 @router.post("/projects/{project_id}/export/zip")
 def export_zip(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    MangaRenderer().render_session(session)
+    RenderEngine().run_session(session, write_final=False)
     output_path = ZipExporter().export(session)
     return {"ok": output_path is not None, "path": str(output_path) if output_path else None}
 
@@ -61,7 +61,7 @@ def export_zip(project_id: str) -> dict[str, object]:
 @router.post("/projects/{project_id}/export/rar")
 def export_rar(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    MangaRenderer().render_session(session)
+    RenderEngine().run_session(session, write_final=False)
     try:
         output_path = RarExporter().export(session)
     except NotImplementedError as exc:

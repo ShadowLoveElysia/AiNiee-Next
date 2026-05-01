@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 import os
 import sys
 from dataclasses import dataclass, field
@@ -43,6 +44,14 @@ class RuntimeOcrOutput:
 class RuntimeInpaintOutput:
     runtime_engine_id: str
     mask_pixels: int
+
+
+@dataclass(slots=True)
+class RuntimeDependencyStatus:
+    supported: bool
+    ok: bool
+    required_modules: tuple[str, ...] = ()
+    missing_modules: tuple[str, ...] = ()
 
 
 _OCR_RUNTIME_SPECS: dict[str, dict[str, str]] = {
@@ -94,6 +103,38 @@ _RUNTIME_SPECS: dict[str, dict[str, str]] = {
     **_OCR_RUNTIME_SPECS,
     **_DETECT_RUNTIME_SPECS,
     **_INPAINT_RUNTIME_SPECS,
+}
+
+_RUNTIME_REQUIRED_ASSETS: dict[str, tuple[str, ...]] = {
+    "comic-text-bubble-detector": (
+        "detection/comictextdetector.pt",
+        "detection/comictextdetector.pt.onnx",
+    ),
+    "paddleocr-vl-1.5": (
+        "ocr/PaddleOCR-VL-1.5",
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "mit48px-ocr": (
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "aot-inpainting": (
+        "inpainting/inpainting.ckpt",
+    ),
+    "lama-manga": (
+        "inpainting/inpainting_lama_mpe.ckpt",
+        "inpainting/lamampe.onnx",
+    ),
+}
+
+_RUNTIME_REQUIRED_MODULES: dict[str, tuple[str, ...]] = {
+    "comic-text-bubble-detector": ("manga_translator", "cv2"),
+    "paddleocr-vl-1.5": ("manga_translator", "torch", "transformers"),
+    "manga-ocr": ("manga_translator", "torch", "transformers"),
+    "mit48px-ocr": ("manga_translator", "torch"),
+    "aot-inpainting": ("manga_translator", "torch"),
+    "lama-manga": ("manga_translator",),
 }
 
 _RUNTIME_CLASS_CACHE: dict[tuple[str, str, str], type] = {}
@@ -191,6 +232,35 @@ def _runtime_storage_path(model_id: str, root_dir: str | Path | None = None) -> 
         "inpaint": "inpainting",
     }[spec["kind"]]
     return str(_resolve_model_root(root_dir) / subdir)
+
+
+def _local_runtime_assets_available(model_id: str, root_dir: str | Path | None = None) -> bool:
+    required_assets = _RUNTIME_REQUIRED_ASSETS.get(str(model_id))
+    if not required_assets:
+        return False
+    model_root = _resolve_model_root(root_dir)
+    return all((model_root / asset_path).exists() for asset_path in required_assets)
+
+
+def get_runtime_dependency_status(model_id: str) -> RuntimeDependencyStatus:
+    spec = _resolve_runtime_spec(model_id)
+    if spec is None:
+        return RuntimeDependencyStatus(supported=False, ok=False)
+
+    required_modules = _RUNTIME_REQUIRED_MODULES.get(str(model_id), ())
+    if "manga_translator" in required_modules:
+        _ensure_upstream_import_path()
+    missing = tuple(
+        module_name
+        for module_name in required_modules
+        if importlib.util.find_spec(module_name) is None
+    )
+    return RuntimeDependencyStatus(
+        supported=True,
+        ok=not missing,
+        required_modules=tuple(required_modules),
+        missing_modules=missing,
+    )
 
 
 def _build_runtime_wrapper(model_id: str, root_dir: str | Path | None = None):
@@ -304,14 +374,19 @@ def get_runtime_asset_status(model_id: str, root_dir: str | Path | None = None) 
     if spec is None:
         return RuntimeAssetStatus(supported=False, available=False)
 
+    extra: dict[str, str] = {}
     try:
         wrapper = _build_runtime_wrapper(model_id, root_dir)
         storage_path = str(Path(wrapper.model_dir))
-        available = bool(wrapper.is_downloaded())
-    except Exception:
+        wrapper_available = bool(wrapper.is_downloaded())
+        local_available = _local_runtime_assets_available(model_id, root_dir)
+        available = wrapper_available or local_available
+        extra["status_source"] = "wrapper" if wrapper_available else "local-files"
+    except Exception as exc:
         storage_path = _runtime_storage_path(model_id, root_dir)
-        available = False
-    extra: dict[str, str] = {}
+        available = _local_runtime_assets_available(model_id, root_dir)
+        extra["status_source"] = "local-files" if available else "wrapper-error"
+        extra["status_error"] = str(exc)
     if spec["kind"] == "detect":
         extra["runtime_segmenter_id"] = "comic-text-bubble-detector/mask"
     return RuntimeAssetStatus(

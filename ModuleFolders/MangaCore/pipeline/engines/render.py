@@ -21,6 +21,7 @@ class RenderResult:
     final_path: str = ""
     rendered_blocks: int = 0
     skipped_blocks: int = 0
+    final_written: bool = True
     error_message: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -33,6 +34,7 @@ class RenderResult:
             "final_path": self.final_path,
             "rendered_blocks": self.rendered_blocks,
             "skipped_blocks": self.skipped_blocks,
+            "final_written": self.final_written,
             "error_message": self.error_message,
         }
 
@@ -59,8 +61,8 @@ class RenderEngine:
             "supported_engine_ids": [DEFAULT_RENDER_ENGINE_ID],
         }
 
-    def run_page(self, session: MangaProjectSession, page: MangaPage) -> RenderResult:
-        rendered_path = self.renderer.render_page(session, page)
+    def run_page(self, session: MangaProjectSession, page: MangaPage, *, write_final: bool = True) -> RenderResult:
+        rendered_path = self.renderer.render_page(session, page, write_final=write_final)
         final_path = session.output_root / "final" / "pages" / f"{page.index:04d}.png"
         rendered_blocks, skipped_blocks = self._count_rendered_blocks(session, page)
         return RenderResult(
@@ -72,13 +74,14 @@ class RenderEngine:
             final_path=str(final_path),
             rendered_blocks=rendered_blocks,
             skipped_blocks=skipped_blocks,
+            final_written=write_final,
         )
 
-    def run_session(self, session: MangaProjectSession) -> list[RenderResult]:
+    def run_session(self, session: MangaProjectSession, *, write_final: bool = True) -> list[RenderResult]:
         results: list[RenderResult] = []
         for page_ref in session.scene.pages:
             page = session.pages[page_ref.page_id]
-            results.append(self.run_page(session, page))
+            results.append(self.run_page(session, page, write_final=write_final))
         return results
 
     def _count_rendered_blocks(self, session: MangaProjectSession, page: MangaPage) -> tuple[int, int]:

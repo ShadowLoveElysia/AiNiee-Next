@@ -1,28 +1,63 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 title AiNiee CLI - Prepare Comic Runtime
 pushd "%~dp0" >nul
 
 set "BACKEND=%~1"
+set "BACKEND_REASON="
+if "%BACKEND%"=="" goto autodetect_backend
 if /I "%BACKEND%"=="cpu" goto backend_ok
 if /I "%BACKEND%"=="gpu" goto backend_ok
-if /I "%BACKEND%"=="metal" goto backend_ok
-if "%BACKEND%"=="" (
-    set "BACKEND=cpu"
+if /I "%BACKEND%"=="cuda" (
+    set "BACKEND=gpu"
     goto backend_ok
 )
+if /I "%BACKEND%"=="metal" goto backend_ok
 
 echo [ERROR] Unsupported backend: %BACKEND%
-echo Usage: prepare_comic.bat [cpu^|gpu^|metal]
+echo Usage: prepare_comic.bat [cpu^|gpu^|cuda^|metal]
 popd
 pause
 exit /b 1
+
+:autodetect_backend
+set "BACKEND=cpu"
+set "BACKEND_REASON=No NVIDIA GPU detected; using CPU runtime."
+
+where nvidia-smi >nul 2>&1
+if not errorlevel 1 (
+    set "BACKEND=gpu"
+    set "BACKEND_REASON=NVIDIA GPU detected via nvidia-smi; using GPU(CUDA) runtime."
+    goto backend_ok
+)
+
+for /f "skip=1 tokens=*" %%G in ('wmic path win32_VideoController get name 2^>nul') do (
+    echo %%G | findstr /I "NVIDIA" >nul 2>&1
+    if not errorlevel 1 (
+        set "BACKEND=gpu"
+        set "BACKEND_REASON=NVIDIA GPU detected via Windows video controller; using GPU(CUDA) runtime."
+        goto backend_ok
+    )
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' } | Select-Object -First 1) { exit 0 } exit 1" >nul 2>&1
+if not errorlevel 1 (
+    set "BACKEND=gpu"
+    set "BACKEND_REASON=NVIDIA GPU detected via PowerShell CIM; using GPU(CUDA) runtime."
+    goto backend_ok
+)
 
 :backend_ok
 set "REQUIREMENTS_FILE="
 if /I "%BACKEND%"=="cpu" set "REQUIREMENTS_FILE=ModuleFolders\MangaCore\runtime\requirements_cpu.txt"
 if /I "%BACKEND%"=="gpu" set "REQUIREMENTS_FILE=ModuleFolders\MangaCore\runtime\requirements_gpu.txt"
 if /I "%BACKEND%"=="metal" set "REQUIREMENTS_FILE=ModuleFolders\MangaCore\runtime\requirements_metal.txt"
+set "BACKEND_LABEL=%BACKEND%"
+if /I "%BACKEND%"=="cpu" set "BACKEND_LABEL=CPU"
+if /I "%BACKEND%"=="gpu" set "BACKEND_LABEL=GPU(CUDA)"
+if /I "%BACKEND%"=="metal" set "BACKEND_LABEL=Metal"
+if defined BACKEND_REASON echo [Auto] %BACKEND_REASON%
+echo [Backend] %BACKEND_LABEL%
 
 if not exist "%REQUIREMENTS_FILE%" (
     echo [ERROR] Missing requirements file: %REQUIREMENTS_FILE%
@@ -38,8 +73,8 @@ if not exist "ModuleFolders\MangaCore\runtime" (
     exit /b 1
 )
 
-set "MANGA_VENV=%CD%\.venv-win-manga"
-set "MANGA_PYTHON=%MANGA_VENV%\Scripts\python.exe"
+set "MAIN_VENV=%CD%\.venv-win"
+set "MAIN_PYTHON=%MAIN_VENV%\Scripts\python.exe"
 
 echo [1/4] Checking for uv...
 uv --version >nul 2>&1
@@ -61,17 +96,17 @@ if errorlevel 1 (
     echo uv is already installed.
 )
 
-echo [2/4] Creating manga runtime environment...
-uv venv "%MANGA_VENV%" --python 3.12 --allow-existing
+echo [2/4] Preparing main AiNiee runtime environment...
+uv venv "%MAIN_VENV%" --python 3.12 --allow-existing
 if errorlevel 1 (
-    echo [ERROR] Failed to create manga runtime environment.
+    echo [ERROR] Failed to prepare main AiNiee runtime environment.
     popd
     pause
     exit /b 1
 )
 
-echo [3/4] Installing manga runtime dependencies (%BACKEND%)...
-uv pip install --python "%MANGA_PYTHON%" -r "%REQUIREMENTS_FILE%"
+echo [3/4] Installing manga runtime dependencies (%BACKEND_LABEL%)...
+uv pip install --python "%MAIN_PYTHON%" -r "%REQUIREMENTS_FILE%"
 if errorlevel 1 (
     echo [ERROR] Failed to install manga runtime dependencies.
     popd
@@ -79,8 +114,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [4/4] Downloading default MangaCore model assets...
-"%MANGA_PYTHON%" "%CD%\ModuleFolders\MangaCore\runtime\prepare_models.py"
+echo [4/4] Downloading default MangaCore model assets with requests...
+"%MAIN_PYTHON%" "%CD%\ModuleFolders\Service\HttpService\ModelDownload.py"
 if errorlevel 1 (
     echo [ERROR] Failed to download default MangaCore model assets.
     popd
@@ -88,8 +123,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [Done] Manga runtime environment is ready at "%MANGA_VENV%"
-echo Main CLI dependencies are still managed by prepare.bat
+echo [Done] MangaCore dependencies and assets are ready in "%MAIN_VENV%"
 popd
 pause
 exit /b 0

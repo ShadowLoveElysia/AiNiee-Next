@@ -12,6 +12,8 @@ class PipelineJob:
     status: str
     progress: int = 0
     message: str = ""
+    message_key: str = ""
+    message_args: list[object] = field(default_factory=list)
     page_id: str = ""
     project_id: str = ""
     result: dict[str, object] = field(default_factory=dict)

@@ -4,12 +4,13 @@ from pathlib import Path
 
 from PIL import Image
 
+from ModuleFolders.MangaCore.export.archiveCommon import iter_rendered_pages
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
 
 
 class PdfExporter:
     def export(self, session: MangaProjectSession) -> Path | None:
-        rendered_paths = [session.project_path / session.pages[page_ref.page_id].layers.rendered for page_ref in session.scene.pages]
+        rendered_paths = [path for _archive_name, path in iter_rendered_pages(session)]
         if not rendered_paths:
             return None
 

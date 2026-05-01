@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ModuleFolders.MangaCore.bridge.providerAdapter import get_runtime_asset_status, run_detect_runtime
 from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
 from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed
+from ModuleFolders.MangaCore.render.planner import LAYOUT_ASSIGNMENT_STATUSES
 
 DEFAULT_DETECT_ENGINE_ID = "comic-text-bubble-detector"
 DEFAULT_SEGMENT_ENGINE_ID = "comic-text-detector"
@@ -141,13 +142,22 @@ class DetectEngine:
         text_seeds = list(seeds or [])
         if not text_seeds and blocks:
             text_seeds = [build_seed_from_block(block, index) for index, block in enumerate(blocks, start=1)]
+        accepted_seed_ids = {
+            assignment.seed_id
+            for assignment in assignments or []
+            if assignment.status in LAYOUT_ASSIGNMENT_STATUSES and assignment.bubble_id
+        }
+        if accepted_seed_ids:
+            text_seeds = [seed for seed in text_seeds if seed.seed_id in accepted_seed_ids]
 
         runtime_output = None
+        runtime_error = ""
         runtime_status = get_runtime_asset_status(self.detector_id)
         if runtime_status.available:
             try:
                 runtime_output = run_detect_runtime(image_path, self.detector_id)
-            except Exception:
+            except Exception as exc:
+                runtime_error = str(exc)
                 runtime_output = None
 
         text_regions = [
@@ -180,12 +190,16 @@ class DetectEngine:
             bubble_mask_data = runtime_output.bubble_mask
             runtime_detector_id = runtime_output.runtime_detector_id
             runtime_segmenter_id = runtime_output.runtime_segmenter_id
+        elif runtime_status.available and runtime_error:
+            runtime_warning = f"Runtime detector failed and fell back to heuristic grouping: {runtime_error}"
         elif runtime_status.available:
             runtime_warning = "Runtime detector was available but returned no regions; fell back to heuristic grouping."
 
         bubble_regions: list[DetectRegion] = []
         bubble_lookup: dict[str, DetectRegion] = {}
         for assignment in assignments or []:
+            if assignment.status not in LAYOUT_ASSIGNMENT_STATUSES or not assignment.bubble_id:
+                continue
             if assignment.bubble_id in bubble_lookup:
                 continue
             bubble_bbox = _pad_bbox(

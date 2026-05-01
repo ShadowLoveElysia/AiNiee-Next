@@ -72,7 +72,6 @@ class MangaProjectPersistence:
         imported = discover_input_images(input_path)
         output_root_path = Path(output_root)
         project_root = output_root_path / PROJECT_DIR_NAME
-        final_root = output_root_path / FINAL_DIR_NAME
         blob_store = BlobStore(project_root)
         cls._ensure_layout(output_root_path, blob_store)
 
@@ -122,10 +121,6 @@ class MangaProjectPersistence:
 
                 thumbnail_path = blob_store.thumbs_dir() / f"{page_key}.webp"
                 generate_thumbnail(source_path, thumbnail_path)
-
-                final_page_path = final_root / "pages" / f"{page_key}.png"
-                final_page_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(rendered_path, final_page_path)
 
                 page = MangaPage(
                     page_id=page_id,

@@ -16,6 +16,14 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
 )
 from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package, list_model_packages
 
+_DIRECT_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
+    "comic-text-detector": (
+        "yolo-v5.safetensors",
+        "unet.safetensors",
+        "dbnet.safetensors",
+    ),
+}
+
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -40,6 +48,18 @@ class MangaModelStore:
     def registry_path(self, model_id: str) -> Path:
         return self.registry_dir() / f"{_safe_name(model_id)}.json"
 
+    def local_direct_snapshot_path(self, model_id: str) -> Path | None:
+        package = get_model_package(model_id)
+        candidate = self.huggingface_cache_dir() / package.repo_id
+        required_files = _DIRECT_REQUIRED_FILES.get(package.model_id)
+        if required_files:
+            if all((candidate / filename).is_file() for filename in required_files):
+                return candidate
+            return None
+        if candidate.exists():
+            return candidate
+        return None
+
     def get_status(self, model_id: str) -> dict[str, object]:
         package = get_model_package(model_id)
         record = self._read_record(model_id)
@@ -50,6 +70,8 @@ class MangaModelStore:
         if runtime_status.supported:
             available = runtime_status.available
         else:
+            if not snapshot_path or not snapshot_path.exists():
+                snapshot_path = self.local_direct_snapshot_path(model_id)
             available = bool(snapshot_path and snapshot_path.exists())
         payload = package.to_dict()
         payload.update(
