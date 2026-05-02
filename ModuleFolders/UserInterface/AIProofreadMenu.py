@@ -438,13 +438,20 @@ class AIProofreadMenu:
                         if cache_item.text_index == text_index:
                             target_field = item.ai_check.get("target_field")
                             if target_field not in ("translated_text", "polished_text"):
-                                target_field = "polished_text" if cache_item.polished_text.strip() else "translated_text"
+                                report_text = item.translated_text or ""
+                                if report_text == (cache_item.polished_text or ""):
+                                    target_field = "polished_text"
+                                elif report_text == (cache_item.translated_text or ""):
+                                    target_field = "translated_text"
+                                else:
+                                    target_field = "translated_text"
 
                             if target_field == "polished_text":
                                 cache_item.polished_text = corrected_text
                                 cache_item.translation_status = TranslationStatus.POLISHED
                             else:
                                 cache_item.translated_text = corrected_text
+                                cache_item.polished_text = ""
                                 cache_item.translation_status = TranslationStatus.TRANSLATED
 
                             if cache_item.extra is None:

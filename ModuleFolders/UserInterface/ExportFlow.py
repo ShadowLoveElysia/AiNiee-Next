@@ -57,6 +57,8 @@ class ExportFlow:
 
         try:
             with console.status(f"[cyan]{self.i18n.get('msg_export_started')}[/cyan]"):
+                if hasattr(self.host.cache_manager, "flush_pending_save"):
+                    self.host.cache_manager.flush_pending_save()
                 project = CacheManager.read_from_file(cache_path)
                 self.host.task_executor.config.initialize(self.host.config)
                 config = self.host.task_executor.config

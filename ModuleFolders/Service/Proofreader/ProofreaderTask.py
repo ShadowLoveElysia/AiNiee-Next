@@ -81,7 +81,7 @@ class ProofreaderTask(Base):
         # 上下文 (简化格式)
         if self.previous_items:
             context_list = []
-            for item in self.previous_items[-5:]:  # 最多5条上文
+            for item in self.previous_items:
                 context_list.append({
                     "source": item.get("source", "")[:100],
                     "translation": item.get("translation", "")[:100]
