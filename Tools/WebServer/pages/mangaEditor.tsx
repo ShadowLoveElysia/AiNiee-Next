@@ -362,27 +362,42 @@ export const MangaEditor: React.FC = () => {
   const engineCards = useMemo<MangaEngineCard[]>(() => {
     if (!scene?.engines) return [];
 
-    const buildPackageCard = (pkg: any) => ({
-      modelId: String(pkg?.model_id || ''),
-      label: String(pkg?.display_name || pkg?.model_id || t('manga_unknown_package')),
-      repoId: String(pkg?.repo_id || ''),
-      available: Boolean(pkg?.available),
-      runtimeSupported: Boolean(pkg?.runtime_supported),
-      runtimeEngineId: String(pkg?.runtime_engine_id || ''),
-      storagePath: String(pkg?.runtime_assets_path || pkg?.snapshot_path || ''),
-    });
+    const readinessItems = Array.isArray(scene.runtime_readiness?.items) ? scene.runtime_readiness.items : [];
+    const findReadiness = (stage: string, modelId: string) => readinessItems.find((item) => (
+      String(item.stage || '') === stage && String(item.model_id || '') === modelId
+    ));
+    const buildPackageCard = (pkg: any, stage: string) => {
+      const modelId = String(pkg?.model_id || '');
+      const readiness = findReadiness(stage, modelId);
+      return {
+        modelId,
+        label: String(pkg?.display_name || pkg?.model_id || t('manga_unknown_package')),
+        repoId: String(pkg?.repo_id || ''),
+        available: readiness ? !readiness.blocking : Boolean(pkg?.available),
+        runtimeSupported: readiness ? Boolean(readiness.runtime_supported) : Boolean(pkg?.runtime_supported),
+        runtimeEngineId: String(readiness?.runtime_engine_id || pkg?.runtime_engine_id || ''),
+        storagePath: String(readiness?.storage_path || pkg?.runtime_assets_path || pkg?.snapshot_path || ''),
+        readinessStatus: readiness?.status,
+        readinessMessageKey: readiness?.message_key,
+        readinessMessageArgs: readiness?.message_args,
+        actionHintKey: readiness?.action_hint_key,
+        actionHintArgs: readiness?.action_hint_args,
+        missingModules: readiness?.missing_modules,
+        missingAssetPaths: readiness?.missing_asset_paths,
+      };
+    };
 
-    const ocrPackage = buildPackageCard(scene.engines.ocr.package);
-    const detectorPackage = buildPackageCard(scene.engines.detect.detector_package);
-    const segmenterPackage = buildPackageCard(scene.engines.detect.segmenter_package);
-    const inpaintPackage = buildPackageCard(scene.engines.inpaint.package);
+    const ocrPackage = buildPackageCard(scene.engines.ocr.package, 'ocr');
+    const detectorPackage = buildPackageCard(scene.engines.detect.detector_package, 'detect');
+    const segmenterPackage = buildPackageCard(scene.engines.detect.segmenter_package, 'segment');
+    const inpaintPackage = buildPackageCard(scene.engines.inpaint.package, 'inpaint');
 
     return [
       {
         label: t('manga_engine_ocr'),
         configured: scene.engines.ocr.configured_engine_id,
         runtime: scene.engines.ocr.runtime_engine_id,
-        available: Boolean(scene.engines.ocr.package?.available),
+        available: ocrPackage.available,
         packageLabel: scene.engines.ocr.package?.display_name || scene.engines.ocr.package?.repo_id || t('manga_unknown_package'),
         packages: [ocrPackage].filter((pkg) => pkg.modelId),
       },
@@ -390,7 +405,7 @@ export const MangaEditor: React.FC = () => {
         label: t('manga_engine_detect'),
         configured: `${scene.engines.detect.configured_detector_id} / ${scene.engines.detect.configured_segmenter_id}`,
         runtime: `${scene.engines.detect.runtime_detector_id} / ${scene.engines.detect.runtime_segmenter_id}`,
-        available: Boolean(scene.engines.detect.detector_package?.available) && Boolean(scene.engines.detect.segmenter_package?.available),
+        available: detectorPackage.available && segmenterPackage.available,
         packageLabel: [
           scene.engines.detect.detector_package?.display_name || scene.engines.detect.detector_package?.repo_id || '',
           scene.engines.detect.segmenter_package?.display_name || scene.engines.detect.segmenter_package?.repo_id || '',
@@ -401,7 +416,7 @@ export const MangaEditor: React.FC = () => {
         label: t('manga_engine_inpaint'),
         configured: scene.engines.inpaint.configured_engine_id,
         runtime: scene.engines.inpaint.runtime_engine_id,
-        available: Boolean(scene.engines.inpaint.package?.available),
+        available: inpaintPackage.available,
         packageLabel: scene.engines.inpaint.package?.display_name || scene.engines.inpaint.package?.repo_id || t('manga_unknown_package'),
         packages: [inpaintPackage].filter((pkg) => pkg.modelId),
       },

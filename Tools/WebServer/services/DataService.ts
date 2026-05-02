@@ -1,6 +1,6 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
 import type { MangaBrushStrokePayload } from '../components/manga/shared';
-import { MangaDeleteRuntimeValidationHistoryResult, MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
+import { MangaDeleteRuntimeValidationHistoryResult, MangaExportResult, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeReadinessReport, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -667,6 +667,18 @@ export const DataService = {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to start manga model preparation');
+        return data;
+    },
+
+    async getMangaRuntimeReadiness(params: Record<string, string> = {}): Promise<MangaRuntimeReadinessReport> {
+        const query = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value) query.set(key, value);
+        });
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        const res = await fetch(`${API_BASE}/manga/runtime/readiness${suffix}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga runtime readiness');
         return data;
     },
 

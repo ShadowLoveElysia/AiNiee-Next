@@ -202,6 +202,9 @@ class CommandModeRunner:
             self._run_queue(args)
             return 0
 
+        if getattr(args, "manga_runtime_check", False):
+            return self._run_manga_runtime_check(args)
+
         if args.task in task_map:
             if not args.input_path:
                 console.print("[red]Error: input_path is required for this task.[/red]")
@@ -466,6 +469,65 @@ class CommandModeRunner:
             return
         for detail in getattr(status, "details", []) or []:
             self._manga_log(f"[{style}][MangaCore][/{style}] {detail}")
+
+    def _format_manga_runtime_readiness_item(self, item: object) -> str:
+        message_key = str(getattr(item, "message_key", "") or "")
+        message_args = getattr(item, "message_args", [])
+        if not isinstance(message_args, (list, tuple)):
+            message_args = []
+        fallback = str(getattr(item, "message", "") or getattr(item, "status", "") or "")
+        return self._i18n_format(message_key, fallback, *message_args)
+
+    def _run_manga_runtime_check(self, args) -> int:
+        from ModuleFolders.MangaCore.bridge.configAdapter import build_cli_config_snapshot
+        from ModuleFolders.MangaCore.pipeline.runtimeReadiness import build_manga_runtime_readiness
+
+        config_snapshot = build_cli_config_snapshot(self.host, args)
+        report = build_manga_runtime_readiness(config_snapshot=config_snapshot)
+        summary = report.summary if isinstance(report.summary, dict) else {}
+        if report.ok:
+            message = self._i18n_format(
+                "manga_runtime_readiness_check_ok",
+                "MangaCore runtime readiness check passed: {} stage(s) ready.",
+                summary.get("ready_stage_count", len(report.items)),
+            )
+            self._manga_log(f"[green][MangaCore][/green] {message}")
+        else:
+            message = self._i18n_format(
+                "manga_runtime_readiness_check_failed",
+                "MangaCore runtime readiness check failed: {} blocking issue(s).",
+                report.issue_count,
+            )
+            self._manga_log(f"[red][MangaCore][/red] {message}")
+
+        self._manga_log(f"[cyan][MangaCore][/cyan] Model root: {report.model_root}")
+        for item in report.items:
+            style = "green" if not getattr(item, "blocking", False) else "red"
+            status = str(getattr(item, "status", "") or "")
+            model_id = str(getattr(item, "model_id", "") or "")
+            stage = str(getattr(item, "stage", "") or "")
+            self._manga_log(
+                f"[{style}][MangaCore][/{style}] "
+                f"{stage} / {model_id}: {status} | {self._format_manga_runtime_readiness_item(item)}"
+            )
+            missing_modules = getattr(item, "missing_modules", [])
+            if isinstance(missing_modules, list) and missing_modules:
+                self._manga_log(f"  - missing modules: {', '.join(str(module) for module in missing_modules)}")
+            missing_assets = getattr(item, "missing_asset_paths", [])
+            if isinstance(missing_assets, list) and missing_assets:
+                for asset_path in missing_assets[:3]:
+                    self._manga_log(f"  - missing asset: {asset_path}")
+                if len(missing_assets) > 3:
+                    self._manga_log(f"  - missing asset: ... +{len(missing_assets) - 3} more")
+            action_key = str(getattr(item, "action_hint_key", "") or "")
+            action_args = getattr(item, "action_hint_args", [])
+            if action_key:
+                if not isinstance(action_args, (list, tuple)):
+                    action_args = []
+                action = self._i18n_format(action_key, "", *action_args)
+                if action:
+                    self._manga_log(f"  - action: {action}")
+        return 0 if report.ok else 2
 
     def _log_manga_quality_gate_summary(self, result) -> None:
         page_stats = result.page_job.result if result.page_job and isinstance(result.page_job.result, dict) else {}

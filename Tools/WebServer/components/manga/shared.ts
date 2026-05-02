@@ -42,6 +42,13 @@ export interface MangaEngineCard {
     runtimeSupported: boolean;
     runtimeEngineId: string;
     storagePath: string;
+    readinessStatus?: string;
+    readinessMessageKey?: string;
+    readinessMessageArgs?: any[];
+    actionHintKey?: string;
+    actionHintArgs?: any[];
+    missingModules?: string[];
+    missingAssetPaths?: string[];
   }>;
 }
 

@@ -287,6 +287,17 @@ const formatQualityIssue = (
   return String(issue?.message || issue?.code || '').trim();
 };
 
+const formatI18nPayload = (
+  key: string | undefined,
+  args: any[] | undefined,
+  fallback: string,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  if (!key) return fallback;
+  const translated = t(key, ...(Array.isArray(args) ? args : []));
+  return translated !== key ? translated : fallback;
+};
+
 export const MangaInspector: React.FC<MangaInspectorProps> = ({
   page,
   activeBlock,
@@ -1084,6 +1095,16 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                               <PackageCheck size={13} className={pkg.available ? 'text-emerald-300' : 'text-amber-300'} />
                               <div className="truncate text-xs font-semibold text-slate-200">{pkg.label}</div>
                             </div>
+                            {pkg.readinessMessageKey && (
+                              <div className="mt-0.5 line-clamp-2 text-[11px] text-amber-100">
+                                {formatI18nPayload(
+                                  pkg.readinessMessageKey,
+                                  pkg.readinessMessageArgs,
+                                  pkg.readinessStatus || '',
+                                  t,
+                                )}
+                              </div>
+                            )}
                             <div className="mt-0.5 truncate text-[11px] text-slate-500" title={pkg.repoId || pkg.storagePath}>
                               {pkg.repoId || pkg.storagePath || t('manga_unknown_package')}
                             </div>
@@ -1134,6 +1155,21 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                             </div>
                           </div>
                         </details>
+
+                        {Array.isArray(pkg.missingModules) && pkg.missingModules.length > 0 && (
+                          <div className="mt-2 text-[11px] text-amber-100">
+                            {t('manga_runtime_readiness_missing_modules', pkg.missingModules.join(', '))}
+                          </div>
+                        )}
+
+                        {Array.isArray(pkg.missingAssetPaths) && pkg.missingAssetPaths.length > 0 && (
+                          <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+                            <div>{t('manga_runtime_readiness_missing_assets', pkg.missingAssetPaths.length)}</div>
+                            {pkg.missingAssetPaths.slice(0, 2).map((assetPath) => (
+                              <div key={assetPath} className="truncate" title={assetPath}>{assetPath}</div>
+                            ))}
+                          </div>
+                        )}
 
                         {!pkg.runtimeSupported && (
                           <div className="mt-2 text-[11px] text-slate-500">{t('manga_model_no_runtime_bridge')}</div>

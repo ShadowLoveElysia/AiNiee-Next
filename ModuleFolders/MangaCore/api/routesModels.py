@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
 from ModuleFolders.MangaCore.pipeline.progress import JobRegistry
+from ModuleFolders.MangaCore.pipeline.runtimeReadiness import build_manga_runtime_readiness
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
 
@@ -75,6 +76,26 @@ def get_model(model_id: str) -> dict[str, object]:
         return MangaModelStore().get_status(model_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/runtime/readiness")
+def get_runtime_readiness(
+    manga_ocr_engine: str = "",
+    manga_detect_engine: str = "",
+    manga_segment_engine: str = "",
+    manga_inpaint_engine: str = "",
+) -> dict[str, object]:
+    config_snapshot = {
+        key: value
+        for key, value in {
+            "manga_ocr_engine": manga_ocr_engine,
+            "manga_detect_engine": manga_detect_engine,
+            "manga_segment_engine": manga_segment_engine,
+            "manga_inpaint_engine": manga_inpaint_engine,
+        }.items()
+        if value
+    }
+    return build_manga_runtime_readiness(config_snapshot=config_snapshot).to_dict()
 
 
 @router.post("/models/{model_id}/download")

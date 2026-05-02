@@ -1943,6 +1943,7 @@ class CLIMenu:
             manga=True,
             manga_strict_models=False,
             manga_allow_fallback=False,
+            manga_runtime_check=False,
             manga_ocr_engine=None,
             manga_detect_engine=None,
             manga_segment_engine=None,
@@ -2101,6 +2102,11 @@ def main():
         action='store_true',
         help="Allow MangaCore to run fallback visual runtimes for diagnostic first-pass output.",
     )
+    parser.add_argument(
+        '--manga-runtime-check',
+        action='store_true',
+        help="Print MangaCore runtime/model readiness diagnostics and exit before running a manga pipeline.",
+    )
     parser.add_argument('--manga-ocr-engine', help="MangaCore OCR engine id (default: paddleocr-vl-1.5)")
     parser.add_argument('--manga-detect-engine', help="MangaCore bubble/text detector id (default: comic-text-bubble-detector)")
     parser.add_argument('--manga-segment-engine', help="MangaCore text segmenter id (default: comic-text-detector)")
@@ -2159,6 +2165,12 @@ def main():
 
     if args.mcp or args.mcp_stdio or args.mcp_http:
         args.task = 'mcp'
+
+    if args.manga_runtime_check:
+        if args.task and args.task not in {'translate', 'manga'}:
+            parser.error("--manga-runtime-check can only be used with translate/manga tasks.")
+        args.task = args.task or 'translate'
+        args.manga = True
 
     if args.task == 'manga':
         args.task = 'translate'

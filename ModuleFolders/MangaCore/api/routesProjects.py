@@ -11,6 +11,7 @@ from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
 from ModuleFolders.MangaCore.pipeline.modelStore import build_engine_status
 from ModuleFolders.MangaCore.pipeline.qualityGate import load_quality_gate, page_blocked_from_final, remove_final_page
+from ModuleFolders.MangaCore.pipeline.runtimeReadiness import build_manga_runtime_readiness
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
@@ -110,6 +111,7 @@ def get_scene(project_id: str) -> dict[str, object]:
         "render_preset": session.scene.render_preset,
         "export_preset": session.scene.export_preset,
         "engines": build_engine_status(session.config_snapshot),
+        "runtime_readiness": build_manga_runtime_readiness(config_snapshot=session.config_snapshot).to_dict(),
         "pages": [
             {
                 "page_id": page.page_id,

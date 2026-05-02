@@ -54,6 +54,26 @@ class RuntimeDependencyStatus:
     missing_modules: tuple[str, ...] = ()
 
 
+@dataclass(slots=True)
+class RuntimeRequirementStatus:
+    supported: bool
+    model_root: str = ""
+    storage_path: str = ""
+    required_assets: tuple[str, ...] = ()
+    required_asset_paths: tuple[str, ...] = ()
+    missing_asset_paths: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "supported": self.supported,
+            "model_root": self.model_root,
+            "storage_path": self.storage_path,
+            "required_assets": list(self.required_assets),
+            "required_asset_paths": list(self.required_asset_paths),
+            "missing_asset_paths": list(self.missing_asset_paths),
+        }
+
+
 _OCR_RUNTIME_SPECS: dict[str, dict[str, str]] = {
     "paddleocr-vl-1.5": {
         "module": "manga_translator.ocr.model_paddleocr_vl",
@@ -260,6 +280,32 @@ def get_runtime_dependency_status(model_id: str) -> RuntimeDependencyStatus:
         ok=not missing,
         required_modules=tuple(required_modules),
         missing_modules=missing,
+    )
+
+
+def get_runtime_requirement_status(
+    model_id: str,
+    root_dir: str | Path | None = None,
+) -> RuntimeRequirementStatus:
+    spec = _resolve_runtime_spec(model_id)
+    if spec is None:
+        return RuntimeRequirementStatus(supported=False)
+
+    model_root = _resolve_model_root(root_dir)
+    required_assets = _RUNTIME_REQUIRED_ASSETS.get(str(model_id), ())
+    required_asset_paths = tuple(str(model_root / asset_path) for asset_path in required_assets)
+    missing_asset_paths = tuple(
+        asset_path
+        for asset_path in required_asset_paths
+        if not Path(asset_path).exists()
+    )
+    return RuntimeRequirementStatus(
+        supported=True,
+        model_root=str(model_root),
+        storage_path=_runtime_storage_path(model_id, root_dir),
+        required_assets=tuple(required_assets),
+        required_asset_paths=required_asset_paths,
+        missing_asset_paths=missing_asset_paths,
     )
 
 

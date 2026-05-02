@@ -143,12 +143,45 @@ export interface MangaSceneEngineStatus {
   inpaint: MangaInpaintEngineStatus;
 }
 
+export interface MangaRuntimeReadinessItem {
+  stage: string;
+  model_id: string;
+  display_name?: string;
+  status: string;
+  blocking: boolean;
+  message?: string;
+  message_key?: string;
+  message_args?: any[];
+  action_hint_key?: string;
+  action_hint_args?: any[];
+  available?: boolean;
+  runtime_supported?: boolean;
+  runtime_engine_id?: string;
+  storage_path?: string;
+  snapshot_path?: string;
+  required_modules?: string[];
+  missing_modules?: string[];
+  required_assets?: string[];
+  required_asset_paths?: string[];
+  missing_asset_paths?: string[];
+}
+
+export interface MangaRuntimeReadinessReport {
+  ok: boolean;
+  checked_at: string;
+  model_root: string;
+  items: MangaRuntimeReadinessItem[];
+  issue_count: number;
+  summary: Record<string, any>;
+}
+
 export interface MangaSceneSummary {
   project_id: string;
   current_page_id: string;
   render_preset: string;
   export_preset: string;
   engines?: MangaSceneEngineStatus;
+  runtime_readiness?: MangaRuntimeReadinessReport;
   pages: MangaScenePageSummary[];
 }
 
