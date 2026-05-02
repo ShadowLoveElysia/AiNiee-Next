@@ -149,12 +149,20 @@ class AIProofreadMenu:
             if status not in [TranslationStatus.TRANSLATED, TranslationStatus.POLISHED]:
                 continue
             source = item.get("source_text", "")
-            target = item.get("translated_text", "") or item.get("polished_text", "")
+            polished_text = item.get("polished_text", "")
+            translated_text = item.get("translated_text", "")
+            if status == TranslationStatus.POLISHED and polished_text:
+                target = polished_text
+                target_field = "polished_text"
+            else:
+                target = translated_text
+                target_field = "translated_text"
             if source and target:
                 to_check.append({
                     "index": item.get("text_index", 0),
                     "source": source,
-                    "translation": target
+                    "translation": target,
+                    "target_field": target_field,
                 })
 
         console.print(f"[blue]开始校对 {len(to_check)} 条内容...[/blue]")
@@ -209,9 +217,17 @@ class AIProofreadMenu:
         rpm_limit = self.config.get("rpm_limit", 60)
         request_limiter.set_limit(tpm_limit, rpm_limit)
 
-        # 获取批量大小 (和翻译一样使用lines_limit)
-        lines_limit = self.config.get("lines_limit", 30)
-        pre_line_counts = self.config.get("pre_line_counts", 3)
+        # 获取AI校对批量大小与上下文行数
+        lines_limit = self.config.get("proofread_batch_size", self.config.get("lines_limit", 30))
+        pre_line_counts = self.config.get("proofread_context_lines", self.config.get("pre_line_counts", 3))
+        try:
+            lines_limit = max(1, int(lines_limit))
+        except (TypeError, ValueError):
+            lines_limit = 30
+        try:
+            pre_line_counts = max(0, int(pre_line_counts))
+        except (TypeError, ValueError):
+            pre_line_counts = 3
 
         # 分割数据为批次
         chunks = []
@@ -271,7 +287,8 @@ class AIProofreadMenu:
                                 ai_check={
                                     "has_issues": True,
                                     "issues": issue_list,
-                                    "corrected_translation": corrections.get(line_id, "")
+                                    "corrected_translation": corrections.get(line_id, ""),
+                                    "target_field": item.get("target_field", "translated_text"),
                                 }
                             )
                             report.add_item(report_item)
@@ -419,9 +436,23 @@ class AIProofreadMenu:
                 for cache_file in project.files.values():
                     for cache_item in cache_file.items:
                         if cache_item.text_index == text_index:
-                            # 更新译文
-                            cache_item.translated_text = corrected_text
-                            cache_item.translation_status = TranslationStatus.AI_PROOFREAD
+                            target_field = item.ai_check.get("target_field")
+                            if target_field not in ("translated_text", "polished_text"):
+                                target_field = "polished_text" if cache_item.polished_text.strip() else "translated_text"
+
+                            if target_field == "polished_text":
+                                cache_item.polished_text = corrected_text
+                                cache_item.translation_status = TranslationStatus.POLISHED
+                            else:
+                                cache_item.translated_text = corrected_text
+                                cache_item.translation_status = TranslationStatus.TRANSLATED
+
+                            if cache_item.extra is None:
+                                cache_item.extra = {}
+                            cache_item.extra["ai_proofread"] = {
+                                "target_field": target_field,
+                                "applied": True,
+                            }
                             applied_count += 1
                             break
 

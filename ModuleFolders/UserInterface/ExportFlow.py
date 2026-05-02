@@ -65,13 +65,8 @@ class ExportFlow:
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
                 }
-                source_project = (
-                    self.host.cache_manager.project
-                    if hasattr(self.host.cache_manager, "project") and self.host.cache_manager.project
-                    else project
-                )
                 self.host.file_outputer.output_translated_content(
-                    source_project,
+                    project,
                     output_path,
                     target_path,
                     output_config,
