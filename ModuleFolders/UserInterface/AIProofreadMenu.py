@@ -42,6 +42,41 @@ class AIProofreadMenu:
     def i18n(self):
         return self.host.i18n
 
+    @staticmethod
+    def _resolve_correction_target_field(report_item, cache_item) -> str:
+        """确定AI校对修正应写回的缓存字段。"""
+        target_field = report_item.ai_check.get("target_field")
+        if target_field in ("translated_text", "polished_text"):
+            return target_field
+
+        report_text = report_item.translated_text or ""
+        if report_text == (cache_item.translated_text or ""):
+            return "translated_text"
+        if report_text == (cache_item.polished_text or ""):
+            return "polished_text"
+        return "translated_text"
+
+    @classmethod
+    def _apply_correction_to_cache_item(cls, report_item, cache_item, corrected_text: str) -> str:
+        """应用AI校对修正，并返回实际写回字段。"""
+        target_field = cls._resolve_correction_target_field(report_item, cache_item)
+
+        if target_field == "polished_text":
+            cache_item.polished_text = corrected_text
+            cache_item.translation_status = TranslationStatus.POLISHED
+        else:
+            cache_item.translated_text = corrected_text
+            cache_item.polished_text = ""
+            cache_item.translation_status = TranslationStatus.TRANSLATED
+
+        if cache_item.extra is None:
+            cache_item.extra = {}
+        cache_item.extra["ai_proofread"] = {
+            "target_field": target_field,
+            "applied": True,
+        }
+        return target_field
+
     def show(self):
         """显示AI校对菜单（入口方法）"""
         from ModuleFolders.UserInterface.Proofreader import ProofreadTUI
@@ -436,30 +471,7 @@ class AIProofreadMenu:
                 for cache_file in project.files.values():
                     for cache_item in cache_file.items:
                         if cache_item.text_index == text_index:
-                            target_field = item.ai_check.get("target_field")
-                            if target_field not in ("translated_text", "polished_text"):
-                                report_text = item.translated_text or ""
-                                if report_text == (cache_item.polished_text or ""):
-                                    target_field = "polished_text"
-                                elif report_text == (cache_item.translated_text or ""):
-                                    target_field = "translated_text"
-                                else:
-                                    target_field = "translated_text"
-
-                            if target_field == "polished_text":
-                                cache_item.polished_text = corrected_text
-                                cache_item.translation_status = TranslationStatus.POLISHED
-                            else:
-                                cache_item.translated_text = corrected_text
-                                cache_item.polished_text = ""
-                                cache_item.translation_status = TranslationStatus.TRANSLATED
-
-                            if cache_item.extra is None:
-                                cache_item.extra = {}
-                            cache_item.extra["ai_proofread"] = {
-                                "target_field": target_field,
-                                "applied": True,
-                            }
+                            self._apply_correction_to_cache_item(item, cache_item, corrected_text)
                             applied_count += 1
                             break
 
