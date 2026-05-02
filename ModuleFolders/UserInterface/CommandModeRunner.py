@@ -432,6 +432,101 @@ class CommandModeRunner:
             else:
                 manga_tui.update_status(None, {"status": "normal"})
 
+    def _format_manga_quality_issue(self, issue: object) -> str:
+        message_key = str(getattr(issue, "message_key", "") or "")
+        message_args = getattr(issue, "message_args", [])
+        if not isinstance(message_args, (list, tuple)):
+            message_args = []
+        fallback = str(getattr(issue, "message", "") or getattr(issue, "code", "") or "")
+        return self._i18n_format(message_key, fallback, *message_args)
+
+    def _format_manga_runtime_preflight_issue(self, issue: object) -> str:
+        if isinstance(issue, dict):
+            message_key = str(issue.get("message_key") or "")
+            message_args = issue.get("message_args") if isinstance(issue.get("message_args"), (list, tuple)) else []
+            fallback = str(issue.get("message") or issue.get("code") or "")
+            return self._i18n_format(message_key, fallback, *message_args)
+        return self._format_manga_quality_issue(issue)
+
+    def _log_manga_runtime_preflight_status(self, status, *, style: str = "red") -> None:
+        message_args = getattr(status, "message_args", [])
+        if not isinstance(message_args, (list, tuple)):
+            message_args = []
+        message = self._i18n_format(
+            str(getattr(status, "message_key", "") or ""),
+            str(getattr(status, "message", "") or ""),
+            *message_args,
+        )
+        if message:
+            self._manga_log(f"[{style}][MangaCore][/{style}] {message}")
+        issues = getattr(status, "issues", [])
+        if isinstance(issues, list) and issues:
+            for issue in issues:
+                self._manga_log(f"[{style}][MangaCore][/{style}] {self._format_manga_runtime_preflight_issue(issue)}")
+            return
+        for detail in getattr(status, "details", []) or []:
+            self._manga_log(f"[{style}][MangaCore][/{style}] {detail}")
+
+    def _log_manga_quality_gate_summary(self, result) -> None:
+        page_stats = result.page_job.result if result.page_job and isinstance(result.page_job.result, dict) else {}
+        final_blocked_pages = int(page_stats.get("final_blocked_pages") or 0)
+        if final_blocked_pages <= 0:
+            return
+
+        from ModuleFolders.MangaCore.pipeline.qualityGate import (
+            load_quality_gate,
+            page_blocked_from_final,
+            quality_gate_path,
+        )
+
+        self._manga_log(
+            f"[yellow][MangaCore][/yellow] "
+            f"{self._i18n_format('manga_cli_quality_gate_final_empty', '', final_blocked_pages)}"
+        )
+        for page_ref in result.session.scene.pages:
+            page = result.session.pages[page_ref.page_id]
+            blocked, reasons = page_blocked_from_final(result.session, page)
+            if not blocked:
+                continue
+            gate = load_quality_gate(result.session, page)
+            issue_texts = (
+                [
+                    self._format_manga_quality_issue(issue)
+                    for issue in gate.issues
+                    if issue.blocks_final
+                ]
+                if gate is not None
+                else reasons
+            )
+            reason = "；".join([text for text in issue_texts if text][:3]) or "needs review"
+            draft_path = result.session.project_path / page.layers.rendered
+            report_path = quality_gate_path(result.session, page)
+            self._manga_log(
+                "  - "
+                + self._i18n_format(
+                    "manga_cli_quality_gate_page_summary",
+                    "Page {}: {}",
+                    page.index,
+                    reason,
+                )
+            )
+            self._manga_log(
+                "    "
+                + self._i18n_format(
+                    "manga_cli_quality_gate_draft_path",
+                    "Draft preview: {}",
+                    draft_path,
+                )
+            )
+            self._manga_log(
+                "    "
+                + self._i18n_format(
+                    "manga_cli_quality_gate_report_path",
+                    "Quality report: {}",
+                    report_path,
+                )
+            )
+
     def _run_manga(self, args):
         input_path = normalize_cli_path(args.input_path)
         if not os.path.exists(input_path):
@@ -468,18 +563,16 @@ class CommandModeRunner:
 
         model_status = get_manga_feature_status(config_snapshot=config_snapshot, require_models=True)
         if not model_status.available:
-            if getattr(args, "manga_strict_models", False):
-                self._manga_log(f"[red][MangaCore][/red] {model_status.message}")
-                for detail in model_status.details:
-                    self._manga_log(f"[red][MangaCore][/red] {detail}")
+            allow_runtime_fallback = bool(getattr(args, "manga_allow_fallback", False)) and not bool(getattr(args, "manga_strict_models", False))
+            if not allow_runtime_fallback:
+                self._log_manga_runtime_preflight_status(model_status, style="red")
                 return 2
 
             self._manga_log(
-                "[yellow][MangaCore][/yellow] Default visual model packages are not fully prepared; "
-                "first-pass pipeline will use available fallback runtimes where possible."
+                "[yellow][MangaCore][/yellow] Runtime preflight failed, but --manga-allow-fallback was set; "
+                "first-pass pipeline will use fallback runtimes where possible."
             )
-            for detail in model_status.details:
-                self._manga_log(f"[yellow][MangaCore][/yellow] {detail}")
+            self._log_manga_runtime_preflight_status(model_status, style="yellow")
 
         self.host.save_config()
 
@@ -546,6 +639,7 @@ class CommandModeRunner:
                 stats = format_manga_page_stats(result.page_job.result)
                 if stats:
                     self._manga_log(f"[bold cyan][MangaCore][/bold cyan] Page stats: {stats}")
+        self._log_manga_quality_gate_summary(result)
         if result.exports.exported_paths:
             self._manga_log("[bold green][MangaCore][/bold green] Exported files:")
             for key, path in result.exports.exported_paths.items():
@@ -558,14 +652,17 @@ class CommandModeRunner:
             page_stats = result.page_job.result if result.page_job and isinstance(result.page_job.result, dict) else {}
             total_pages = int(page_stats.get("page_count") or 1)
             processed_pages = int(page_stats.get("processed_pages") or total_pages)
+            final_blocked_pages = int(page_stats.get("final_blocked_pages") or 0)
             self._manga_update_progress(
                 {
                     "input_path": input_path,
                     "total_pages": total_pages,
                     "processed_pages": processed_pages,
-                    "status": "failed",
+                    "status": "needs_review" if final_blocked_pages else "failed",
                     "stage": "needs_review",
                     "message": "Finished with warnings.",
+                    "message_key": "manga_notice_quality_gate_blocked_pages" if final_blocked_pages else "",
+                    "message_args": [final_blocked_pages] if final_blocked_pages else [],
                     "translation_warnings": int(page_stats.get("translation_warnings") or len(result.warnings) or 1),
                 }
             )

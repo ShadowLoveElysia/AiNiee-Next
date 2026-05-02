@@ -1942,6 +1942,7 @@ class CLIMenu:
             web_mode=False,
             manga=True,
             manga_strict_models=False,
+            manga_allow_fallback=False,
             manga_ocr_engine=None,
             manga_detect_engine=None,
             manga_segment_engine=None,
@@ -2093,7 +2094,12 @@ def main():
     parser.add_argument(
         '--manga-strict-models',
         action='store_true',
-        help="Fail MangaCore startup if default visual model packages are missing instead of using fallback runtimes.",
+        help="Fail MangaCore startup if default visual model packages are missing. This is now the default for automatic manga pipelines.",
+    )
+    parser.add_argument(
+        '--manga-allow-fallback',
+        action='store_true',
+        help="Allow MangaCore to run fallback visual runtimes for diagnostic first-pass output.",
     )
     parser.add_argument('--manga-ocr-engine', help="MangaCore OCR engine id (default: paddleocr-vl-1.5)")
     parser.add_argument('--manga-detect-engine', help="MangaCore bubble/text detector id (default: comic-text-bubble-detector)")

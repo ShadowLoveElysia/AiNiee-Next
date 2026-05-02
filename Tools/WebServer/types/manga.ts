@@ -41,6 +41,46 @@ export interface MangaOperationResult {
 export interface MangaExportResult {
   ok: boolean;
   path?: string | null;
+  message_key?: string;
+  message_args?: any[];
+  blocked_pages?: MangaBlockedExportPage[];
+  warnings?: string[];
+}
+
+export interface MangaQualityIssue {
+  code: string;
+  stage: string;
+  message_key: string;
+  message: string;
+  message_args?: any[];
+  blocks_final: boolean;
+}
+
+export interface MangaPageQualityGate {
+  exists: boolean;
+  ok: boolean;
+  final_allowed: boolean;
+  blocked_from_final: boolean;
+  issue_count: number;
+  issues: MangaQualityIssue[];
+  metrics: Record<string, any>;
+  stage_modes: Record<string, any>;
+  artifact_path?: string;
+  artifact_url?: string;
+  draft_rendered_path?: string;
+  draft_rendered_url?: string;
+  final_page_path?: string;
+  final_page_exists?: boolean;
+}
+
+export interface MangaBlockedExportPage {
+  page_id: string;
+  index: number;
+  status: string;
+  issue_count: number;
+  issues: MangaQualityIssue[];
+  draft_rendered_path?: string;
+  quality_gate_path?: string;
 }
 
 export interface MangaScenePageSummary {
@@ -48,6 +88,12 @@ export interface MangaScenePageSummary {
   index: number;
   status: string;
   thumbnail_url: string;
+  quality_gate?: {
+    exists: boolean;
+    blocked_from_final: boolean;
+    issue_count: number;
+    final_allowed: boolean;
+  };
 }
 
 export interface MangaModelPackageStatus {
@@ -151,6 +197,7 @@ export interface MangaPageDetail {
     restore_url: string;
   };
   blocks: MangaTextBlock[];
+  quality_gate?: MangaPageQualityGate;
 }
 
 export interface MangaRuntimeValidationStage {

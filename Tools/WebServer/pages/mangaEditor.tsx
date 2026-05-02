@@ -10,7 +10,7 @@ import { MangaTopBar } from '../components/manga/mangaTopBar';
 import { useI18n } from '../contexts/I18nContext';
 import { MangaBlockDraft, MangaBrushStrokePayload, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeBox, MangaCanvasRuntimeOverlay, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode, translateMangaEnum } from '../components/manga/shared';
 import { DataService } from '../services/DataService';
-import { MangaJob, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
+import { MangaExportResult, MangaJob, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
 
 type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -75,10 +75,27 @@ const getQualityNoticeMessage = (
   return issueText ? t('manga_notice_quality_gate_blocked', issueText) : '';
 };
 
+const getRuntimePreflightNoticeMessage = (
+  job: MangaJob,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const issues = Array.isArray(job.result?.runtime_preflight_issues) ? job.result?.runtime_preflight_issues : [];
+  if (!issues.length) return '';
+  const issueText = issues
+    .map((issue) => formatQualityIssue(issue, t))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join('；');
+  return issueText ? t('manga_runtime_preflight_failed_detail', issueText) : '';
+};
+
 const formatJobMessage = (
   job: MangaJob,
   t: (key: string, ...args: any[]) => string,
 ) => {
+  const runtimePreflightMessage = getRuntimePreflightNoticeMessage(job, t);
+  if (runtimePreflightMessage) return runtimePreflightMessage;
+
   const qualityMessage = getQualityNoticeMessage(job, t);
   if (qualityMessage) return qualityMessage;
 
@@ -94,6 +111,63 @@ const formatJobMessage = (
     if (translated !== key) return translated;
   }
   return String(job.message || '');
+};
+
+const formatI18nPayload = (
+  key: string | undefined,
+  args: any[] | undefined,
+  fallback: string,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  if (!key) return fallback;
+  const translated = t(key, ...(Array.isArray(args) ? args : []));
+  return translated !== key ? translated : fallback;
+};
+
+const getPageQualityNotice = (
+  page: MangaPageDetail | null,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  if (!page?.quality_gate?.blocked_from_final) return '';
+  const issues = Array.isArray(page.quality_gate.issues) ? page.quality_gate.issues : [];
+  const issueText = issues
+    .filter((issue) => issue.blocks_final)
+    .map((issue) => formatQualityIssue(issue, t))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join('；');
+  return issueText
+    ? t('manga_quality_gate_draft_only_reason', issueText)
+    : t('manga_quality_gate_draft_only');
+};
+
+const getExportResultMessage = (
+  format: string,
+  result: MangaExportResult,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const formatLabel = format.toUpperCase();
+  const blockedPages = Array.isArray(result.blocked_pages) ? result.blocked_pages : [];
+  const firstIssue = blockedPages
+    .flatMap((blockedPage) => Array.isArray(blockedPage.issues) ? blockedPage.issues : [])
+    .map((issue) => formatQualityIssue(issue, t))
+    .filter(Boolean)[0] || '';
+  const backendMessage = formatI18nPayload(
+    result.message_key,
+    result.message_args,
+    '',
+    t,
+  );
+
+  if (result.ok) {
+    const exportedMessage = t('manga_notice_exported_to', formatLabel, result.path || '');
+    return backendMessage ? `${exportedMessage} ${backendMessage}` : exportedMessage;
+  }
+
+  if (blockedPages.length > 0 && firstIssue) {
+    return t('manga_export_blocked_by_quality_gate_detail', blockedPages.length, firstIssue);
+  }
+  return backendMessage || t('manga_notice_export_no_file', formatLabel);
 };
 
 const ACTION_LABEL_KEYS: Record<string, string> = {
@@ -390,6 +464,9 @@ export const MangaEditor: React.FC = () => {
       : null
   ), [activeJob, t]);
 
+  const pageQualityMessage = getPageQualityNotice(page, t);
+  const pageQualityGate = page?.quality_gate || null;
+
   const statusLeftText = page
     ? t('manga_status_page_loaded', page.index, page.width, page.height, page.blocks.length, t(`manga_view_${viewMode}`), canvasZoomPercent)
     : t('manga_status_no_page_loaded');
@@ -400,6 +477,8 @@ export const MangaEditor: React.FC = () => {
 
   const statusRightText = activeJobSummary
     ? `${activeJobSummary.stageLabel} · ${activeJobSummary.progress}% · ${translateMangaEnum('manga_state', activeJobSummary.status, t)}`
+    : pageQualityGate?.blocked_from_final
+      ? t('manga_quality_gate_status_right', pageQualityGate.issue_count || 0)
     : engineCards.length > 0
       ? engineCards.map((card) => `${card.label}:${card.available ? t('manga_ready') : t('manga_missing')}`).join(' · ')
       : t('manga_idle');
@@ -1068,7 +1147,7 @@ export const MangaEditor: React.FC = () => {
       const result = await DataService.exportMangaProject(project.project_id, format);
       showNotice(
         result.ok ? 'success' : 'warning',
-        result.ok ? t('manga_notice_exported_to', format.toUpperCase(), result.path || '') : t('manga_notice_export_no_file', format.toUpperCase()),
+        getExportResultMessage(format, result, t),
       );
     });
   };
@@ -1322,6 +1401,23 @@ export const MangaEditor: React.FC = () => {
       {error && (
         <div className="mx-4 mt-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
           {error}
+        </div>
+      )}
+
+      {pageQualityGate?.blocked_from_final && (
+        <div className="mx-4 mt-3 rounded-lg border border-amber-400/25 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-bold">{t('manga_quality_gate_title')} · {t('manga_page_badge_final_blocked')}</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-100/75">
+              {t('manga_quality_gate_issue_count', pageQualityGate.issue_count || 0)}
+            </div>
+          </div>
+          <div className="mt-1 leading-relaxed">{pageQualityMessage || t('manga_quality_gate_draft_only')}</div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-amber-100/70">
+            {pageQualityGate.draft_rendered_path && <span>{t('manga_quality_gate_draft_path', pageQualityGate.draft_rendered_path)}</span>}
+            {pageQualityGate.artifact_path && <span>{t('manga_quality_gate_report_path', pageQualityGate.artifact_path)}</span>}
+            {pageQualityGate.final_page_path && <span>{t('manga_quality_gate_final_path', pageQualityGate.final_page_path)}</span>}
+          </div>
         </div>
       )}
 

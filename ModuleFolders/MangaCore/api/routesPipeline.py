@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_status
 from ModuleFolders.MangaCore.api.schemas import BatchTranslateRequest, PageTranslateRequest
-from ModuleFolders.MangaCore.pipeline.progress import JobRegistry
+from ModuleFolders.MangaCore.pipeline.progress import JobRegistry, PipelineJob
 from ModuleFolders.MangaCore.pipeline.runtimeValidation import MangaRuntimeValidator, RuntimeValidationCancelled
 from ModuleFolders.MangaCore.pipeline.runnerPage import MangaPageRunner
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
@@ -36,6 +36,58 @@ def _ensure_manga_translation_ready(session: MangaProjectSession) -> None:
     )
     if not status.available:
         raise HTTPException(status_code=503, detail=status.user_message())
+
+
+def _feature_status_payload(status) -> dict[str, object]:
+    if hasattr(status, "to_dict"):
+        try:
+            payload = status.to_dict()
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+    return {
+        "available": bool(getattr(status, "available", False)),
+        "message": str(getattr(status, "message", "") or ""),
+        "message_key": str(getattr(status, "message_key", "") or ""),
+        "message_args": list(getattr(status, "message_args", []) or []),
+        "details": list(getattr(status, "details", []) or []),
+        "missing_model_ids": list(getattr(status, "missing_model_ids", []) or []),
+        "issues": list(getattr(status, "issues", []) or []),
+        "import_error": str(getattr(status, "import_error", "") or ""),
+    }
+
+
+def _runtime_preflight_failure(session: MangaProjectSession, page_id: str = "") -> PipelineJob | None:
+    status = get_manga_feature_status(
+        config_snapshot=session.config_snapshot,
+        require_models=True,
+    )
+    if status.available:
+        return None
+
+    payload = _feature_status_payload(status)
+    issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
+    message_key = str(payload.get("message_key") or "manga_runtime_preflight_failed")
+    message_args = payload.get("message_args") if isinstance(payload.get("message_args"), list) else [len(issues)]
+    job = JobRegistry.create(
+        project_id=session.manifest.project_id,
+        page_id=page_id,
+        stage="runtime_preflight_failed",
+        status="failed",
+        progress=0,
+        message=str(payload.get("message") or "MangaCore runtime preflight failed."),
+    )
+    return JobRegistry.update(
+        job.job_id,
+        message_key=message_key,
+        message_args=list(message_args),
+        error_message=str(payload.get("message") or ""),
+        result={
+            "runtime_preflight": payload,
+            "runtime_preflight_issues": issues,
+        },
+    ) or job
 
 
 def _validate_runtime_run_id(run_id: str) -> None:
@@ -158,6 +210,11 @@ def _diff_runtime_validation_reports(
 def translate_page(project_id: str, page_id: str, request: PageTranslateRequest) -> dict[str, object]:
     session = _ensure_project_and_page(project_id, page_id)
     _ensure_manga_translation_ready(session)
+    preflight_job = _runtime_preflight_failure(session, page_id)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_id"] = page_id
+        return payload
     job = MangaPageRunner().translate_current_page(
         session,
         page_id=page_id,
@@ -173,6 +230,11 @@ def translate_page(project_id: str, page_id: str, request: PageTranslateRequest)
 def detect_page(project_id: str, page_id: str) -> dict[str, object]:
     session = _ensure_project_and_page(project_id, page_id)
     _ensure_manga_translation_ready(session)
+    preflight_job = _runtime_preflight_failure(session, page_id)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_id"] = page_id
+        return payload
     job = MangaPageRunner().detect_current_page(
         session,
         page_id=page_id,
@@ -187,6 +249,11 @@ def detect_page(project_id: str, page_id: str) -> dict[str, object]:
 def ocr_page(project_id: str, page_id: str) -> dict[str, object]:
     session = _ensure_project_and_page(project_id, page_id)
     _ensure_manga_translation_ready(session)
+    preflight_job = _runtime_preflight_failure(session, page_id)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_id"] = page_id
+        return payload
     job = MangaPageRunner().ocr_current_page(
         session,
         page_id=page_id,
@@ -202,6 +269,11 @@ def ocr_page(project_id: str, page_id: str) -> dict[str, object]:
 def inpaint_page(project_id: str, page_id: str) -> dict[str, object]:
     session = _ensure_project_and_page(project_id, page_id)
     _ensure_manga_translation_ready(session)
+    preflight_job = _runtime_preflight_failure(session, page_id)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_id"] = page_id
+        return payload
     job = MangaPageRunner().inpaint_current_page(
         session,
         page_id=page_id,
@@ -474,6 +546,11 @@ def translate_selected_pages(project_id: str, request: BatchTranslateRequest) ->
     _ensure_manga_translation_ready(session)
     for page_id in request.page_ids:
         _ensure_project_and_page(project_id, page_id)
+    preflight_job = _runtime_preflight_failure(session)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_count"] = len(request.page_ids)
+        return payload
     job = MangaPageRunner().translate_selected_pages(
         session,
         page_ids=request.page_ids,
@@ -498,6 +575,11 @@ def plan_selected_pages(project_id: str, request: BatchTranslateRequest) -> dict
     _ensure_manga_translation_ready(session)
     for page_id in request.page_ids:
         _ensure_project_and_page(project_id, page_id)
+    preflight_job = _runtime_preflight_failure(session)
+    if preflight_job is not None:
+        payload = preflight_job.to_dict()
+        payload["page_count"] = len(request.page_ids)
+        return payload
     job = MangaPageRunner().plan_selected_pages(
         session,
         page_ids=request.page_ids,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Grid3X3 } from 'lucide-react';
+import { AlertTriangle, Grid3X3 } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaScenePageSummary } from '../../types/manga';
@@ -38,7 +38,9 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
         </div>
       </div>
       <div className="p-3 space-y-3">
-        {pages.map((scenePage) => (
+        {pages.map((scenePage) => {
+          const isFinalBlocked = Boolean(scenePage.quality_gate?.blocked_from_final);
+          return (
           <button
             key={scenePage.page_id}
             onClick={() => onSelectPage(scenePage.page_id)}
@@ -68,12 +70,24 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
             </div>
             <div className="px-3 py-2 flex items-center justify-between gap-3">
               <span className="text-sm font-semibold text-slate-100">#{scenePage.index}</span>
-              {currentPageId === scenePage.page_id && (
-                <span className="text-[10px] uppercase tracking-[0.18em] text-primary">{t('manga_current')}</span>
-              )}
+              <span className="flex min-w-0 items-center gap-1.5">
+                {isFinalBlocked && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-300/25 bg-amber-300/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-100"
+                    title={t('manga_quality_gate_issue_count', scenePage.quality_gate?.issue_count || 0)}
+                  >
+                    <AlertTriangle size={11} />
+                    {t('manga_page_badge_final_blocked')}
+                  </span>
+                )}
+                {currentPageId === scenePage.page_id && (
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-primary">{t('manga_current')}</span>
+                )}
+              </span>
             </div>
           </button>
-        ))}
+          );
+        })}
       </div>
     </aside>
   );

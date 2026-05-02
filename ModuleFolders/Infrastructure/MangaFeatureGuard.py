@@ -9,8 +9,11 @@ from pathlib import Path
 class MangaFeatureStatus:
     available: bool
     message: str = ""
+    message_key: str = ""
+    message_args: list[object] = field(default_factory=list)
     details: list[str] = field(default_factory=list)
     missing_model_ids: list[str] = field(default_factory=list)
+    issues: list[dict[str, object]] = field(default_factory=list)
     import_error: str = ""
 
     def user_message(self) -> str:
@@ -23,6 +26,18 @@ class MangaFeatureStatus:
                 segments.append(normalized)
         return " ".join(segments).strip()
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "available": self.available,
+            "message": self.message,
+            "message_key": self.message_key,
+            "message_args": list(self.message_args),
+            "details": list(self.details),
+            "missing_model_ids": list(self.missing_model_ids),
+            "issues": list(self.issues),
+            "import_error": self.import_error,
+        }
+
 
 def _resolve_required_model_ids(config_snapshot: dict[str, object] | None = None) -> dict[str, str]:
     snapshot = dict(config_snapshot) if isinstance(config_snapshot, dict) else {}
@@ -31,6 +46,25 @@ def _resolve_required_model_ids(config_snapshot: dict[str, object] | None = None
         "segment": str(snapshot.get("manga_segment_engine") or "comic-text-detector"),
         "ocr": str(snapshot.get("manga_ocr_engine") or "paddleocr-vl-1.5"),
         "inpaint": str(snapshot.get("manga_inpaint_engine") or "aot-inpainting"),
+    }
+
+
+def _runtime_issue(
+    *,
+    code: str,
+    stage: str,
+    model_id: str,
+    message_key: str,
+    message: str,
+    message_args: list[object] | None = None,
+) -> dict[str, object]:
+    return {
+        "code": code,
+        "stage": stage,
+        "model_id": model_id,
+        "message_key": message_key,
+        "message": message,
+        "message_args": list(message_args or []),
     }
 
 
@@ -46,6 +80,8 @@ def get_manga_feature_status(
         return MangaFeatureStatus(
             available=False,
             message="漫画模块当前不可用。MangaCore 组件未安装或导入失败。",
+            message_key="manga_runtime_preflight_module_unavailable",
+            message_args=[str(exc)],
             details=["当前不会影响主程序其它功能。需要使用漫画翻译时，再补齐漫画模块。"],
             import_error=str(exc),
         )
@@ -62,6 +98,8 @@ def get_manga_feature_status(
         return MangaFeatureStatus(
             available=False,
             message="漫画模块已加载，但漫画模型检查器不可用。",
+            message_key="manga_runtime_preflight_checker_unavailable",
+            message_args=[str(exc)],
             details=["当前不会影响普通文本翻译。只有在使用漫画翻译时才需要补齐漫画模型配置。"],
             import_error=str(exc),
         )
@@ -71,21 +109,58 @@ def get_manga_feature_status(
     details: list[str] = []
     missing_model_ids: list[str] = []
     runtime_problem_ids: list[str] = []
+    issues: list[dict[str, object]] = []
 
     for stage, model_id in required_model_ids.items():
         try:
             status = store.get_status(model_id)
         except Exception as exc:
             missing_model_ids.append(model_id)
-            details.append(f"{stage}: 未知漫画引擎 `{model_id}` ({exc})")
+            message = f"{stage}: 未知漫画引擎 `{model_id}` ({exc})"
+            details.append(message)
+            issues.append(
+                _runtime_issue(
+                    code="unknown_model",
+                    stage=stage,
+                    model_id=model_id,
+                    message_key="manga_runtime_preflight_unknown_model",
+                    message=message,
+                    message_args=[stage, model_id, str(exc)],
+                )
+            )
             continue
 
         if not bool(status.get("available")):
             missing_model_ids.append(model_id)
             runtime_assets_path = str(status.get("runtime_assets_path", "") or "")
             hint_path = runtime_assets_path or str(status.get("cache_dir", "") or "")
-            details.append(
-                f"{stage}: 缺少模型包 `{model_id}`，请先下载到 `{hint_path}`。"
+            message = f"{stage}: 缺少模型包 `{model_id}`，请先下载到 `{hint_path}`。"
+            details.append(message)
+            issues.append(
+                _runtime_issue(
+                    code="missing_model",
+                    stage=stage,
+                    model_id=model_id,
+                    message_key="manga_runtime_preflight_missing_model",
+                    message=message,
+                    message_args=[stage, model_id, hint_path],
+                )
+            )
+            continue
+
+        if stage in {"detect", "ocr", "inpaint"} and not bool(status.get("runtime_supported")):
+            runtime_problem_ids.append(model_id)
+            message = f"{stage}: 模型包 `{model_id}` 当前没有可用 Runtime 桥接，自动流水线会退回 fallback。"
+            details.append(message)
+            issues.append(
+                _runtime_issue(
+                    code="unsupported_runtime_model",
+                    stage=stage,
+                    model_id=model_id,
+                    message_key="manga_runtime_preflight_unsupported_runtime_model",
+                    message=message,
+                    message_args=[stage, model_id],
+                )
             )
             continue
 
@@ -94,8 +169,17 @@ def get_manga_feature_status(
             if getattr(dependency_status, "supported", False) and not getattr(dependency_status, "ok", False):
                 runtime_problem_ids.append(model_id)
                 missing_modules = ", ".join(getattr(dependency_status, "missing_modules", ()))
-                details.append(
-                    f"{stage}: 模型包 `{model_id}` 已存在，但视觉 runtime 依赖不可用，缺少 Python 模块: {missing_modules}。"
+                message = f"{stage}: 模型包 `{model_id}` 已存在，但视觉 runtime 依赖不可用，缺少 Python 模块: {missing_modules}。"
+                details.append(message)
+                issues.append(
+                    _runtime_issue(
+                        code="missing_dependency",
+                        stage=stage,
+                        model_id=model_id,
+                        message_key="manga_runtime_preflight_missing_dependency",
+                        message=message,
+                        message_args=[stage, model_id, missing_modules],
+                    )
                 )
 
     if missing_model_ids:
@@ -105,8 +189,11 @@ def get_manga_feature_status(
                 "未配置漫画相关内容：缺少漫画翻译所需模型包。"
                 f" 当前缺少: {', '.join(missing_model_ids)}"
             ),
+            message_key="manga_runtime_preflight_failed",
+            message_args=[len(issues)],
             details=details + ["主程序其它功能不受影响；仅在使用漫画翻译时需要补齐这些内容。"],
             missing_model_ids=missing_model_ids,
+            issues=issues,
         )
 
     if runtime_problem_ids:
@@ -116,8 +203,11 @@ def get_manga_feature_status(
                 "漫画模型文件已存在，但视觉 runtime 依赖不可用。"
                 f" 当前不可运行: {', '.join(runtime_problem_ids)}"
             ),
-            details=details + ["可用 strict 模式阻止 fallback 成稿；请先补齐依赖后再做自动成稿验收。"],
+            message_key="manga_runtime_preflight_failed",
+            message_args=[len(issues)],
+            details=details + ["已阻止 fallback 自动流水线；请先补齐依赖后再做自动成稿验收。"],
             missing_model_ids=runtime_problem_ids,
+            issues=issues,
         )
 
     return MangaFeatureStatus(

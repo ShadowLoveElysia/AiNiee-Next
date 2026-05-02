@@ -14,6 +14,12 @@ from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.ops.apply import capture_page_assets_operation
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintEngine, InpaintResult
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine, RenderResult
+from ModuleFolders.MangaCore.pipeline.qualityGate import (
+    final_page_path,
+    load_quality_gate,
+    page_blocked_from_final,
+    quality_gate_path,
+)
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
@@ -120,6 +126,37 @@ def _restore_stroke_asset_refs(page) -> list[dict[str, object]]:
     ]
 
 
+def _quality_gate_payload(session: MangaProjectSession, project_id: str, page) -> dict[str, object]:
+    gate = load_quality_gate(session, page)
+    blocked, _reasons = page_blocked_from_final(session, page)
+    issues = gate.issues if gate else []
+    blocking_issues = [issue for issue in issues if issue.blocks_final]
+    artifact_relative_path = f"pages/{page.index:04d}/qualityGate.json"
+    artifact_path = quality_gate_path(session, page)
+    artifact_exists = artifact_path.exists()
+    final_path = final_page_path(session, page)
+    return {
+        "exists": gate is not None and artifact_exists,
+        "ok": gate.ok if gate else True,
+        "final_allowed": gate.final_allowed if gate else True,
+        "blocked_from_final": blocked,
+        "issue_count": len(blocking_issues),
+        "issues": [issue.to_dict() for issue in issues],
+        "metrics": dict(gate.metrics) if gate else {},
+        "stage_modes": dict(gate.stage_modes) if gate else {},
+        "artifact_path": artifact_relative_path if artifact_exists else "",
+        "artifact_url": (
+            f"/api/manga/projects/{project_id}/assets/{artifact_relative_path}?v={_asset_version(session, artifact_relative_path)}"
+            if artifact_exists
+            else ""
+        ),
+        "draft_rendered_path": page.layers.rendered,
+        "draft_rendered_url": f"/api/manga/projects/{project_id}/assets/{page.layers.rendered}?v={_asset_version(session, page.layers.rendered)}",
+        "final_page_path": f"final/pages/{page.index:04d}.png",
+        "final_page_exists": final_path.exists(),
+    }
+
+
 def _record_page_asset_history(
     session: MangaProjectSession,
     page_id: str,
@@ -217,6 +254,7 @@ def get_page(project_id: str, page_id: str) -> dict[str, object]:
             "restore_url": f"/api/manga/projects/{project_id}/assets/{_ensure_restore_mask_path(session, page)}?v={_asset_version(session, page.masks.restore)}",
         },
         "blocks": [block.to_dict() for block in page.text_blocks],
+        "quality_gate": _quality_gate_payload(session, project_id, page),
     }
 
 

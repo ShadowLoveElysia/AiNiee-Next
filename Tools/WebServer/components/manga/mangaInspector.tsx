@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, ChevronDown, ExternalLink, FileJson, GitCompareArrows, ImageIcon, Link2, LocateFixed, PackageCheck, PlayCircle, RotateCcw, Search, Square, SquareStack, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, ExternalLink, FileJson, GitCompareArrows, ImageIcon, Link2, LocateFixed, PackageCheck, PlayCircle, RotateCcw, Search, Square, SquareStack, Trash2 } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
-import { MangaPageDetail, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
+import { MangaPageDetail, MangaQualityIssue, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaTextBlock } from '../../types/manga';
 import { MangaActiveJobSummary, MangaBlockDraft, MangaCanvasRuntimeBox, MangaEngineCard, translateMangaEnum } from './shared';
 
 export interface MangaInspectorProps {
@@ -274,6 +274,19 @@ const extractRuntimeRunId = (outputDir: string) => (
   outputDir.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
 );
 
+const formatQualityIssue = (
+  issue: MangaQualityIssue,
+  t: (key: string, ...args: any[]) => string,
+) => {
+  const key = String(issue?.message_key || '');
+  if (key) {
+    const args = Array.isArray(issue?.message_args) ? issue.message_args : [];
+    const translated = t(key, ...args);
+    if (translated !== key) return translated;
+  }
+  return String(issue?.message || issue?.code || '').trim();
+};
+
 export const MangaInspector: React.FC<MangaInspectorProps> = ({
   page,
   activeBlock,
@@ -314,6 +327,8 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const isRuntimeBusy = busyAction === 'validate runtime';
   const isRuntimeStageRetryBusy = busyAction === 'retry runtime validation stage';
   const canValidateRuntime = Boolean(hasProject && page && !isBusy);
+  const qualityGate = page?.quality_gate || null;
+  const qualityIssues = (qualityGate?.issues || []).filter((issue) => issue.blocks_final);
   const missingEngineCount = engineCards.filter((card) => !card.available).length;
   const missingPackages = engineCards
     .flatMap((card) => card.packages)
@@ -437,6 +452,52 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
           </div>
         )}
       </div>
+
+      {qualityGate?.blocked_from_final && (
+        <section className="rounded-xl border border-amber-300/25 bg-amber-300/10 px-3 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-amber-100">
+                <AlertTriangle size={14} />
+                {t('manga_quality_gate_title')}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-amber-50">
+                {t('manga_quality_gate_draft_only')}
+              </div>
+            </div>
+            <StatusPill tone="amber">
+              {t('manga_quality_gate_issue_count', qualityGate.issue_count || qualityIssues.length)}
+            </StatusPill>
+          </div>
+
+          <div className="mt-3 space-y-1.5">
+            {qualityIssues.slice(0, 6).map((issue) => (
+              <div key={`${issue.stage}-${issue.code}`} className="rounded-lg border border-amber-300/15 bg-slate-950/35 px-2.5 py-2 text-xs text-amber-50">
+                <div className="font-semibold">{formatQualityIssue(issue, t)}</div>
+                <div className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-amber-100/55">{issue.stage || issue.code}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 grid gap-1.5 text-[11px] text-amber-100/70">
+            {qualityGate.draft_rendered_path && (
+              <div className="truncate" title={qualityGate.draft_rendered_path}>
+                {t('manga_quality_gate_draft_path', qualityGate.draft_rendered_path)}
+              </div>
+            )}
+            {qualityGate.artifact_path && (
+              <div className="truncate" title={qualityGate.artifact_path}>
+                {t('manga_quality_gate_report_path', qualityGate.artifact_path)}
+              </div>
+            )}
+            {qualityGate.final_page_path && (
+              <div className="truncate" title={qualityGate.final_page_path}>
+                {t('manga_quality_gate_final_path', qualityGate.final_page_path)}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-xl border border-slate-800/85 bg-slate-900/55 px-3 py-3">
         <div className="flex items-start justify-between gap-3">

@@ -10,7 +10,7 @@ from ModuleFolders.MangaCore.api.schemas import (
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
 from ModuleFolders.MangaCore.pipeline.modelStore import build_engine_status
-from ModuleFolders.MangaCore.pipeline.qualityGate import page_blocked_from_final, remove_final_page
+from ModuleFolders.MangaCore.pipeline.qualityGate import load_quality_gate, page_blocked_from_final, remove_final_page
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
@@ -85,6 +85,22 @@ def save_project(request: ProjectSaveRequest) -> dict[str, object]:
     }
 
 
+def _scene_page_quality_payload(session: MangaProjectSession, page) -> dict[str, object]:
+    blocked, _reasons = page_blocked_from_final(session, page)
+    gate = load_quality_gate(session, page)
+    blocking_issue_count = (
+        len([issue for issue in gate.issues if issue.blocks_final])
+        if gate is not None
+        else 0
+    )
+    return {
+        "exists": gate is not None,
+        "blocked_from_final": blocked,
+        "issue_count": blocking_issue_count,
+        "final_allowed": gate.final_allowed if gate else True,
+    }
+
+
 @router.get("/projects/{project_id}/scene")
 def get_scene(project_id: str) -> dict[str, object]:
     session = _get_session_or_404(project_id)
@@ -100,6 +116,7 @@ def get_scene(project_id: str) -> dict[str, object]:
                 "index": page.index,
                 "status": page.status,
                 "thumbnail_url": f"/api/manga/projects/{project_id}/pages/{page.page_id}/thumbnail",
+                "quality_gate": _scene_page_quality_payload(session, page),
             }
             for page in session.scene.pages
         ],
