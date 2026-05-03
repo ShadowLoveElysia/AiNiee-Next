@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ModuleFolders.Infrastructure.Cache.CacheFile import CacheFile
-from ModuleFolders.Infrastructure.Cache.CacheItem import CacheItem
+from ModuleFolders.Infrastructure.Cache.CacheItem import CacheItem, TranslationStatus
 from ModuleFolders.Infrastructure.Cache.CacheProject import ProjectType
 from ModuleFolders.Domain.FileReader.BaseReader import (
     BaseSourceReader,
@@ -30,8 +30,20 @@ class MToolReader(BaseSourceReader):
 
         # 提取键值对
         for key, value in json_data.items():
-            # 根据 JSON 文件内容的数据结构，获取相应字段值
-            item = CacheItem(source_text=key, translated_text=value)
+            # MTool 原文导出通常使用 {"原文": "原文"} 作为未翻译占位，
+            # 不能把这种 value 直接当成已有译文。
+            if not value.strip() or value == key:
+                item = CacheItem(
+                    source_text=key,
+                    translated_text="",
+                    translation_status=TranslationStatus.UNTRANSLATED,
+                )
+            else:
+                item = CacheItem(
+                    source_text=key,
+                    translated_text=value,
+                    translation_status=TranslationStatus.TRANSLATED,
+                )
             items.append(item)
         return CacheFile(items=items)
 
