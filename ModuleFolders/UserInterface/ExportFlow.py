@@ -35,10 +35,11 @@ class ExportFlow:
         for item in project.items_iter():
             if item.translation_status != TranslationStatus.AI_PROOFREAD:
                 continue
-            if item.polished_text and item.polished_text.strip():
-                item.translation_status = TranslationStatus.POLISHED
-            elif item.translated_text and item.translated_text.strip():
+            if item.translated_text and item.translated_text.strip():
+                item.polished_text = ""
                 item.translation_status = TranslationStatus.TRANSLATED
+            elif item.polished_text and item.polished_text.strip():
+                item.translation_status = TranslationStatus.POLISHED
 
     def run_export_only(self, target_path=None, non_interactive=False):
         from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager

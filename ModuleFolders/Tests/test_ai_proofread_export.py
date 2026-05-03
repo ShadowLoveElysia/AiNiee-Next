@@ -130,24 +130,25 @@ class AIProofreadExportTests(unittest.TestCase):
             CacheItem(
                 text_index=1,
                 translation_status=TranslationStatus.AI_PROOFREAD,
-                translated_text="translation",
-                polished_text="proofread polish",
+                translated_text="proofread translation",
+                polished_text="stale polish",
             ),
             CacheItem(
                 text_index=2,
                 translation_status=TranslationStatus.AI_PROOFREAD,
-                translated_text="proofread translation",
-                polished_text="",
+                translated_text="",
+                polished_text="proofread polish",
             ),
         ]
         project.add_file(cache_file)
 
         ExportFlow._normalize_ai_proofread_status_for_export(project)
 
-        self.assertEqual(cache_file.items[0].translation_status, TranslationStatus.POLISHED)
-        self.assertEqual(cache_file.items[0].final_text, "proofread polish")
-        self.assertEqual(cache_file.items[1].translation_status, TranslationStatus.TRANSLATED)
-        self.assertEqual(cache_file.items[1].final_text, "proofread translation")
+        self.assertEqual(cache_file.items[0].translation_status, TranslationStatus.TRANSLATED)
+        self.assertEqual(cache_file.items[0].polished_text, "")
+        self.assertEqual(cache_file.items[0].final_text, "proofread translation")
+        self.assertEqual(cache_file.items[1].translation_status, TranslationStatus.POLISHED)
+        self.assertEqual(cache_file.items[1].final_text, "proofread polish")
 
     def test_normalized_ai_proofread_cache_is_written_by_txt_writer(self):
         cache_file = CacheFile(storage_path="book.txt", file_project_type="Txt")
