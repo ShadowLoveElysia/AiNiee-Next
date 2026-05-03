@@ -23,6 +23,24 @@ class ExportFlow:
     def i18n(self):
         return self.host.i18n
 
+    @staticmethod
+    def _is_proofread_cache(cache_path):
+        return os.path.basename(cache_path) == "AinieeCacheData_proofread.json"
+
+    @staticmethod
+    def _normalize_ai_proofread_status_for_export(project):
+        """兼容旧版AI校对缓存，避免AI_PROOFREAD状态被部分Writer跳过。"""
+        from ModuleFolders.Infrastructure.Cache.CacheItem import TranslationStatus
+
+        for item in project.items_iter():
+            if item.translation_status != TranslationStatus.AI_PROOFREAD:
+                continue
+            if item.translated_text and item.translated_text.strip():
+                item.polished_text = ""
+                item.translation_status = TranslationStatus.TRANSLATED
+            elif item.polished_text and item.polished_text.strip():
+                item.translation_status = TranslationStatus.POLISHED
+
     def run_export_only(self, target_path=None, non_interactive=False):
         from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
 
@@ -57,7 +75,11 @@ class ExportFlow:
 
         try:
             with console.status(f"[cyan]{self.i18n.get('msg_export_started')}[/cyan]"):
+                if hasattr(self.host.cache_manager, "flush_pending_save"):
+                    self.host.cache_manager.flush_pending_save()
                 project = CacheManager.read_from_file(cache_path)
+                if self._is_proofread_cache(cache_path):
+                    self._normalize_ai_proofread_status_for_export(project)
                 self.host.task_executor.config.initialize(self.host.config)
                 config = self.host.task_executor.config
                 output_config = {
@@ -65,13 +87,8 @@ class ExportFlow:
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
                 }
-                source_project = (
-                    self.host.cache_manager.project
-                    if hasattr(self.host.cache_manager, "project") and self.host.cache_manager.project
-                    else project
-                )
                 self.host.file_outputer.output_translated_content(
-                    source_project,
+                    project,
                     output_path,
                     target_path,
                     output_config,
