@@ -126,6 +126,7 @@ class TaskExecutor(Base):
             with self._skip_lock:
                 if hasattr(task, 'file_path_full') and task.file_path_full in self.skipped_files:
                     return None # Skip execution
+            self._emit_task_progress_info(task)
             return task.start()
         finally:
             with self._concurrency_lock:
@@ -149,6 +150,46 @@ class TaskExecutor(Base):
             )
         except Exception:
             pass
+
+    def _get_non_excluded_item_count(self) -> int:
+        total_count = self.cache_manager.get_item_count()
+        excluded_count = self.cache_manager.get_item_count_by_status(TranslationStatus.EXCLUDED)
+        return max(total_count - excluded_count, 0)
+
+    def _get_file_filter_progress_info(self, file_path: str) -> dict:
+        cache_file = self.cache_manager.project.get_file(file_path) if self.cache_manager.project else None
+        if not cache_file:
+            return {
+                "file_raw_total_line": 0,
+                "file_filtered_total_line": 0,
+                "file_excluded_total_line": 0,
+            }
+
+        raw_total = len(cache_file.items)
+        excluded_total = sum(1 for item in cache_file.items if item.translation_status == TranslationStatus.EXCLUDED)
+        return {
+            "file_raw_total_line": raw_total,
+            "file_filtered_total_line": max(raw_total - excluded_total, 0),
+            "file_excluded_total_line": excluded_total,
+        }
+
+    def _with_filter_progress_info(self, stats_dict: dict) -> dict:
+        raw_total = self.cache_manager.get_item_count()
+        excluded_total = self.cache_manager.get_item_count_by_status(TranslationStatus.EXCLUDED)
+        stats_dict.update({
+            "raw_total_line": raw_total,
+            "filtered_total_line": max(raw_total - excluded_total, 0),
+            "excluded_total_line": excluded_total,
+            "project_file_count": len(self.cache_manager.project.files) if self.cache_manager.project else 0,
+        })
+        return stats_dict
+
+    def _emit_task_progress_info(self, task) -> None:
+        if not hasattr(self, "project_status_data"):
+            return
+        stats_dict = self._with_filter_progress_info(self.project_status_data.to_dict())
+        stats_dict.update(getattr(task, "extra_info", {}) or {})
+        self.emit(Base.EVENT.TASK_UPDATE, stats_dict)
 
     def reset_translation_consistency_state(self) -> None:
         with self._translation_consistency_lock:
@@ -213,6 +254,7 @@ class TaskExecutor(Base):
                 # 打印任务开始日志
                 task_id = getattr(task, 'task_id', '???')
                 preview = str(list(task.source_text_dict.values())[:1])[:50] if hasattr(task, 'source_text_dict') else ''
+                executor_self._emit_task_progress_info(task)
                 executor_self.print(f"[dim][{task_id}] Translating: {preview}...[/dim]")
 
                 # 获取平台配置
@@ -236,7 +278,14 @@ class TaskExecutor(Base):
                     if err_type == ErrorType.SOFT_ERROR:
                         if ErrorClassifier.should_reduce_concurrency(content):
                             signal_hub.broadcast_rate_limit(platform_config.get("api_url", ""))
-                    return {"check_result": False, "row_count": 0, "prompt_tokens": pt, "completion_tokens": ct, "error_type": error_type}
+                    return {
+                        "check_result": False,
+                        "row_count": 0,
+                        "prompt_tokens": pt,
+                        "completion_tokens": ct,
+                        "error_type": error_type,
+                        "extra_info": getattr(task, "extra_info", {}),
+                    }
 
                 # 上报成功状态
                 executor_self.report_api_status(True)
@@ -268,7 +317,13 @@ class TaskExecutor(Base):
                             "extra_info": getattr(task, "extra_info", {})
                         }
 
-                return {"check_result": False, "row_count": 0, "prompt_tokens": pt, "completion_tokens": ct}
+                return {
+                    "check_result": False,
+                    "row_count": 0,
+                    "prompt_tokens": pt,
+                    "completion_tokens": ct,
+                    "extra_info": getattr(task, "extra_info", {}),
+                }
             finally:
                 if slot_acquired:
                     signal_hub.release_slot()
@@ -568,6 +623,12 @@ class TaskExecutor(Base):
             self.plugin_manager.broadcast_event("text_filter", self.config, self.cache_manager.project)
             self.plugin_manager.broadcast_event("preproces_text", self.config, self.cache_manager.project)
 
+            # Language/text filters mark rows as EXCLUDED. From here on, the progress bar
+            # tracks only rows that can actually be translated, while keeping raw counts for UI hints.
+            self.project_status_data.total_line = self._get_non_excluded_item_count()
+            self.project_status_data.line = self.cache_manager.get_item_count_by_status(TranslationStatus.TRANSLATED)
+            self.emit(Base.EVENT.TASK_UPDATE, self._with_filter_progress_info(self.project_status_data.to_dict()))
+
             # 根据最大轮次循环
             for current_round in range(self.config.round_limit + 1):
                 # 检测是否需要停止任务
@@ -649,7 +710,8 @@ class TaskExecutor(Base):
                         "file_name": f_info["name"],
                         "file_index": f_info["index"],
                         "total_files": total_files,
-                        "file_path_full": file_path
+                        "file_path_full": file_path,
+                        **self._get_file_filter_progress_info(file_path),
                     }
 
                     task.set_items(chunk)  # 传入该任务待翻译原文
@@ -662,6 +724,8 @@ class TaskExecutor(Base):
                         task.prepare(self.config.target_platform)  # 预先构建消息列表
                     tasks_list.append(task)
                 self.info(f"已经生成全部翻译任务 ...")
+                if tasks_list:
+                    self._emit_task_progress_info(tasks_list[0])
                 self.print("")
 
                 # 输出开始翻译的日志
@@ -845,6 +909,13 @@ class TaskExecutor(Base):
 
             # 触发插件事件
             self.plugin_manager.broadcast_event("text_filter", self.config, self.cache_manager.project)
+
+            self.project_status_data.total_line = self._get_non_excluded_item_count()
+            if self.config.polishing_mode_selection == "source_text_polish":
+                self.project_status_data.line = self.cache_manager.get_item_count_by_status(TranslationStatus.UNTRANSLATED)
+            else:
+                self.project_status_data.line = self.cache_manager.get_item_count_by_status(TranslationStatus.POLISHED)
+            self.emit(Base.EVENT.TASK_UPDATE, self._with_filter_progress_info(self.project_status_data.to_dict()))
 
 
             # 根据最大轮次循环

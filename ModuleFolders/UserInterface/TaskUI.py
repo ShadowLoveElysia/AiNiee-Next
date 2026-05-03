@@ -63,13 +63,13 @@ class TaskUI:
             )
             self.layout["footer"].split(
                 Layout(name="small_logs", ratio=1),
-                Layout(name="stats", size=5)
+                Layout(name="stats", size=7)
             )
         else:
             # 经典模式：上下两段式
             self.layout.split(
                 Layout(name="upper", ratio=4, minimum_size=10),
-                Layout(name="lower", size=6)
+                Layout(name="lower", size=7)
             )
 
         self.stats_text = Text("Initializing stats...", style="cyan")
@@ -84,6 +84,48 @@ class TaskUI:
         if self.i18n:
             return self.i18n.get(key)
         return key
+
+    def _get_int_field(self, data, key, default=0):
+        try:
+            return int(data.get(key, default) or 0)
+        except (TypeError, ValueError):
+            return default
+
+    def _format_filter_progress_hint(self, data):
+        raw_total = self._get_int_field(data, "raw_total_line")
+        filtered_total = self._get_int_field(data, "filtered_total_line", self._get_int_field(data, "total_line"))
+        excluded_total = self._get_int_field(data, "excluded_total_line")
+        file_raw_total = self._get_int_field(data, "file_raw_total_line")
+        file_filtered_total = self._get_int_field(data, "file_filtered_total_line", file_raw_total)
+        file_count = self._get_int_field(data, "project_file_count", 1)
+
+        if not excluded_total and raw_total <= filtered_total and file_raw_total <= file_filtered_total:
+            return ""
+
+        lang = getattr(self.i18n, "lang", "") if self.i18n else ""
+        use_file_total = file_raw_total > 0 and file_raw_total > file_filtered_total
+        if not use_file_total and file_count <= 1 and raw_total > filtered_total:
+            use_file_total = True
+            file_raw_total = raw_total
+
+        if lang == "ja":
+            if use_file_total:
+                if file_count > 1 and raw_total > 0:
+                    return f"注意: 現在の進捗は言語フィルター対象を除外しています。現在のファイルは全{file_raw_total}行、今回のタスクは全{raw_total}行です。"
+                return f"注意: 現在の進捗は言語フィルター対象を除外しています。このファイルは全{file_raw_total}行です。"
+            return f"注意: 現在の進捗は言語フィルター対象を除外しています。今回のタスクは全{raw_total}行です。"
+        if lang == "en":
+            if use_file_total:
+                if file_count > 1 and raw_total > 0:
+                    return f"Note: Progress excludes language-filtered rows. Current file has {file_raw_total} rows total; this task has {raw_total} rows total."
+                return f"Note: Progress excludes language-filtered rows. This file has {file_raw_total} rows total."
+            return f"Note: Progress excludes language-filtered rows. This task has {raw_total} rows total."
+
+        if use_file_total:
+            if file_count > 1 and raw_total > 0:
+                return f"提示: 当前进度不包含语言过滤内容，当前文件全 {file_raw_total} 行，此次任务全 {raw_total} 行。"
+            return f"提示: 当前进度不包含语言过滤内容，此文件全 {file_raw_total} 行。"
+        return f"提示: 当前进度不包含语言过滤内容，此次任务全 {raw_total} 行。"
 
     def refresh_layout(self):
         """刷新 TUI 渲染内容"""
@@ -292,7 +334,18 @@ class TaskUI:
     def update_progress(self, event, data):
         with self._lock:
             if not hasattr(self, "_last_progress_data"):
-                self._last_progress_data = {"line": 0, "total_line": 1, "token": 0, "time": 0, "file_name": "...", "total_requests": 0, "error_requests": 0}
+                self._last_progress_data = {
+                    "line": 0,
+                    "total_line": 1,
+                    "raw_total_line": 1,
+                    "filtered_total_line": 1,
+                    "excluded_total_line": 0,
+                    "token": 0,
+                    "time": 0,
+                    "file_name": "...",
+                    "total_requests": 0,
+                    "error_requests": 0,
+                }
 
             if data and isinstance(data, dict):
                 self._last_progress_data.update(data)
@@ -365,6 +418,7 @@ class TaskUI:
             rpm_str = f"{rpm:.2f}"
             tpm_str = f"{tpm_k:.2f}k"
             status_text = self._get_i18n(self.current_status_key)
+            filter_progress_hint = self._format_filter_progress_hint(d)
 
             if is_queue_mode:
                 hotkeys = self._get_i18n("label_shortcuts_queue")
@@ -384,8 +438,12 @@ class TaskUI:
 
             stats_markup = (
                 f"File: [bold]{current_file}[/] | Progress: [bold]{completed}/{total}[/] | Threads: [bold]{current_threads}[/] | RPM: [bold]{rpm_str}[/] | TPM: [bold]{tpm_str}[/]\n"
-                f"S-Rate: [bold green]{s_rate:.1f}%[/] | E-Rate: [bold red]{e_rate:.1f}%[/] | Tokens: [bold]{tokens}[/] | Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}{diagnostic_hint}"
+                f"S-Rate: [bold green]{s_rate:.1f}%[/] | E-Rate: [bold red]{e_rate:.1f}%[/] | Tokens: [bold]{tokens}[/] | Status: [{self.current_status_color}]{status_text}[/{self.current_status_color}] | {hotkeys}"
             )
+            if filter_progress_hint:
+                stats_markup += f"\n[yellow]{filter_progress_hint}[/yellow]"
+            if diagnostic_hint:
+                stats_markup += diagnostic_hint
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
 
             is_start = data.get('is_start') if isinstance(data, dict) else False
