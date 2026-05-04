@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata as metadata
+import locale
 import os
 import platform
 import shlex
@@ -19,26 +20,28 @@ from rich.table import Table
 class MangaRuntimeMenu:
     """MangaCore visual runtime dependency switcher."""
 
-    RUNTIME_PACKAGE_NAMES = (
+    PYTHON_TAG = "cp312-cp312"
+    TORCH_VERSION = "2.8.0"
+    TORCHVISION_VERSION = "0.23.0"
+    ONNXRUNTIME_VERSION = "1.20.1"
+    PYTORCH_WHEEL_MIRROR = "https://mirrors.aliyun.com/pytorch-wheels"
+    PYTORCH_WHEEL_OFFICIAL = "https://download.pytorch.org/whl"
+    PYPI_INDEX_URL = "https://pypi.org/simple"
+    PYTORCH_SOURCE_ENV_KEYS = ("AINIEE_MANGA_PYTORCH_SOURCE", "AINIEE_PYTORCH_SOURCE")
+    PYTORCH_MIRROR_ENV_KEY = "AINIEE_MANGA_PYTORCH_MIRROR"
+    PYTORCH_OFFICIAL_ENV_KEY = "AINIEE_MANGA_PYTORCH_OFFICIAL"
+    INSTALL_PACKAGE_NAMES = (
         "torch",
         "torchvision",
-        "torchaudio",
         "onnxruntime",
         "onnxruntime-gpu",
     )
-    TORCH_PACKAGES = (
-        "torch==2.8.0",
-        "torchvision==0.23.0",
-        "torchaudio==2.8.0",
-    )
+    CONFLICT_PACKAGE_NAMES = INSTALL_PACKAGE_NAMES + ("torchaudio",)
     PYPI_TORCH_PACKAGES = (
         "torch>=2.0.0",
         "torchvision>=0.15.0",
-        "torchaudio>=2.0.0",
     )
-    CPU_PACKAGES = TORCH_PACKAGES + ("onnxruntime==1.20.1",)
-    CUDA_PACKAGES = TORCH_PACKAGES + ("onnxruntime-gpu==1.20.1",)
-    PYPI_CPU_PACKAGES = PYPI_TORCH_PACKAGES + ("onnxruntime==1.20.1",)
+    PYPI_CPU_PACKAGES = PYPI_TORCH_PACKAGES + (f"onnxruntime=={ONNXRUNTIME_VERSION}",)
     DEVICE_CONFIG_KEYS = (
         "manga_runtime_device",
         "manga_detect_device",
@@ -110,6 +113,9 @@ class MangaRuntimeMenu:
                 action()
 
     def _print_status(self) -> None:
+        self.console.print(
+            f"[yellow]{self._t('manga_runtime_collecting_system_info', 'Collecting system information, please wait....')}[/yellow]"
+        )
         table = Table(show_header=True, expand=False)
         table.add_column(self._t("manga_runtime_status_item", "Item"), style="cyan")
         table.add_column(self._t("manga_runtime_status_value", "Value"), style="white")
@@ -120,7 +126,7 @@ class MangaRuntimeMenu:
             self._t("manga_runtime_status_recommended", "Recommended runtime"),
             str(self._recommended_backend()["label"]),
         )
-        for package_name in self.RUNTIME_PACKAGE_NAMES:
+        for package_name in self.CONFLICT_PACKAGE_NAMES:
             table.add_row(package_name, self._package_version(package_name))
         table.add_row("torch.cuda.is_available()", self._torch_cuda_status())
         table.add_row("onnxruntime providers", self._onnxruntime_providers())
@@ -128,7 +134,7 @@ class MangaRuntimeMenu:
         self.console.print(table)
 
         self.console.print(
-            f"[dim]{self._t('manga_runtime_menu_scope_hint', 'This menu only switches visual backend packages. It does not reinstall tokenizers, transformers, or tiktoken.')}[/dim]"
+            f"[dim]{self._t('manga_runtime_menu_scope_hint', 'This menu only switches Manga visual runtime packages. It cleans torchaudio if present, but does not install it; tokenizers, transformers, and tiktoken are not touched.')}[/dim]"
         )
 
     def _package_version(self, package_name: str) -> str:
@@ -138,23 +144,43 @@ class MangaRuntimeMenu:
             return self._t("label_not_set", "Not Set")
 
     def _torch_cuda_status(self) -> str:
-        try:
-            import torch
-
-            available = bool(torch.cuda.is_available())
-            cuda_version = getattr(torch.version, "cuda", None) or "none"
-            device_count = torch.cuda.device_count() if available else 0
-            return f"{available} | cuda={cuda_version} | devices={device_count}"
-        except Exception as exc:
-            return f"{self._t('manga_runtime_status_unavailable', 'Unavailable')}: {exc}"
+        return self._run_python_probe(
+            "import torch\n"
+            "available=bool(torch.cuda.is_available())\n"
+            "count=int(torch.cuda.device_count()) if available else 0\n"
+            "name=torch.cuda.get_device_name(0) if available and count > 0 else 'none'\n"
+            "cuda=getattr(torch.version, 'cuda', None) or 'none'\n"
+            "print(f'{available} | torch={torch.__version__} | cuda={cuda} | devices={count} | device={name} | file={torch.__file__}')\n"
+        )
 
     def _onnxruntime_providers(self) -> str:
-        try:
-            import onnxruntime
+        return self._run_python_probe(
+            "import onnxruntime as ort\n"
+            "providers=', '.join(ort.get_available_providers())\n"
+            "print(f'{providers} | version={ort.__version__} | file={ort.__file__}')\n"
+        )
 
-            return ", ".join(onnxruntime.get_available_providers())
+    def _run_python_probe(self, code: str) -> str:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=str(self._project_root()),
+                env=self._uv_env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                check=False,
+            )
         except Exception as exc:
             return f"{self._t('manga_runtime_status_unavailable', 'Unavailable')}: {exc}"
+
+        output = (result.stdout or "").strip()
+        if result.returncode == 0 and output:
+            return output.splitlines()[-1]
+        return f"{self._t('manga_runtime_status_unavailable', 'Unavailable')}: {output or result.returncode}"
 
     def _device_config_summary(self) -> str:
         return ", ".join(f"{key}={self.host.config.get(key, 'auto')}" for key in self.DEVICE_CONFIG_KEYS)
@@ -179,12 +205,12 @@ class MangaRuntimeMenu:
             return
 
         self.console.print(Panel(self._t("manga_runtime_uninstalling", "Removing conflicting runtime packages...")))
-        if not self._run_uv_pip(["uninstall", "--python", sys.executable, *self.RUNTIME_PACKAGE_NAMES]):
+        if not self._run_uv_pip(["uninstall", "--python", sys.executable, *self.CONFLICT_PACKAGE_NAMES]):
             self._wait()
             return
 
         self.console.print(Panel(self._t("manga_runtime_installing", "Installing selected runtime packages...").format(label)))
-        ok = self._run_uv_pip(["install", "--python", sys.executable, *backend["install_args"]])
+        ok = self._install_backend(backend)
 
         if ok:
             self._apply_device_config(str(backend["device"]))
@@ -194,6 +220,19 @@ class MangaRuntimeMenu:
             self.console.print(f"[bold red]{self._t('manga_runtime_switch_failed', 'Manga runtime switch failed.')}[/bold red]")
             self._wait()
 
+    def _install_backend(self, backend: dict[str, object]) -> bool:
+        plans = self._backend_install_plans(str(backend["key"]))
+        for index, plan in enumerate(plans):
+            source_label = str(plan["label"])
+            if len(plans) > 1:
+                message_key = "manga_runtime_source_selected" if index == 0 else "manga_runtime_source_retry"
+                default = "Runtime dependency source: {}" if index == 0 else "Current source failed. Retrying with {}..."
+                self.console.print(f"[yellow]{self._t(message_key, default).format(source_label)}[/yellow]")
+
+            if self._run_uv_pip(["install", "--python", sys.executable, *plan["install_args"]]):
+                return True
+        return False
+
     def _run_uv_pip(self, pip_args: list[str]) -> bool:
         uv_executable = self._uv_executable()
         if not uv_executable:
@@ -202,13 +241,33 @@ class MangaRuntimeMenu:
             )
             return False
 
-        cmd = [uv_executable, "pip", *pip_args]
+        env = self._uv_pip_env(pip_args)
+        use_terminal_output = self.console.is_terminal
+        cmd = [uv_executable]
+        if use_terminal_output:
+            cmd.extend(("--color", "always"))
+        cmd.extend(("pip", *pip_args))
         self.console.print(f"[dim]{self._format_command(cmd)}[/dim]")
+        if use_terminal_output:
+            try:
+                return (
+                    subprocess.run(
+                        cmd,
+                        cwd=str(self._project_root()),
+                        env=env,
+                        check=False,
+                    ).returncode
+                    == 0
+                )
+            except Exception as exc:
+                self.console.print(f"[red]{self._t('manga_runtime_command_start_failed', 'Failed to start command')}: {exc}[/red]")
+                return False
+
         try:
             process = subprocess.Popen(
                 cmd,
                 cwd=str(self._project_root()),
-                env=self._uv_env(),
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -223,6 +282,26 @@ class MangaRuntimeMenu:
         for line in process.stdout:
             self.console.print(line.rstrip())
         return process.wait() == 0
+
+    def _uv_pip_env(self, pip_args: list[str]) -> dict[str, str]:
+        env = self._uv_env()
+        env["UV_LINK_MODE"] = "copy"
+        env.pop("UV_NO_PROGRESS", None)
+
+        torch_backend = self._torch_backend_from_args(pip_args)
+        if torch_backend:
+            env["UV_TORCH_BACKEND"] = torch_backend
+        return env
+
+    def _torch_backend_from_args(self, pip_args: list[str]) -> str:
+        try:
+            index = pip_args.index("--torch-backend")
+        except ValueError:
+            return ""
+
+        if index + 1 >= len(pip_args):
+            return ""
+        return pip_args[index + 1]
 
     def _apply_device_config(self, device: str) -> None:
         normalized = device if device in {"auto", "cpu", "cuda", "mps"} else "auto"
@@ -283,24 +362,10 @@ class MangaRuntimeMenu:
         return devices
 
     def _cpu_backend(self) -> dict[str, object]:
-        install_args: list[str] = []
-        if self._uses_pytorch_cpu_index():
-            install_args.extend(
-                [
-                    "--index-url",
-                    "https://download.pytorch.org/whl/cpu",
-                    "--extra-index-url",
-                    "https://pypi.org/simple",
-                    *self.CPU_PACKAGES,
-                ]
-            )
-        else:
-            install_args.extend(self.PYPI_CPU_PACKAGES)
         return {
             "key": "cpu",
             "label": "CPU",
             "device": "cpu",
-            "install_args": tuple(install_args),
         }
 
     def _cuda_backend(self) -> dict[str, object]:
@@ -308,13 +373,6 @@ class MangaRuntimeMenu:
             "key": "cuda",
             "label": "CUDA",
             "device": "cuda",
-            "install_args": (
-                "--index-url",
-                "https://download.pytorch.org/whl/cu128",
-                "--extra-index-url",
-                "https://pypi.org/simple",
-                *self.CUDA_PACKAGES,
-            ),
         }
 
     def _mps_backend(self) -> dict[str, object]:
@@ -322,8 +380,156 @@ class MangaRuntimeMenu:
             "key": "mps",
             "label": "Metal/MPS",
             "device": "mps",
-            "install_args": self.PYPI_CPU_PACKAGES,
         }
+
+    def _backend_install_plans(self, key: str) -> tuple[dict[str, object], ...]:
+        if key == "cuda":
+            return tuple(
+                {
+                    "label": source["label"],
+                    "install_args": self._torch_runtime_install_args(
+                        "cu128",
+                        source,
+                        f"onnxruntime-gpu=={self.ONNXRUNTIME_VERSION}",
+                    ),
+                }
+                for source in self._pytorch_source_order()
+            )
+
+        if key == "cpu" and self._uses_pytorch_cpu_index():
+            return tuple(
+                {
+                    "label": source["label"],
+                    "install_args": self._torch_runtime_install_args(
+                        "cpu",
+                        source,
+                        f"onnxruntime=={self.ONNXRUNTIME_VERSION}",
+                    ),
+                }
+                for source in self._pytorch_source_order()
+            )
+
+        return (
+            {
+                "label": self._t("manga_runtime_source_pypi", "PyPI"),
+                "install_args": (*self._default_index_args(), *self._refresh_runtime_package_args(), "--reinstall", *self.PYPI_CPU_PACKAGES),
+            },
+        )
+
+    def _torch_runtime_install_args(self, backend: str, source: dict[str, str], onnxruntime_requirement: str) -> tuple[str, ...]:
+        return (
+            *self._default_index_args(),
+            *self._refresh_runtime_package_args(),
+            "--reinstall",
+            *self._pytorch_wheel_urls(backend, source),
+            onnxruntime_requirement,
+        )
+
+    def _default_index_args(self) -> tuple[str, ...]:
+        if os.environ.get("UV_DEFAULT_INDEX") or os.environ.get("UV_INDEX_URL"):
+            return ()
+        return ("--default-index", self.PYPI_INDEX_URL)
+
+    def _refresh_runtime_package_args(self) -> tuple[str, ...]:
+        args: list[str] = []
+        for package_name in self.INSTALL_PACKAGE_NAMES:
+            args.extend(("--refresh-package", package_name))
+        return tuple(args)
+
+    def _pytorch_source_order(self) -> tuple[dict[str, str], dict[str, str]]:
+        sources = self._pytorch_sources()
+        preferred = self._pytorch_source_override()
+        if not preferred:
+            preferred = "mirror" if self._prefer_china_mirror() else "official"
+
+        secondary = "official" if preferred == "mirror" else "mirror"
+        return sources[preferred], sources[secondary]
+
+    def _pytorch_sources(self) -> dict[str, dict[str, str]]:
+        mirror_base_url = os.environ.get(self.PYTORCH_MIRROR_ENV_KEY, self.PYTORCH_WHEEL_MIRROR).strip()
+        official_base_url = os.environ.get(self.PYTORCH_OFFICIAL_ENV_KEY, self.PYTORCH_WHEEL_OFFICIAL).strip()
+        return {
+            "mirror": {
+                "key": "mirror",
+                "label": self._t("manga_runtime_source_aliyun", "Aliyun PyTorch mirror"),
+                "base_url": mirror_base_url or self.PYTORCH_WHEEL_MIRROR,
+                "layout": "flat",
+            },
+            "official": {
+                "key": "official",
+                "label": self._t("manga_runtime_source_official", "official PyTorch source"),
+                "base_url": official_base_url or self.PYTORCH_WHEEL_OFFICIAL,
+                "layout": "package",
+            },
+        }
+
+    def _pytorch_source_override(self) -> str:
+        for env_key in self.PYTORCH_SOURCE_ENV_KEYS:
+            raw_value = os.environ.get(env_key, "").strip().lower()
+            if raw_value in {"mirror", "aliyun", "china", "cn", "国内"}:
+                return "mirror"
+            if raw_value in {"official", "global", "foreign", "abroad", "pytorch", "国外"}:
+                return "official"
+        return ""
+
+    def _prefer_china_mirror(self) -> bool:
+        signals = [
+            os.environ.get("LANG", ""),
+            os.environ.get("LC_ALL", ""),
+            os.environ.get("LC_MESSAGES", ""),
+            os.environ.get("LANGUAGE", ""),
+            os.environ.get("TZ", ""),
+            " ".join(time.tzname),
+            time.strftime("%Z"),
+        ]
+        try:
+            signals.extend(value or "" for value in locale.getlocale())
+        except Exception:
+            pass
+
+        normalized = " ".join(signals).lower().replace("-", "_")
+        return any(
+            token in normalized
+            for token in (
+                "zh_cn",
+                "zh_hans",
+                "china",
+                "asia/shanghai",
+                "asia/chongqing",
+                "asia/urumqi",
+                "中国",
+                "中文",
+            )
+        )
+
+    def _pytorch_wheel_urls(self, backend: str, source: dict[str, str]) -> tuple[str, str]:
+        platform_tag = self._pytorch_platform_tag()
+        suffix = backend if backend == "cpu" else "cu128"
+        return (
+            self._pytorch_wheel_url(source, backend, "torch", self.TORCH_VERSION, suffix, platform_tag),
+            self._pytorch_wheel_url(source, backend, "torchvision", self.TORCHVISION_VERSION, suffix, platform_tag),
+        )
+
+    def _pytorch_wheel_url(
+        self,
+        source: dict[str, str],
+        backend: str,
+        package_name: str,
+        version: str,
+        suffix: str,
+        platform_tag: str,
+    ) -> str:
+        filename = f"{package_name}-{version}+{suffix}-{self.PYTHON_TAG}-{platform_tag}.whl"
+        filename = filename.replace("+", "%2B")
+        base_url = source["base_url"].rstrip("/")
+        if source.get("layout") == "flat":
+            return f"{base_url}/{backend}/{filename}"
+        return f"{base_url}/{backend}/{package_name}/{filename}"
+
+    def _pytorch_platform_tag(self) -> str:
+        if self._platform_system() == "windows":
+            return "win_amd64"
+        return "manylinux_2_28_x86_64"
 
     def _uses_pytorch_cpu_index(self) -> bool:
         return self._platform_system() in {"windows", "linux"} and self._is_x64()
@@ -345,14 +551,6 @@ class MangaRuntimeMenu:
         return f"{platform.system() or 'Unknown'} / {platform.machine() or 'Unknown'}"
 
     def _detect_nvidia_gpu(self) -> bool:
-        try:
-            import torch
-
-            if bool(torch.cuda.is_available()):
-                return True
-        except Exception:
-            pass
-
         nvidia_smi = shutil.which("nvidia-smi")
         if not nvidia_smi:
             return False
@@ -411,21 +609,14 @@ class MangaRuntimeMenu:
         self.console.print(f"[bold yellow]{self._t('manga_runtime_restart_notice', 'Project will restart in 3 seconds...')}[/bold yellow]")
         time.sleep(3)
 
-        uv_executable = self._uv_executable()
-        if not uv_executable:
-            self.console.print(
-                f"[red]{self._t('manga_runtime_uv_missing', 'uv was not found. Please run the project prepare script first.')}[/red]"
-            )
-            self._wait()
-            return
-
         project_root = self._project_root()
         script_path = project_root / "ainiee_cli.py"
-        cmd = [uv_executable, "run", "--directory", str(project_root), "--no-sync", "python", str(script_path), *sys.argv[1:]]
+        cmd = [sys.executable, str(script_path), *sys.argv[1:]]
         env = self._uv_env()
         self.console.print(f"[dim]{self._format_command(cmd)}[/dim]")
         try:
-            os.execvpe(uv_executable, cmd, env)
+            os.chdir(project_root)
+            os.execve(sys.executable, cmd, env)
         except Exception as exc:
             self.console.print(f"[red]{self._t('manga_runtime_command_start_failed', 'Failed to start command')}: {exc}[/red]")
             self._wait()

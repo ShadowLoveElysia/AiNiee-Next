@@ -470,9 +470,12 @@ class CommandModeRunner:
         if isinstance(issues, list) and issues:
             for issue in issues:
                 self._manga_log(f"[{style}][MangaCore][/{style}] {self._format_manga_runtime_preflight_issue(issue)}")
-            return
         for detail in getattr(status, "details", []) or []:
-            self._manga_log(f"[{style}][MangaCore][/{style}] {detail}")
+            detail_text = str(detail)
+            if "runtime diagnostics:" in detail_text:
+                self._manga_log(f"[dim][MangaCore][/dim] {detail_text}")
+            else:
+                self._manga_log(f"[{style}][MangaCore][/{style}] {detail_text}")
 
     def _format_manga_runtime_readiness_item(self, item: object) -> str:
         message_key = str(getattr(item, "message_key", "") or "")

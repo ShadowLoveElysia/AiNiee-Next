@@ -82,11 +82,18 @@ class RuntimeDeviceStatus:
     configured: str = "auto"
     resolved: str = "cpu"
     torch_available: bool = False
+    torch_file: str = ""
+    torch_version: str = ""
+    torch_cuda_version: str = ""
+    torch_error: str = ""
     cuda_available: bool = False
     cuda_device_count: int = 0
     cuda_device_name: str = ""
     mps_available: bool = False
     onnx_available: bool = False
+    onnx_file: str = ""
+    onnx_version: str = ""
+    onnx_error: str = ""
     onnx_providers: tuple[str, ...] = ()
     onnx_cuda_available: bool = False
 
@@ -95,11 +102,18 @@ class RuntimeDeviceStatus:
             "configured": self.configured,
             "resolved": self.resolved,
             "torch_available": self.torch_available,
+            "torch_file": self.torch_file,
+            "torch_version": self.torch_version,
+            "torch_cuda_version": self.torch_cuda_version,
+            "torch_error": self.torch_error,
             "cuda_available": self.cuda_available,
             "cuda_device_count": self.cuda_device_count,
             "cuda_device_name": self.cuda_device_name,
             "mps_available": self.mps_available,
             "onnx_available": self.onnx_available,
+            "onnx_file": self.onnx_file,
+            "onnx_version": self.onnx_version,
+            "onnx_error": self.onnx_error,
             "onnx_providers": list(self.onnx_providers),
             "onnx_cuda_available": self.onnx_cuda_available,
         }
@@ -349,50 +363,76 @@ def normalize_runtime_device(value: str | None = None) -> str:
     return _DEFAULT_RUNTIME_DEVICE
 
 
-def _torch_device_status(configured: str) -> tuple[str, bool, bool, int, str, bool]:
+def _torch_device_status(configured: str) -> tuple[str, bool, str, str, str, str, bool, int, str, bool]:
     try:
         import torch
 
+        torch_file = str(getattr(torch, "__file__", "") or "")
+        torch_version = str(getattr(torch, "__version__", "") or "")
+        torch_cuda_version = str(getattr(torch.version, "cuda", "") or "")
         cuda_available = bool(torch.cuda.is_available())
         cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
         cuda_device_name = torch.cuda.get_device_name(0) if cuda_available and cuda_device_count > 0 else ""
         mps_available = bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-    except Exception:
-        return "cpu", False, False, 0, "", False
+    except Exception as exc:
+        return "cpu", False, "", "", "", str(exc), False, 0, "", False
 
     if configured.startswith("cuda"):
-        return ("cuda" if cuda_available else "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available)
+        return ("cuda" if cuda_available else "cpu", True, torch_file, torch_version, torch_cuda_version, "", cuda_available, cuda_device_count, cuda_device_name, mps_available)
     if configured == "mps":
-        return ("mps" if mps_available else "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available)
+        return ("mps" if mps_available else "cpu", True, torch_file, torch_version, torch_cuda_version, "", cuda_available, cuda_device_count, cuda_device_name, mps_available)
     if configured == "auto":
         if cuda_available:
-            return "cuda", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
+            return "cuda", True, torch_file, torch_version, torch_cuda_version, "", cuda_available, cuda_device_count, cuda_device_name, mps_available
         if mps_available:
-            return "mps", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
-    return "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
+            return "mps", True, torch_file, torch_version, torch_cuda_version, "", cuda_available, cuda_device_count, cuda_device_name, mps_available
+    return "cpu", True, torch_file, torch_version, torch_cuda_version, "", cuda_available, cuda_device_count, cuda_device_name, mps_available
 
 
 def get_runtime_device_status(preferred: str | None = None) -> RuntimeDeviceStatus:
     configured = normalize_runtime_device(preferred)
-    resolved, torch_available, cuda_available, cuda_device_count, cuda_device_name, mps_available = _torch_device_status(configured)
+    (
+        resolved,
+        torch_available,
+        torch_file,
+        torch_version,
+        torch_cuda_version,
+        torch_error,
+        cuda_available,
+        cuda_device_count,
+        cuda_device_name,
+        mps_available,
+    ) = _torch_device_status(configured)
     onnx_available = False
+    onnx_file = ""
+    onnx_version = ""
+    onnx_error = ""
     onnx_providers: tuple[str, ...] = ()
     try:
         import onnxruntime as ort
 
         onnx_available = True
+        onnx_file = str(getattr(ort, "__file__", "") or "")
+        onnx_version = str(getattr(ort, "__version__", "") or "")
         onnx_providers = tuple(str(provider) for provider in ort.get_available_providers())
-    except Exception:
-        pass
+    except Exception as exc:
+        onnx_error = str(exc)
     return RuntimeDeviceStatus(
         configured=configured,
         resolved=resolved,
         torch_available=torch_available,
+        torch_file=torch_file,
+        torch_version=torch_version,
+        torch_cuda_version=torch_cuda_version,
+        torch_error=torch_error,
         cuda_available=cuda_available,
         cuda_device_count=cuda_device_count,
         cuda_device_name=cuda_device_name,
         mps_available=mps_available,
         onnx_available=onnx_available,
+        onnx_file=onnx_file,
+        onnx_version=onnx_version,
+        onnx_error=onnx_error,
         onnx_providers=onnx_providers,
         onnx_cuda_available="CUDAExecutionProvider" in onnx_providers,
     )

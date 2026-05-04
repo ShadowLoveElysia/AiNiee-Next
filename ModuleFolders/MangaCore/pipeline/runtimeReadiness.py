@@ -77,7 +77,7 @@ def _format_missing_modules(missing_modules: list[str]) -> str:
 def _device_blocks_runtime(device_status: RuntimeDeviceStatus) -> bool:
     configured = str(device_status.configured or "auto")
     if configured.startswith("cuda"):
-        return not device_status.cuda_available
+        return not device_status.cuda_available or not device_status.onnx_cuda_available
     if configured == "mps":
         return not device_status.mps_available
     return False
@@ -86,7 +86,12 @@ def _device_blocks_runtime(device_status: RuntimeDeviceStatus) -> bool:
 def _device_requirement_text(device_status: RuntimeDeviceStatus) -> str:
     configured = str(device_status.configured or "auto")
     if configured.startswith("cuda"):
-        return "CUDA-enabled torch/onnxruntime-gpu"
+        missing: list[str] = []
+        if not device_status.cuda_available:
+            missing.append("CUDA-enabled torch")
+        if not device_status.onnx_cuda_available:
+            missing.append("onnxruntime-gpu CUDAExecutionProvider")
+        return " / ".join(missing) if missing else "CUDA runtime"
     if configured == "mps":
         return "MPS-enabled torch"
     return configured

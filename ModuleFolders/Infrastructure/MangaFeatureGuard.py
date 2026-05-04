@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,6 +67,46 @@ def _runtime_issue(
         "message": message,
         "message_args": list(message_args or []),
     }
+
+
+def _device_requirement_text(device_status) -> str:
+    configured = str(getattr(device_status, "configured", "auto") or "auto")
+    if configured.startswith("cuda"):
+        missing: list[str] = []
+        if not bool(getattr(device_status, "cuda_available", False)):
+            missing.append("CUDA-enabled torch")
+        if not bool(getattr(device_status, "onnx_cuda_available", False)):
+            missing.append("onnxruntime-gpu CUDAExecutionProvider")
+        return " / ".join(missing) if missing else "CUDA runtime"
+    if configured == "mps":
+        return "MPS-enabled torch"
+    return configured
+
+
+def _device_diagnostic_line(stage: str, model_id: str, device_status) -> str:
+    providers = ", ".join(getattr(device_status, "onnx_providers", ()) or ()) or "none"
+    torch_cuda_version = str(getattr(device_status, "torch_cuda_version", "") or "none")
+    torch_file = str(getattr(device_status, "torch_file", "") or "unknown")
+    onnx_file = str(getattr(device_status, "onnx_file", "") or "unknown")
+    torch_error = str(getattr(device_status, "torch_error", "") or "")
+    onnx_error = str(getattr(device_status, "onnx_error", "") or "")
+    error_parts = []
+    if torch_error:
+        error_parts.append(f"torch_error={torch_error}")
+    if onnx_error:
+        error_parts.append(f"onnxruntime_error={onnx_error}")
+    error_suffix = f" | {' | '.join(error_parts)}" if error_parts else ""
+    return (
+        f"{stage}/{model_id} runtime diagnostics: python={sys.executable} | "
+        f"torch={getattr(device_status, 'torch_version', '') or 'missing'} "
+        f"(cuda_build={torch_cuda_version}, cuda_available={bool(getattr(device_status, 'cuda_available', False))}, "
+        f"devices={int(getattr(device_status, 'cuda_device_count', 0) or 0)}, "
+        f"device_name={getattr(device_status, 'cuda_device_name', '') or 'none'}, file={torch_file}) | "
+        f"onnxruntime={getattr(device_status, 'onnx_version', '') or 'missing'} "
+        f"(cuda_provider={bool(getattr(device_status, 'onnx_cuda_available', False))}, "
+        f"providers={providers}, file={onnx_file})"
+        f"{error_suffix}"
+    )
 
 
 def get_manga_feature_status(
@@ -195,12 +236,13 @@ def get_manga_feature_status(
             )
             if device_missing:
                 runtime_problem_ids.append(model_id)
-                requirement = "CUDA-enabled torch/onnxruntime-gpu" if configured_device.startswith("cuda") else "MPS-enabled torch"
+                requirement = _device_requirement_text(device_status)
                 message = (
                     f"{stage}: 已强制使用 `{configured_device}`，但当前运行时解析为 `{resolved_device}`，"
                     f"缺少 {requirement}。"
                 )
                 details.append(message)
+                details.append(_device_diagnostic_line(stage, model_id, device_status))
                 issues.append(
                     _runtime_issue(
                         code="missing_device",
