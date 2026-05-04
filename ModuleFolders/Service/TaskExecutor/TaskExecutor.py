@@ -465,6 +465,8 @@ class TaskExecutor(Base):
             "bilingual_order": config.get('bilingual_text_order','translation_first'),
             "enable_bilingual_output": config.get('enable_bilingual_output', False)
         }
+        task_config = TaskConfig()
+        task_config.initialize(config)
 
         # 写入文件
         self.file_writer.output_translated_content(
@@ -472,6 +474,7 @@ class TaskExecutor(Base):
             output_path,
             inpput_path, 
             output_config, 
+            task_config
         )
 
         self.print("")
@@ -1064,6 +1067,7 @@ class TaskExecutor(Base):
                 self.config.polishing_output_path,
                 self.config.label_input_path,
                 output_config,
+                self.config
             )
             self.print("")
             self.info(f"润色结果已保存至 {self.config.polishing_output_path} 目录 ...")

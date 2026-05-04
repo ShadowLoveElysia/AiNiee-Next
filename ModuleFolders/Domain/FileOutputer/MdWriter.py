@@ -26,8 +26,9 @@ class MdWriter(BaseTranslatedWriter):
     def write_translated_file(
         self, translation_file_path: Path, cache_file: CacheFile,
         source_file_path: Path = None,
+        task_config=None,
     ):
-        self.txt_writer.write_translated_file(translation_file_path, cache_file, source_file_path)
+        self.txt_writer.write_translated_file(translation_file_path, cache_file, source_file_path, task_config)
 
     def on_write_translated(
         self, translation_file_path: Path, cache_file: CacheFile,

@@ -40,6 +40,7 @@ class OfficeConversionWriter(BaseTranslatedWriter):
     def write_translated_file(
         self, translation_file_path: Path, cache_file: CacheFile,
         source_file_path: Path = None,
+        task_config=None,
     ):
         rel_path = translation_file_path.relative_to(self.output_config.translated_config.output_root)
         tmp_source_docx_path = (
@@ -59,7 +60,7 @@ class OfficeConversionWriter(BaseTranslatedWriter):
             if not tmp_translation_docx_path.parent.exists():
                 tmp_translation_docx_path.parent.mkdir(parents=True)
             # 翻译中间格式文件
-            self.docx_writer.write_translated_file(tmp_translation_docx_path, cache_file, tmp_source_docx_path)
+            self.docx_writer.write_translated_file(tmp_translation_docx_path, cache_file, tmp_source_docx_path, task_config)
             if self.converter.can_convert(tmp_translation_docx_path, translation_file_path):
                 self.converter.convert_file(tmp_translation_docx_path, translation_file_path)
 

@@ -119,13 +119,7 @@ class BaseTranslatedWriter(BaseTranslationWriter):
         :return: 返回一个包含预处理信息的元数据对象
         """
 
-        # 如果没有传入 task_config，则尝试获取一个（为了兼容旧代码）
-        if task_config is None:
-            # This path should ideally not be taken in the new flow
-            from ModuleFolders.Service.TaskExecutor.TaskExecutor import TaskExecutor
-            task_config = TaskExecutor.config
-        
-        keep_original_encoding_config = task_config.keep_original_encoding if task_config else True
+        keep_original_encoding_config = getattr(task_config, "keep_original_encoding", True)
 
         if keep_original_encoding_config:
             encoding = cache_file.encoding
