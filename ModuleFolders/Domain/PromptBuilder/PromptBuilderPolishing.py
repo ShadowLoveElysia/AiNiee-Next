@@ -33,7 +33,7 @@ class PromptBuilderPolishing(Base):
             result = PromptBuilderPolishing.common_system_zh_t
         elif  config.polishing_mode_selection == "source_text_polish":
             result = PromptBuilderPolishing.common_system_zh_s
-        elif  config.polishing_mode_selection == "target_text_polish":
+        elif  config.polishing_mode_selection == "translated_text_polish":
             result = PromptBuilderPolishing.common_system_zh_t
         else:
             result = PromptBuilderPolishing.common_system_zh_t
@@ -51,7 +51,7 @@ class PromptBuilderPolishing(Base):
             result = PromptBuilderPolishing.common_system_zh_t
         elif  config.polishing_mode_selection == "source_text_polish":
             result = PromptBuilderPolishing.common_system_zh_s
-        elif  config.polishing_mode_selection == "target_text_polish":
+        elif  config.polishing_mode_selection == "translated_text_polish":
             result = PromptBuilderPolishing.common_system_zh_t
         else:
             result = PromptBuilderPolishing.common_system_zh_t
@@ -194,7 +194,11 @@ class PromptBuilderPolishing(Base):
     # 构造文风要求
     def build_writing_style(config: TaskConfig) -> str:
         # 获取自定义内容
-        writing_style = config.polishing_style_content
+        writing_style = getattr(
+            config,
+            "writing_style_content",
+            getattr(config, "polishing_style_content", "")
+        )
 
         if config.target_language in ("chinese_simplified", "chinese_traditional"):
             profile = "\n###润色风格"
@@ -276,7 +280,11 @@ class PromptBuilderPolishing(Base):
                 extra_log.append(ntl)
 
         # 如果启用润色风格功能
-        if config.polishing_style_switch == True:
+        if getattr(
+            config,
+            "writing_style_switch",
+            getattr(config, "polishing_style_switch", False)
+        ) == True:
             writing_style = PromptBuilderPolishing.build_writing_style(config)
             if writing_style != "":
                 system += writing_style

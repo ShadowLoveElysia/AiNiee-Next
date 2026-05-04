@@ -72,7 +72,7 @@ class DiagnosticMenu:
             )
         )
 
-        result = self.host.smart_diagnostic.diagnose(error_text)
+        result = self.host.smart_diagnostic.diagnose(error_text, self._build_diagnostic_context())
         formatted = self.host._format_diagnostic_result(result)
         console.print(
             Panel(
@@ -81,6 +81,18 @@ class DiagnosticMenu:
             )
         )
         Prompt.ask(f"\n{self.i18n.get('msg_press_enter_to_continue')}")
+
+    def _build_diagnostic_context(self):
+        context = {
+            "config": self.host.config,
+        }
+        if self.host.operation_logger.is_enabled():
+            context["operation_log"] = self.host.operation_logger.get_formatted_log()
+        if self.host.config.get("label_input_path"):
+            context["input_path"] = self.host.config.get("label_input_path")
+        if self.host.config.get("label_output_path"):
+            context["output_path"] = self.host.config.get("label_output_path")
+        return context
 
     def _browse_menu(self):
         knowledge_base = self.host.smart_diagnostic.knowledge_base

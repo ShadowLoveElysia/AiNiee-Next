@@ -14,9 +14,6 @@ from rich.panel import Panel
 from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.table import Table
 
-from ModuleFolders.Base.Base import Base
-
-
 console = Console()
 
 
@@ -47,7 +44,8 @@ class CrashHandler:
             )
         )
 
-        diag_result = self.host.smart_diagnostic.diagnose(error_msg)
+        diagnostic_context = self._build_diagnostic_context(temp_config)
+        diag_result = self.host.smart_diagnostic.diagnose(error_msg, diagnostic_context)
         if diag_result.is_matched:
             formatted = self.host._format_diagnostic_result(diag_result)
             console.print(
@@ -169,77 +167,41 @@ class CrashHandler:
             console.print(f"[red]{self.i18n.get('msg_api_not_configured')}[/red]")
             return None
 
-        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
-        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
-        import copy
+        from ModuleFolders.Diagnostic.LLMErrorAnalyzer import LLMErrorAnalyzer
+        config_shadow = {} if temp_config else self.host.config
 
-        if temp_config:
-            preset_path = os.path.join(self.project_root, "Resource", "platforms", "preset.json")
-            try:
-                with open(preset_path, "r", encoding="utf-8") as file:
-                    config_shadow = json.load(file)
-            except Exception:
-                config_shadow = copy.deepcopy(self.host.config)
+        analyzer = LLMErrorAnalyzer(self.project_root, self._get_language_code())
+        operation_log = ""
+        if self.host.operation_logger.is_enabled():
+            operation_log = self.host.operation_logger.get_formatted_log()
+        update_version = self.host.update_manager.get_local_version_full()
 
-            platform_tag = temp_config["target_platform"]
-            config_shadow["target_platform"] = platform_tag
-            config_shadow["api_settings"] = {"translate": platform_tag, "polish": platform_tag}
-            config_shadow.setdefault("platforms", {})
-            config_shadow["platforms"].setdefault(platform_tag, {"api_format": "OpenAI"})
-            config_shadow["platforms"][platform_tag].update(temp_config)
-            config_shadow["base_url"] = temp_config.get("api_url")
-            config_shadow["api_key"] = temp_config.get("api_key")
-            config_shadow["model"] = temp_config.get("model")
-            if temp_config.get("think_switch"):
-                config_shadow["think_switch"] = True
-                config_shadow["think_depth"] = temp_config.get("think_depth")
-                config_shadow["thinking_budget"] = temp_config.get("thinking_budget")
-        else:
-            config_shadow = copy.deepcopy(self.host.config)
+        console.print(f"[cyan]{self.i18n.get('msg_llm_analyzing')}[/cyan]")
+        success, content, _ = analyzer.analyze(
+            error_msg,
+            config_shadow,
+            temp_config=temp_config,
+            operation_log=operation_log,
+            update_version=update_version,
+            temperature=1.0,
+            top_p=1.0,
+        )
+        if not success:
+            console.print(f"[red]LLM Analysis failed: {content}[/red]")
+            return None
+        return content
 
-        temp_cfg_path = os.path.join(self.project_root, "Resource", "temp_crash_config.json")
-        try:
-            with open(temp_cfg_path, "w", encoding="utf-8") as file:
-                json.dump(config_shadow, file, indent=4, ensure_ascii=False)
-
-            test_task_config = TaskConfig()
-            test_task_config.initialize(config_shadow)
-
-            original_base_print = Base.print
-            Base.print = lambda *args, **kwargs: None
-            try:
-                test_task_config.prepare_for_translation(TaskType.TRANSLATION)
-                platform_config = test_task_config.get_platform_configuration("translationReq")
-            finally:
-                Base.print = original_base_print
-
-            if "model_name" in platform_config and "model" not in platform_config:
-                platform_config["model"] = platform_config["model_name"]
-
-            platform_config["temperature"] = 1.0
-            platform_config["top_p"] = 1.0
-
-            requester = LLMRequester()
-            system_prompt = self._load_error_analysis_prompt()
-            user_content = self._build_error_analysis_prompt(error_msg)
-
-            console.print(f"[cyan]{self.i18n.get('msg_llm_analyzing')}[/cyan]")
-            skip, _, content, _, _ = requester.sent_request(
-                [{"role": "user", "content": user_content}],
-                system_prompt,
-                platform_config,
-            )
-            if skip:
-                console.print(f"[red]LLM Analysis failed: {content}[/red]")
-                return None
-            return content
-        finally:
-            if os.path.exists(temp_cfg_path):
-                try:
-                    os.remove(temp_cfg_path)
-                except Exception:
-                    pass
+    def _build_diagnostic_context(self, temp_config=None):
+        context = {
+            "config": temp_config or self.host.config,
+        }
+        if self.host.operation_logger.is_enabled():
+            context["operation_log"] = self.host.operation_logger.get_formatted_log()
+        if self.host.config.get("label_input_path"):
+            context["input_path"] = self.host.config.get("label_input_path")
+        if self.host.config.get("label_output_path"):
+            context["output_path"] = self.host.config.get("label_output_path")
+        return context
 
     def prepare_github_issue(self, error_msg, analysis=None):
         """生成 GitHub issue 模板并打开提交页。"""
@@ -365,90 +327,6 @@ class CrashHandler:
 
         selected_config["target_platform"] = selected_tag
         return selected_config
-
-    def _load_error_analysis_prompt(self):
-        prompt_path = os.path.join(self.project_root, "Resource", "Prompt", "System", "error_analysis.json")
-        system_prompt = "You are a Python expert helping a user with a crash."
-        try:
-            if os.path.exists(prompt_path):
-                with open(prompt_path, "r", encoding="utf-8") as file:
-                    prompts = json.load(file)
-                lang = self._get_language_code()
-                system_prompt = prompts.get("system_prompt", {}).get(
-                    lang,
-                    prompts.get("system_prompt", {}).get("en", system_prompt),
-                )
-        except Exception:
-            pass
-        return system_prompt
-
-    def _build_error_analysis_prompt(self, error_msg):
-        lang = self._get_language_code()
-        env_info = (
-            f"OS={sys.platform}, Python={sys.version.split()[0]}, "
-            f"App Version={self.host.update_manager.get_local_version_full()}"
-        )
-
-        if lang == "zh_CN":
-            user_content = (
-                "程序发生崩溃。\n"
-                f"环境信息: {env_info}\n\n"
-                "项目文件结构:\n"
-                "- 核心逻辑: ainiee_cli.py, ModuleFolders/*\n"
-                "- 用户扩展: PluginScripts/*\n"
-                "- 资源文件: Resource/*\n\n"
-            )
-        elif lang == "ja":
-            user_content = (
-                "プログラムがクラッシュしました。\n"
-                f"環境情報: {env_info}\n\n"
-                "プロジェクトファイル構造:\n"
-                "- コアロジック: ainiee_cli.py, ModuleFolders/*\n"
-                "- ユーザー拡張: PluginScripts/*\n"
-                "- リソース: Resource/*\n\n"
-            )
-        else:
-            user_content = (
-                "The program crashed.\n"
-                f"Environment: {env_info}\n\n"
-                "Project File Structure:\n"
-                "- Core Logic: ainiee_cli.py, ModuleFolders/*\n"
-                "- User Extensions: PluginScripts/*\n"
-                "- Resources: Resource/*\n\n"
-            )
-
-        if self.host.operation_logger.is_enabled():
-            user_content += f"{self.host.operation_logger.get_formatted_log()}\n\n"
-
-        if lang == "zh_CN":
-            user_content += (
-                f"错误堆栈:\n{error_msg}\n\n"
-                "分析要求:\n"
-                "请分析此崩溃是由外部因素（网络、API Key、环境、SSL）还是内部软件缺陷（AiNiee-Next代码Bug）导致的。\n"
-                "注意: 网络/SSL/429/401错误通常不是代码Bug，除非代码从根本上误用了库。\n"
-                "如果错误发生在第三方库（如requests、urllib3、ssl）中且由网络条件引起，则不是代码Bug。\n\n"
-                "【重要】如果你确定这是AiNiee-Next的代码Bug，必须在回复中包含这句话：「此为代码问题」"
-            )
-        elif lang == "ja":
-            user_content += (
-                f"トレースバック:\n{error_msg}\n\n"
-                "分析要求:\n"
-                "このクラッシュが外部要因（ネットワーク、APIキー、環境、SSL）によるものか、内部ソフトウェアの欠陥（AiNiee-Nextコードのバグ）によるものかを分析してください。\n"
-                "注意: ネットワーク/SSL/429/401エラーは、コードがライブラリを根本的に誤用していない限り、コードのバグではありません。\n"
-                "サードパーティライブラリ（requests、urllib3、sslなど）でネットワーク条件によりエラーが発生した場合、コードのバグではありません。\n\n"
-                "【重要】これがAiNiee-Nextのコードバグであると確信した場合、回答に必ずこの文を含めてください：「これはコードの問題です」"
-            )
-        else:
-            user_content += (
-                f"Traceback:\n{error_msg}\n\n"
-                "Strict Analysis Request:\n"
-                "Analyze if the crash is due to external factors (Network, API Key, Environment, SSL) or internal software defects (Bugs in AiNiee-Next code).\n"
-                "Note: Network/SSL/429/401 errors are NEVER code bugs unless the code is fundamentally misusing the library.\n"
-                "If the error occurs in a third-party library (like requests, urllib3, ssl) due to network conditions, it is NOT a code bug.\n\n"
-                '[IMPORTANT] If you are certain this is a code bug in AiNiee-Next, you MUST include this exact phrase in your response: "This is a code issue"'
-            )
-
-        return user_content
 
     def _get_language_code(self):
         return getattr(self.i18n, "lang", "en")

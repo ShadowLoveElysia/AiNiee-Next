@@ -248,7 +248,7 @@ class RuleMatcher:
 
         # 1. 精确匹配状态码
         for code, rule in self.exact_rules.items():
-            if code in error_text:
+            if self._contains_status_code(error_text, code):
                 return self._create_result(rule, f"status_code_{code}")
 
         # 2. KeyError 特殊处理
@@ -270,6 +270,15 @@ class RuleMatcher:
 
         # 未匹配到任何规则
         return result
+
+    def _contains_status_code(self, error_text: str, code: str) -> bool:
+        """Match HTTP/API status codes without treating unrelated numbers as errors."""
+        patterns = [
+            rf"\b(status|status_code|http|api|error|code|response)\s*[:=]?\s*{code}\b",
+            rf"\b{code}\s+(error|unauthorized|forbidden|too many|rate|server|bad gateway|service unavailable)\b",
+            rf"\bHTTP\s*/?\s*\d*(?:\.\d+)?\s+{code}\b",
+        ]
+        return any(re.search(pattern, error_text, re.IGNORECASE) for pattern in patterns)
 
     def _create_result(self, rule: dict, rule_name: str) -> DiagnosticResult:
         """从规则创建诊断结果，使用 i18n 翻译"""

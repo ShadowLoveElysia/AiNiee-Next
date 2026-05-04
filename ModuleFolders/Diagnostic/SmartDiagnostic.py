@@ -8,21 +8,18 @@
 4. LLM分析 - 严格控制token (最后手段)
 """
 
-import os
-import sys
-import traceback
-from typing import Optional, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ModuleFolders.Diagnostic.RuleMatcher import RuleMatcher, DiagnosticResult
 from ModuleFolders.Diagnostic.KnowledgeBase import KnowledgeBase
+from ModuleFolders.Diagnostic.LLMErrorAnalyzer import LLMErrorAnalyzer
 from ModuleFolders.Diagnostic.i18n import get_text
 
 
 @dataclass
 class DiagnosticConfig:
     """诊断配置"""
-    enable_llm: bool = True              # 是否启用LLM分析
+    enable_llm: bool = False             # 是否启用自动LLM分析
     max_llm_tokens: int = 1000           # LLM最大输出token
     max_context_tokens: int = 2000       # 最大上下文token
     llm_temperature: float = 0.3         # LLM温度 (低温度更确定性)
@@ -83,7 +80,7 @@ class SmartDiagnostic:
             return result
 
         # 第4层: LLM分析 (消耗token，最后手段)
-        if self.config.enable_llm:
+        if self.config.enable_llm or context.get("allow_llm"):
             result = self._try_llm_analysis(error_text, context)
             if result.is_matched:
                 self.stats["llm_calls"] += 1
@@ -141,81 +138,30 @@ class SmartDiagnostic:
         严格控制token消耗
         """
         try:
-            from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
             from ModuleFolders.Base.Base import Base
 
-            config = Base().load_config()
-            if not config:
-                return DiagnosticResult()
-
-            platform_config = self._build_minimal_platform_config(config)
-            if not platform_config:
-                return DiagnosticResult()
-
-            system_prompt = self._build_compact_system_prompt()
-            user_content = self._build_compact_user_content(error_text, context)
-            messages = [{"role": "user", "content": user_content}]
-
-            requester = LLMRequester()
-            skip, _, response, prompt_tokens, completion_tokens = requester.sent_request(
-                messages, system_prompt, platform_config
+            base_config = context.get("config") if isinstance(context.get("config"), dict) else Base().load_config()
+            analyzer = LLMErrorAnalyzer(lang=self.lang)
+            kb_context = self.knowledge_base.get_context_for_llm(error_text, max_items=1)
+            success, response, token_cost = analyzer.analyze(
+                error_text,
+                base_config,
+                operation_log=context.get("operation_log", ""),
+                requester=context.get("requester"),
+                temperature=self.config.llm_temperature,
+                max_tokens=self.config.max_llm_tokens,
+                compact=True,
+                knowledge_context=kb_context,
+                extra_context=context,
             )
 
-            if skip or not response:
+            if not success:
                 return DiagnosticResult()
 
-            return self._parse_llm_response(response, prompt_tokens + completion_tokens)
+            return self._parse_llm_response(response, token_cost)
 
         except Exception:
             return DiagnosticResult()
-
-    def _build_minimal_platform_config(self, config: dict) -> Optional[dict]:
-        """构建最小化的平台配置"""
-        platform = config.get("translation_platform", "")
-        if not platform:
-            return None
-
-        platform_config = config.get(platform, {})
-        if not platform_config.get("api_key"):
-            return None
-
-        return {
-            "target_platform": platform,
-            "api_key": platform_config.get("api_key"),
-            "base_url": platform_config.get("api_url", platform_config.get("base_url")),
-            "model": platform_config.get("model"),
-            "temperature": self.config.llm_temperature,
-            "max_tokens": self.config.max_llm_tokens,
-        }
-
-    def _build_compact_system_prompt(self) -> str:
-        """构建精简的system prompt"""
-        return """你是AiNiee错误诊断助手。分析错误并简洁回复。
-格式要求(严格遵守):
-[类型] 环境问题/配置问题/代码Bug
-[原因] 一句话说明
-[方案] 2-3个步骤
-[是否代码Bug] 是/否"""
-
-    def _build_compact_user_content(self, error_text: str, context: dict) -> str:
-        """构建精简的用户内容，控制token"""
-        # 截断过长的错误信息
-        max_error_len = 1500
-        if len(error_text) > max_error_len:
-            error_text = error_text[:max_error_len] + "\n...(已截断)"
-
-        parts = [f"错误信息:\n{error_text}"]
-
-        # 添加知识库上下文
-        kb_context = self.knowledge_base.get_context_for_llm(error_text, max_items=1)
-        if kb_context:
-            parts.append(kb_context)
-
-        # 添加环境信息
-        env_info = f"环境: Python {sys.version.split()[0]}, OS: {sys.platform}"
-        parts.append(env_info)
-
-        return "\n\n".join(parts)
 
     def _parse_llm_response(self, response: str, token_cost: int) -> DiagnosticResult:
         """解析LLM响应"""
