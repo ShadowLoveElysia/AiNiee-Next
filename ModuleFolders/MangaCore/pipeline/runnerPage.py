@@ -318,6 +318,7 @@ class MangaPageRunner:
                         detect_result=detect_result,
                         ocr_last_run=ocr_last_run,
                         inpaint_result=inpaint_result,
+                        render_result=None,
                         block_count=len(blocks),
                         translated_blocks=translated_blocks,
                         translation_result=translation_result,
@@ -340,11 +341,34 @@ class MangaPageRunner:
                     message_key="manga_job_render_draft_blocked" if render_blocked else "",
                     message_args=[],
                 )
-                self._run_render_stage(
+                render_result = self._run_render_stage(
                     session,
                     page,
                     write_final=not render_blocked,
                 )
+                if run_translation:
+                    quality_gate = evaluate_automatic_pipeline_quality(
+                        detect_result=detect_result,
+                        ocr_last_run=ocr_last_run,
+                        inpaint_result=inpaint_result,
+                        render_result=render_result,
+                        block_count=len(blocks),
+                        translated_blocks=translated_blocks,
+                        translation_result=translation_result,
+                        require_inpaint=True,
+                    )
+                    write_quality_gate(session, page, quality_gate)
+                    if not quality_gate.final_allowed:
+                        page.status = "needs_review"
+                        remove_final_page(session, page)
+                        if render_result.final_written:
+                            render_result.final_written = False
+                            MangaProjectPersistence.write_page_artifact(
+                                session,
+                                page,
+                                "renderResults.json",
+                                render_result.to_dict(),
+                            )
                 page.last_pipeline_stage = "page_rendering"
 
             if save_after_run or refresh_render:
@@ -555,6 +579,7 @@ class MangaPageRunner:
                             detect_result=detect_result,
                             ocr_last_run=ocr_last_run,
                             inpaint_result=inpaint_result,
+                            render_result=None,
                             block_count=len(blocks),
                             translated_blocks=translated_blocks,
                             translation_result=translation_result,
@@ -562,7 +587,6 @@ class MangaPageRunner:
                         )
                         write_quality_gate(session, page, quality_gate)
                         if not quality_gate.final_allowed:
-                            final_blocked_pages += 1
                             page.status = "needs_review"
                             remove_final_page(session, page)
                     render_blocked = quality_gate is not None and not quality_gate.final_allowed
@@ -596,11 +620,35 @@ class MangaPageRunner:
                         message_key="manga_job_render_draft_page_blocked" if render_blocked else "",
                         message_args=[processed + 1, len(page_ids)] if render_blocked else [],
                     )
-                    self._run_render_stage(
+                    render_result = self._run_render_stage(
                         session,
                         page,
                         write_final=not render_blocked,
                     )
+                    if run_translation:
+                        quality_gate = evaluate_automatic_pipeline_quality(
+                            detect_result=detect_result,
+                            ocr_last_run=ocr_last_run,
+                            inpaint_result=inpaint_result,
+                            render_result=render_result,
+                            block_count=len(blocks),
+                            translated_blocks=translated_blocks,
+                            translation_result=translation_result,
+                            require_inpaint=True,
+                        )
+                        write_quality_gate(session, page, quality_gate)
+                        if not quality_gate.final_allowed:
+                            final_blocked_pages += 1
+                            page.status = "needs_review"
+                            remove_final_page(session, page)
+                            if render_result.final_written:
+                                render_result.final_written = False
+                                MangaProjectPersistence.write_page_artifact(
+                                    session,
+                                    page,
+                                    "renderResults.json",
+                                    render_result.to_dict(),
+                                )
                     page.last_pipeline_stage = "batch_rendering"
 
                 MangaProjectPersistence.save_page(session, page)
@@ -970,6 +1018,12 @@ class MangaPageRunner:
 
     @staticmethod
     def _build_render_message(render_result: RenderResult) -> str:
+        if render_result.layout_fit_failed_blocks > 0:
+            return (
+                f"Rendered {render_result.rendered_blocks} text block(s) with "
+                f"{render_result.configured_engine_id} ({render_result.runtime_engine_id}); "
+                f"{render_result.layout_fit_failed_blocks} block(s) need layout review."
+            )
         return (
             f"Rendered {render_result.rendered_blocks} text block(s) with "
             f"{render_result.configured_engine_id} ({render_result.runtime_engine_id})."

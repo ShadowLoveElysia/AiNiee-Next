@@ -21,6 +21,9 @@ class RenderResult:
     final_path: str = ""
     rendered_blocks: int = 0
     skipped_blocks: int = 0
+    layout_fit_failed_blocks: int = 0
+    layout_warnings: list[dict[str, object]] | None = None
+    layout_plans: list[dict[str, object]] | None = None
     final_written: bool = True
     error_message: str = ""
 
@@ -34,6 +37,9 @@ class RenderResult:
             "final_path": self.final_path,
             "rendered_blocks": self.rendered_blocks,
             "skipped_blocks": self.skipped_blocks,
+            "layout_fit_failed_blocks": self.layout_fit_failed_blocks,
+            "layout_warnings": list(self.layout_warnings or []),
+            "layout_plans": list(self.layout_plans or []),
             "final_written": self.final_written,
             "error_message": self.error_message,
         }
@@ -65,6 +71,18 @@ class RenderEngine:
         rendered_path = self.renderer.render_page(session, page, write_final=write_final)
         final_path = session.output_root / "final" / "pages" / f"{page.index:04d}.png"
         rendered_blocks, skipped_blocks = self._count_rendered_blocks(session, page)
+        layout_plans = [plan.to_dict() for plan in self.renderer.last_layout_plans]
+        layout_warnings = [
+            {
+                "block_id": plan.block_id,
+                "warnings": list(plan.warnings),
+                "fit_ok": plan.fit_ok,
+                "font_size": plan.font_size,
+                "direction": plan.direction,
+            }
+            for plan in self.renderer.last_layout_plans
+            if plan.warnings or not plan.fit_ok
+        ]
         return RenderResult(
             ok=True,
             configured_engine_id=self.engine_id,
@@ -74,6 +92,9 @@ class RenderEngine:
             final_path=str(final_path),
             rendered_blocks=rendered_blocks,
             skipped_blocks=skipped_blocks,
+            layout_fit_failed_blocks=sum(1 for plan in self.renderer.last_layout_plans if not plan.fit_ok),
+            layout_warnings=layout_warnings,
+            layout_plans=layout_plans,
             final_written=write_final,
         )
 

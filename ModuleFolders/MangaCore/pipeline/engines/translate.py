@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ModuleFolders.Domain.PromptBuilder.PromptBuilder import PromptBuilder
 from ModuleFolders.Domain.ResponseExtractor.ResponseExtractor import ResponseExtractor
 from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Service.TaskExecutor.TranslatorUtil import get_language_display_names
+from ModuleFolders.MangaCore.render.textNormalize import normalize_manga_dialogue_for_translation
 
 
 _LANGUAGE_NORMALIZATION_MAP = {
@@ -86,9 +86,9 @@ class TranslateEngine:
         batch_size: int = 20,
     ) -> TranslationBatchResult:
         prepared_blocks = [
-            (block.block_id, str(block.source_text or "").strip())
+            (block.block_id, normalize_manga_dialogue_for_translation(str(block.source_text or "")))
             for block in blocks
-            if str(block.source_text or "").strip()
+            if normalize_manga_dialogue_for_translation(str(block.source_text or ""))
         ]
         if not prepared_blocks:
             return TranslationBatchResult(ok=True)
@@ -213,7 +213,7 @@ class TranslateEngine:
         messages = [
             {
                 "role": "user",
-                "content": PromptBuilder.build_source_text(task_config, source_text_dict),
+                "content": self._build_manga_source_text(source_text_dict),
             }
         ]
         system_prompt = self._build_system_prompt(task_config.source_language, task_config.target_language)
@@ -267,7 +267,9 @@ class TranslateEngine:
                 "你是一位专业的漫画翻译助手。\n"
                 f"请把用户提供的文本块从{zh_source}翻译成{zh_target}。\n"
                 "必须逐条翻译，保持编号顺序，不得遗漏、合并或解释。\n"
-                "如果某一项原文包含多行，请在同一编号项内保留合理换行。\n"
+                "漫画 OCR 的换行通常只是竖排列或检测碎片，不代表中文断句；请先理解为同一个气泡中的一句或一段话。\n"
+                "译文必须使用自然、流畅的中文语序，除非语义上确实需要分段，否则不要保留 OCR 换行或逐碎片翻译。\n"
+                "不要为了排版强制换行，最终断行会由嵌字排版器处理。\n"
                 "只输出被 <textarea> 包裹的结果，格式如下：\n"
                 "<textarea>\n"
                 "1.译文\n"
@@ -279,7 +281,9 @@ class TranslateEngine:
             "You are a professional manga translation assistant.\n"
             f"Translate each numbered text block from {en_source} into {en_target}.\n"
             "Do not omit, merge, reorder, or explain any item.\n"
-            "If an item contains multiple lines, preserve sensible line breaks inside that numbered item.\n"
+            "Manga OCR line breaks often come from vertical columns or detector fragments, not semantic sentence breaks.\n"
+            "Translate each block into natural target-language word order; do not preserve OCR line breaks unless they are semantically necessary.\n"
+            "Do not insert layout-driven line breaks; the typesetting engine will wrap the text.\n"
             "Return only the result inside a <textarea> block using this format:\n"
             "<textarea>\n"
             "1.translation\n"
@@ -313,6 +317,10 @@ class TranslateEngine:
         if plain and len(source_text_dict) == 1:
             return {"0": self._clean_translation_text(plain)}
         return {}
+
+    @staticmethod
+    def _build_manga_source_text(source_text_dict: dict[str, str]) -> str:
+        return "\n".join(f"{int(key) + 1}.{value}" for key, value in source_text_dict.items())
 
     @staticmethod
     def _normalize_language_token(value: str) -> str:

@@ -7,6 +7,7 @@ from typing import Any
 
 from ModuleFolders.MangaCore.pipeline.engines.detect import DetectResult
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintResult
+from ModuleFolders.MangaCore.pipeline.engines.render import RenderResult
 from ModuleFolders.MangaCore.pipeline.engines.translate import TranslationBatchResult
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
@@ -125,6 +126,7 @@ def evaluate_automatic_pipeline_quality(
     detect_result: DetectResult,
     ocr_last_run: dict[str, object],
     inpaint_result: InpaintResult | None,
+    render_result: RenderResult | None = None,
     block_count: int,
     translated_blocks: int,
     translation_result: TranslationBatchResult | None,
@@ -225,6 +227,30 @@ def evaluate_automatic_pipeline_quality(
                     )
                 )
 
+    if render_result is not None:
+        if render_result.layout_fit_failed_blocks > 0:
+            issues.append(
+                _issue(
+                    "layout_fit_failed",
+                    "render",
+                    "manga_quality_issue_layout_fit_failed",
+                    f"Layout failed to fit {render_result.layout_fit_failed_blocks} text block(s).",
+                    render_result.layout_fit_failed_blocks,
+                )
+            )
+        layout_warnings = render_result.layout_warnings or []
+        if layout_warnings:
+            warning_count = len(layout_warnings)
+            issues.append(
+                _issue(
+                    "layout_warning",
+                    "render",
+                    "manga_quality_issue_layout_warning",
+                    f"Render produced layout warning(s) for {warning_count} text block(s).",
+                    warning_count,
+                )
+            )
+
     blocking_issues = [issue for issue in issues if issue.blocks_final]
     final_allowed = not blocking_issues
     metrics = {
@@ -233,6 +259,7 @@ def evaluate_automatic_pipeline_quality(
         "detect_text_region_count": len(detect_result.text_regions),
         "detect_bubble_region_count": len(detect_result.bubble_regions),
         "inpaint_mask_pixels": inpaint_result.mask_pixels if inpaint_result is not None else 0,
+        "layout_fit_failed_blocks": render_result.layout_fit_failed_blocks if render_result is not None else 0,
     }
     stage_modes = {
         "detect": {
@@ -243,6 +270,7 @@ def evaluate_automatic_pipeline_quality(
         },
         "ocr": dict(ocr_last_run),
         "inpaint": inpaint_result.to_dict() if inpaint_result is not None else {},
+        "render": render_result.to_dict() if render_result is not None else {},
     }
     return PageQualityGate(
         ok=final_allowed,
