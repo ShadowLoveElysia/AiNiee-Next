@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -71,6 +74,34 @@ class RuntimeRequirementStatus:
             "required_assets": list(self.required_assets),
             "required_asset_paths": list(self.required_asset_paths),
             "missing_asset_paths": list(self.missing_asset_paths),
+        }
+
+
+@dataclass(slots=True)
+class RuntimeDeviceStatus:
+    configured: str = "auto"
+    resolved: str = "cpu"
+    torch_available: bool = False
+    cuda_available: bool = False
+    cuda_device_count: int = 0
+    cuda_device_name: str = ""
+    mps_available: bool = False
+    onnx_available: bool = False
+    onnx_providers: tuple[str, ...] = ()
+    onnx_cuda_available: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "configured": self.configured,
+            "resolved": self.resolved,
+            "torch_available": self.torch_available,
+            "cuda_available": self.cuda_available,
+            "cuda_device_count": self.cuda_device_count,
+            "cuda_device_name": self.cuda_device_name,
+            "mps_available": self.mps_available,
+            "onnx_available": self.onnx_available,
+            "onnx_providers": list(self.onnx_providers),
+            "onnx_cuda_available": self.onnx_cuda_available,
         }
 
 
@@ -158,7 +189,16 @@ _RUNTIME_REQUIRED_MODULES: dict[str, tuple[str, ...]] = {
 }
 
 _RUNTIME_CLASS_CACHE: dict[tuple[str, str, str], type] = {}
-_RUNTIME_INSTANCE_CACHE: dict[tuple[str, str, str], Any] = {}
+_RUNTIME_INSTANCE_CACHE: dict[tuple[str, str, str, str], Any] = {}
+_ASCII_RUNTIME_MODEL_ROOT_CACHE: dict[tuple[str, str], Path] = {}
+_DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+_DEFAULT_RUNTIME_DEVICE = "auto"
+_VALID_RUNTIME_DEVICE_PREFIXES = ("auto", "cpu", "cuda", "mps")
+_STAGE_RUNTIME_DEVICE_KEYS = {
+    "detect": "manga_detect_device",
+    "ocr": "manga_ocr_device",
+    "inpaint": "manga_inpaint_device",
+}
 
 
 def _repo_root() -> Path:
@@ -173,8 +213,78 @@ def _resolve_model_root(root_dir: str | Path | None = None) -> Path:
     return Path(root_dir) if root_dir is not None else _default_model_root()
 
 
+def _is_ascii_path(path: str | Path) -> bool:
+    try:
+        str(path).encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _ascii_cache_base_dir() -> Path:
+    candidates = [
+        Path(tempfile.gettempdir()) / "ainiee_manga_runtime_models",
+        Path(os.environ.get("SYSTEMDRIVE", "C:") + "\\ainiee_manga_runtime_models"),
+    ]
+    for candidate in candidates:
+        if _is_ascii_path(candidate):
+            return candidate
+    return candidates[0]
+
+
+def _copy_runtime_asset_if_needed(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        try:
+            source_stat = source.stat()
+            destination_stat = destination.stat()
+            if (
+                source_stat.st_size == destination_stat.st_size
+                and int(source_stat.st_mtime) == int(destination_stat.st_mtime)
+            ):
+                return
+        except OSError:
+            pass
+    shutil.copy2(source, destination)
+
+
+def _runtime_root_for_wrapper(
+    model_id: str,
+    model_root: Path,
+    *,
+    kind: str,
+) -> Path:
+    if os.name != "nt" or kind != "detect" or _is_ascii_path(model_root):
+        return model_root
+    required_assets = _RUNTIME_REQUIRED_ASSETS.get(str(model_id), ())
+    if not required_assets or not all((model_root / asset_path).exists() for asset_path in required_assets):
+        return model_root
+
+    cache_key = (str(model_root.resolve()), str(model_id))
+    cached = _ASCII_RUNTIME_MODEL_ROOT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    digest = hashlib.sha256(str(model_root.resolve()).encode("utf-8")).hexdigest()[:16]
+    mirror_root = _ascii_cache_base_dir() / digest
+    for relative_path in required_assets:
+        source = model_root / relative_path
+        if source.exists() and source.is_file():
+            _copy_runtime_asset_if_needed(source, mirror_root / relative_path)
+
+    _ASCII_RUNTIME_MODEL_ROOT_CACHE[cache_key] = mirror_root
+    return mirror_root
+
+
 def _runtime_cache_root(root_dir: str | Path | None = None) -> Path:
     return _resolve_model_root(root_dir) / "cache"
+
+
+def _ensure_huggingface_endpoint() -> str:
+    endpoint = (os.environ.get("HF_ENDPOINT") or _DEFAULT_HF_ENDPOINT).rstrip("/")
+    os.environ["HF_ENDPOINT"] = endpoint
+    os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
+    return endpoint
 
 
 def _ensure_transformers_module_cache(root_dir: str | Path | None = None) -> Path:
@@ -183,6 +293,7 @@ def _ensure_transformers_module_cache(root_dir: str | Path | None = None) -> Pat
     modules_cache.mkdir(parents=True, exist_ok=True)
 
     modules_cache_str = str(modules_cache)
+    _ensure_huggingface_endpoint()
     os.environ["HF_HOME"] = str(cache_root)
     os.environ["HF_MODULES_CACHE"] = modules_cache_str
 
@@ -222,20 +333,90 @@ def _await_sync(coro):
         loop.close()
 
 
-def _select_device(preferred: str | None = None) -> str:
-    if preferred:
-        return str(preferred)
+def normalize_runtime_device(value: str | None = None) -> str:
+    raw_value = str(value or os.environ.get("AINIEE_MANGA_RUNTIME_DEVICE") or _DEFAULT_RUNTIME_DEVICE).strip().lower()
+    if not raw_value:
+        return _DEFAULT_RUNTIME_DEVICE
+    if raw_value in {"gpu", "cuda-auto"}:
+        return "cuda"
+    if raw_value in {"cuda0", "cuda:0"}:
+        return "cuda"
+    if raw_value.startswith("cuda:"):
+        suffix = raw_value.split(":", 1)[1]
+        return raw_value if suffix.isdigit() else "cuda"
+    if raw_value in _VALID_RUNTIME_DEVICE_PREFIXES:
+        return raw_value
+    return _DEFAULT_RUNTIME_DEVICE
 
+
+def _torch_device_status(configured: str) -> tuple[str, bool, bool, int, str, bool]:
     try:
         import torch
 
-        if torch.cuda.is_available():
-            return "cuda"
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
+        cuda_available = bool(torch.cuda.is_available())
+        cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
+        cuda_device_name = torch.cuda.get_device_name(0) if cuda_available and cuda_device_count > 0 else ""
+        mps_available = bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+    except Exception:
+        return "cpu", False, False, 0, "", False
+
+    if configured.startswith("cuda"):
+        return ("cuda" if cuda_available else "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available)
+    if configured == "mps":
+        return ("mps" if mps_available else "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available)
+    if configured == "auto":
+        if cuda_available:
+            return "cuda", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
+        if mps_available:
+            return "mps", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
+    return "cpu", True, cuda_available, cuda_device_count, cuda_device_name, mps_available
+
+
+def get_runtime_device_status(preferred: str | None = None) -> RuntimeDeviceStatus:
+    configured = normalize_runtime_device(preferred)
+    resolved, torch_available, cuda_available, cuda_device_count, cuda_device_name, mps_available = _torch_device_status(configured)
+    onnx_available = False
+    onnx_providers: tuple[str, ...] = ()
+    try:
+        import onnxruntime as ort
+
+        onnx_available = True
+        onnx_providers = tuple(str(provider) for provider in ort.get_available_providers())
     except Exception:
         pass
-    return "cpu"
+    return RuntimeDeviceStatus(
+        configured=configured,
+        resolved=resolved,
+        torch_available=torch_available,
+        cuda_available=cuda_available,
+        cuda_device_count=cuda_device_count,
+        cuda_device_name=cuda_device_name,
+        mps_available=mps_available,
+        onnx_available=onnx_available,
+        onnx_providers=onnx_providers,
+        onnx_cuda_available="CUDAExecutionProvider" in onnx_providers,
+    )
+
+
+def _select_device(preferred: str | None = None) -> str:
+    return get_runtime_device_status(preferred).resolved
+
+
+def runtime_device_from_config(config_snapshot: dict[str, object] | None = None, stage: str | None = None) -> str:
+    snapshot = dict(config_snapshot) if isinstance(config_snapshot, dict) else {}
+    stage_key = _STAGE_RUNTIME_DEVICE_KEYS.get(str(stage or "").strip().lower())
+    if stage_key:
+        stage_value = str(snapshot.get(stage_key) or "").strip()
+        if stage_value and normalize_runtime_device(stage_value) != "auto":
+            return normalize_runtime_device(stage_value)
+    return normalize_runtime_device(str(snapshot.get("manga_runtime_device") or "").strip() or None)
+
+
+def runtime_device_status_from_config(
+    config_snapshot: dict[str, object] | None = None,
+    stage: str | None = None,
+) -> RuntimeDeviceStatus:
+    return get_runtime_device_status(runtime_device_from_config(config_snapshot, stage))
 
 
 def _resolve_runtime_spec(model_id: str) -> dict[str, str] | None:
@@ -309,14 +490,19 @@ def get_runtime_requirement_status(
     )
 
 
-def _build_runtime_wrapper(model_id: str, root_dir: str | Path | None = None):
+def _build_runtime_wrapper(
+    model_id: str,
+    root_dir: str | Path | None = None,
+    device: str | None = None,
+):
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         raise KeyError(f"Unsupported runtime-backed manga model: {model_id}")
 
     _ensure_transformers_module_cache(root_dir)
     model_root = _resolve_model_root(root_dir)
-    cache_key = (str(model_root), spec["module"], spec["class"])
+    wrapper_model_root = _runtime_root_for_wrapper(model_id, model_root, kind=spec["kind"])
+    cache_key = (str(wrapper_model_root), spec["module"], spec["class"])
     wrapper_cls = _RUNTIME_CLASS_CACHE.get(cache_key)
     if wrapper_cls is None:
         _ensure_upstream_import_path()
@@ -325,11 +511,11 @@ def _build_runtime_wrapper(model_id: str, root_dir: str | Path | None = None):
         wrapper_cls = type(
             f"MangaCore{spec['class']}",
             (base_cls,),
-            {"_MODEL_DIR": str(model_root)},
+            {"_MODEL_DIR": str(wrapper_model_root)},
         )
         _RUNTIME_CLASS_CACHE[cache_key] = wrapper_cls
 
-    instance_key = (str(model_root), spec["kind"], str(model_id))
+    instance_key = (str(wrapper_model_root), spec["kind"], str(model_id), _select_device(device))
     wrapper = _RUNTIME_INSTANCE_CACHE.get(instance_key)
     if wrapper is None:
         wrapper = wrapper_cls()
@@ -338,11 +524,18 @@ def _build_runtime_wrapper(model_id: str, root_dir: str | Path | None = None):
 
 
 def _ensure_loaded(model_id: str, root_dir: str | Path | None = None, device: str | None = None):
-    wrapper = _build_runtime_wrapper(model_id, root_dir)
+    selected_device = _select_device(device)
+    wrapper = _build_runtime_wrapper(model_id, root_dir, device=selected_device)
     if not wrapper.is_downloaded():
         raise FileNotFoundError(f"Runtime assets are not ready for manga model: {model_id}")
+    loaded_device = str(getattr(wrapper, "device", "") or "")
+    if wrapper.is_loaded() and loaded_device and loaded_device != selected_device:
+        try:
+            _await_sync(wrapper.unload())
+        except Exception:
+            pass
     if not wrapper.is_loaded():
-        _await_sync(wrapper.load(device=_select_device(device)))
+        _await_sync(wrapper.load(device=selected_device))
     return wrapper
 
 

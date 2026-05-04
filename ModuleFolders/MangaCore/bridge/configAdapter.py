@@ -6,6 +6,15 @@ def _arg_or_config(host_config: dict[str, object], args, key: str, default: str)
     return str(value).strip()
 
 
+def _stage_device_arg_or_config(host_config: dict[str, object], args, key: str) -> str:
+    value = getattr(args, key, None)
+    if value is None or not str(value).strip():
+        value = host_config.get(key)
+    if value is None or not str(value).strip():
+        value = host_config.get("manga_runtime_device")
+    return str(value or "auto").strip()
+
+
 def build_cli_config_snapshot(host, args) -> dict[str, object]:
     config = getattr(host, "config", {}) or {}
     root_config = getattr(host, "root_config", {}) or {}
@@ -24,6 +33,10 @@ def build_cli_config_snapshot(host, args) -> dict[str, object]:
         "manga_detect_engine": _arg_or_config(config, args, "manga_detect_engine", "comic-text-bubble-detector"),
         "manga_segment_engine": _arg_or_config(config, args, "manga_segment_engine", "comic-text-detector"),
         "manga_inpaint_engine": _arg_or_config(config, args, "manga_inpaint_engine", "aot-inpainting"),
+        "manga_runtime_device": _arg_or_config(config, args, "manga_runtime_device", "auto"),
+        "manga_detect_device": _stage_device_arg_or_config(config, args, "manga_detect_device"),
+        "manga_ocr_device": _stage_device_arg_or_config(config, args, "manga_ocr_device"),
+        "manga_inpaint_device": _stage_device_arg_or_config(config, args, "manga_inpaint_device"),
         "web_mode": bool(getattr(args, "web_mode", False)),
         "manga": bool(getattr(args, "manga", False)),
     }

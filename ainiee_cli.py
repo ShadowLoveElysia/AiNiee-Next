@@ -45,6 +45,7 @@ from ModuleFolders.UserInterface.UIHelpers import (
 )
 from ModuleFolders.UserInterface.WebLogger import WebLogger
 from ModuleFolders.UserInterface.RuntimeBootstrap import ensure_runtime_bootstrap
+from ModuleFolders.UserInterface.ConsoleInputGuard import suppress_console_mouse_input
 
 
 
@@ -82,6 +83,7 @@ class CLIMenu:
         self._export_flow = None
         self._profile_menu_handler = None
         self._task_queue_menu_handler = None
+        self._manga_runtime_menu_handler = None
         self._prompt_selection_guard = None
         self._terminal_compatibility = None
         
@@ -335,6 +337,14 @@ class CLIMenu:
 
             self._task_queue_menu_handler = TaskQueueMenu(self)
         return self._task_queue_menu_handler
+
+    @property
+    def manga_runtime_menu_handler(self):
+        if self._manga_runtime_menu_handler is None:
+            from ModuleFolders.UserInterface.MangaRuntimeMenu import MangaRuntimeMenu
+
+            self._manga_runtime_menu_handler = MangaRuntimeMenu(self)
+        return self._manga_runtime_menu_handler
 
     @property
     def prompt_selection_guard(self):
@@ -809,8 +819,8 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server"]
-            colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta"]
+            menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "manga_runtime_manager"]
+            colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "cyan"]
             
             for i, (m, c) in enumerate(zip(menus, colors)): 
                 label = i18n.get(f"menu_{m}")
@@ -824,6 +834,8 @@ class CLIMenu:
                     label = i18n.get("menu_start_all_in_one")
                 if m == "start_manga_translation" and label == f"menu_{m}":
                     label = "漫画翻译 (MangaCore)"
+                if m == "manga_runtime_manager" and label == f"menu_{m}":
+                    label = "MangaCore Runtime 管理"
                 table.add_row(f"[{c}]{i+1}.[/]", label)
                 
             table.add_row("[red]0.[/]", i18n.get("menu_exit")); console.print(table)
@@ -831,7 +843,7 @@ class CLIMenu:
             console.print("\n")
 
             # 记录用户操作
-            menu_names = ["退出", "开始翻译", "漫画翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器"]
+            menu_names = ["退出", "开始翻译", "漫画翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器", "漫画Runtime管理"]
             if choice < len(menu_names):
                 self.operation_logger.log(f"主菜单 -> {menu_names[choice]}", "MENU")
 
@@ -854,6 +866,7 @@ class CLIMenu:
                 lambda: self.update_manager.setup_web_server(manual=True),
                 self.start_web_server,
                 self.start_mcp_server,
+                self.manga_runtime_menu_handler.show,
             ]
             actions[choice]()
 
@@ -1660,25 +1673,39 @@ class CLIMenu:
                 
                 return is_middleware_converted_local
 
+        tui_error_pause_shown = False
         try:
             if web_mode:
                 is_middleware_converted = run_task_logic()
             else:
                 # 提前启动 Live，确保加载过程可见
-                with Live(self.ui.layout, console=self.ui_console, refresh_per_second=10, screen=True, transient=False) as live:
-                    is_middleware_converted = run_task_logic()
+                with suppress_console_mouse_input(), Live(
+                    self.ui.layout,
+                    console=self.ui_console,
+                    refresh_per_second=10,
+                    screen=True,
+                    transient=False,
+                ) as live:
+                    try:
+                        is_middleware_converted = run_task_logic()
+                    except Exception as live_exc:
+                        self.ui.log(f"[bold red]Critical Task Error: {str(live_exc)}[/bold red]")
+                        tui_error_pause_shown = True
+                        time.sleep(3)
+                        raise
 
         except KeyboardInterrupt: self.signal_handler(None, None)
         except Exception as e:
             # Capture and log the error before TUI disappears
             import traceback
             error_full = traceback.format_exc()
-            err_msg = f"[bold red]Critical Task Error: {str(e)}[/bold red]"
-            if hasattr(self, "ui") and self.ui:
-                self.ui.log(err_msg)
-            else:
-                console.print(err_msg)
-            time.sleep(1) # Give a moment for the log to register
+            if not tui_error_pause_shown:
+                err_msg = f"[bold red]Critical Task Error: {str(e)}[/bold red]"
+                if hasattr(self, "ui") and self.ui:
+                    self.ui.log(err_msg)
+                else:
+                    console.print(err_msg)
+                time.sleep(3) # Give the user time to read the error before the TUI exits
             
             # 标记为真正的崩溃
             self._last_crash_msg = error_full
@@ -1948,6 +1975,10 @@ class CLIMenu:
             manga_detect_engine=None,
             manga_segment_engine=None,
             manga_inpaint_engine=None,
+            manga_runtime_device=None,
+            manga_detect_device=None,
+            manga_ocr_device=None,
+            manga_inpaint_device=None,
             lines=None,
             tokens=None,
             pre_lines=None,
@@ -2011,26 +2042,47 @@ class CLIMenu:
                     "is_start": True,
                 },
             )
-            with Live(self.ui.layout, console=self.ui_console, refresh_per_second=10, screen=True, transient=False):
+            with suppress_console_mouse_input(), Live(
+                self.ui.layout,
+                console=self.ui_console,
+                refresh_per_second=10,
+                screen=True,
+                transient=False,
+            ):
                 self.ui.log("[bold cyan]MangaCore task started.[/bold cyan]")
-                exit_code = self.run_non_interactive(args) or 0
-                if exit_code == 0:
-                    self.ui.update_status(None, {"status": "normal"})
-                    self.ui.log("[bold green]MangaCore task completed.[/bold green]")
-                else:
+                try:
+                    exit_code = self.run_non_interactive(args) or 0
+                    if exit_code == 0:
+                        self.ui.update_status(None, {"status": "normal"})
+                        self.ui.log("[bold green]MangaCore task completed.[/bold green]")
+                    else:
+                        self.ui.update_status(None, {"status": "error"})
+                        self.ui.log(f"[bold red]MangaCore task exited with code {exit_code}.[/bold red]")
+                        time.sleep(3)
+                except KeyboardInterrupt:
+                    exit_code = 130
                     self.ui.update_status(None, {"status": "error"})
-                    self.ui.log(f"[bold red]MangaCore task exited with code {exit_code}.[/bold red]")
-                time.sleep(0.5)
+                    self.ui.log("[bold red]MangaCore task interrupted by user.[/bold red]")
+                    time.sleep(3)
+                except Exception as exc:
+                    exit_code = 1
+                    self.ui.update_status(None, {"status": "error"})
+                    self.ui.log(f"[bold red]MangaCore TUI task failed: {exc}[/bold red]")
+                    import traceback
+                    self.ui.log(traceback.format_exc())
+                    time.sleep(3)
         except KeyboardInterrupt:
             exit_code = 130
             self.ui.update_status(None, {"status": "error"})
             self.ui.log("[bold red]MangaCore task interrupted by user.[/bold red]")
-            time.sleep(0.5)
+            time.sleep(3)
         except Exception as exc:
             exit_code = 1
             self.ui.update_status(None, {"status": "error"})
             self.ui.log(f"[bold red]MangaCore TUI task failed: {exc}[/bold red]")
-            time.sleep(0.5)
+            import traceback
+            self.ui.log(traceback.format_exc())
+            time.sleep(3)
         finally:
             sys.stdout, sys.stderr = original_stdout, original_stderr
             Base.print = original_base_print
@@ -2111,6 +2163,10 @@ def main():
     parser.add_argument('--manga-detect-engine', help="MangaCore bubble/text detector id (default: comic-text-bubble-detector)")
     parser.add_argument('--manga-segment-engine', help="MangaCore text segmenter id (default: comic-text-detector)")
     parser.add_argument('--manga-inpaint-engine', help="MangaCore inpaint engine id (default: aot-inpainting)")
+    parser.add_argument('--manga-runtime-device', choices=['auto', 'cpu', 'cuda', 'mps'], help="MangaCore default visual runtime device (auto/cpu/cuda/mps)")
+    parser.add_argument('--manga-detect-device', choices=['auto', 'cpu', 'cuda', 'mps'], help="MangaCore detect-stage device override")
+    parser.add_argument('--manga-ocr-device', choices=['auto', 'cpu', 'cuda', 'mps'], help="MangaCore OCR-stage device override")
+    parser.add_argument('--manga-inpaint-device', choices=['auto', 'cpu', 'cuda', 'mps'], help="MangaCore inpaint-stage device override")
     parser.add_argument(
         '--mcp',
         action='store_true',

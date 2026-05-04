@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from ModuleFolders.MangaCore.bridge.providerAdapter import get_runtime_asset_status, run_detect_runtime
+from ModuleFolders.MangaCore.bridge.providerAdapter import (
+    get_runtime_asset_status,
+    get_runtime_device_status,
+    run_detect_runtime,
+)
 from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
 from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed
 from ModuleFolders.MangaCore.render.planner import LAYOUT_ASSIGNMENT_STATUSES
@@ -103,25 +107,34 @@ class DetectEngine:
         self,
         detector_id: str | None = None,
         segmenter_id: str | None = None,
+        device: str | None = None,
     ) -> None:
         self.detector_id = str(detector_id or DEFAULT_DETECT_ENGINE_ID)
         self.segmenter_id = str(segmenter_id or DEFAULT_SEGMENT_ENGINE_ID)
+        self.device = str(device or "auto")
 
     def configure(
         self,
         detector_id: str | None = None,
         segmenter_id: str | None = None,
+        device: str | None = None,
     ) -> None:
         if detector_id:
             self.detector_id = str(detector_id)
         if segmenter_id:
             self.segmenter_id = str(segmenter_id)
+        if device is not None and str(device).strip():
+            self.device = str(device).strip()
 
     def describe(self) -> dict[str, object]:
         runtime_status = get_runtime_asset_status(self.detector_id)
+        device_status = get_runtime_device_status(self.device)
         return {
             "configured_detector_id": self.detector_id,
             "configured_segmenter_id": self.segmenter_id,
+            "configured_device": device_status.configured,
+            "resolved_device": device_status.resolved,
+            "device": device_status.to_dict(),
             "runtime_detector_id": runtime_status.runtime_engine_id if runtime_status.available else "heuristic-grouping",
             "runtime_segmenter_id": runtime_status.extra.get("runtime_segmenter_id", "pil-mask-rasterizer") if runtime_status.available else "pil-mask-rasterizer",
             "supported_detector_ids": [DEFAULT_DETECT_ENGINE_ID, *ALTERNATIVE_DETECT_ENGINE_IDS],
@@ -155,7 +168,7 @@ class DetectEngine:
         runtime_status = get_runtime_asset_status(self.detector_id)
         if runtime_status.available:
             try:
-                runtime_output = run_detect_runtime(image_path, self.detector_id)
+                runtime_output = run_detect_runtime(image_path, self.detector_id, device=self.device)
             except Exception as exc:
                 runtime_error = str(exc)
                 runtime_output = None

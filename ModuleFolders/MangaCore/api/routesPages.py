@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw
 
 from ModuleFolders.MangaCore.api.schemas import BrushMaskStrokeRequest, RestoreMaskStrokeRequest
+from ModuleFolders.MangaCore.bridge.providerAdapter import runtime_device_from_config
 from ModuleFolders.MangaCore.constants import DEFAULT_MASK_PATHS
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.ops.apply import capture_page_assets_operation
@@ -207,7 +208,10 @@ def _apply_restore_mask_to_rendered(session: MangaProjectSession, page) -> None:
 def _refresh_page_inpaint_and_render(session: MangaProjectSession, page) -> tuple[InpaintResult, RenderResult]:
     snapshot = session.config_snapshot if isinstance(getattr(session, "config_snapshot", None), dict) else {}
     inpaint_engine = InpaintEngine()
-    inpaint_engine.configure(snapshot.get("manga_inpaint_engine"))
+    inpaint_engine.configure(
+        snapshot.get("manga_inpaint_engine"),
+        device=runtime_device_from_config(snapshot, "inpaint"),
+    )
     inpaint_result = inpaint_engine.run(
         source_path=session.project_path / page.layers.source,
         segment_mask_path=session.project_path / page.masks.segment,

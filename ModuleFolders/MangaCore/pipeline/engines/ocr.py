@@ -5,6 +5,7 @@ from typing import Any
 
 from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_runtime_asset_status,
+    get_runtime_device_status,
     run_region_ocr_runtime,
 )
 from ModuleFolders.MangaCore.render.bubbleAssign import TextSeed
@@ -30,20 +31,27 @@ class OcrEngine:
     stage = "ocr"
     _ocr_instance = None
 
-    def __init__(self, engine_id: str | None = None) -> None:
+    def __init__(self, engine_id: str | None = None, device: str | None = None) -> None:
         self.engine_id = str(engine_id or DEFAULT_OCR_ENGINE_ID)
+        self.device = str(device or "auto")
         self.last_runtime_engine_id = RUNTIME_OCR_ENGINE_ID
         self.last_warning_message = ""
         self.last_used_runtime = False
 
-    def configure(self, engine_id: str | None = None) -> None:
+    def configure(self, engine_id: str | None = None, device: str | None = None) -> None:
         if engine_id:
             self.engine_id = str(engine_id)
+        if device is not None and str(device).strip():
+            self.device = str(device).strip()
 
     def describe(self) -> dict[str, object]:
         runtime_status = get_runtime_asset_status(self.engine_id)
+        device_status = get_runtime_device_status(self.device)
         return {
             "configured_engine_id": self.engine_id,
+            "configured_device": device_status.configured,
+            "resolved_device": device_status.resolved,
+            "device": device_status.to_dict(),
             "runtime_engine_id": runtime_status.runtime_engine_id if runtime_status.available else RUNTIME_OCR_ENGINE_ID,
             "supported_engine_ids": [DEFAULT_OCR_ENGINE_ID, *ALTERNATIVE_OCR_ENGINE_IDS],
         }
@@ -75,7 +83,7 @@ class OcrEngine:
         runtime_status = get_runtime_asset_status(self.engine_id)
         if runtime_status.available and regions:
             try:
-                runtime_output = run_region_ocr_runtime(image_path, self.engine_id, regions)
+                runtime_output = run_region_ocr_runtime(image_path, self.engine_id, regions, device=self.device)
                 if runtime_output is not None:
                     self.last_runtime_engine_id = runtime_output.runtime_engine_id
                     self.last_used_runtime = True

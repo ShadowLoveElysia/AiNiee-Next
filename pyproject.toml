@@ -47,6 +47,7 @@ dependencies = [
     "bitstring>=4.3.0",
     "configargparse>=1.7",
     "huggingface-hub>=0.27.0",
+    "tokenizers>=0.21,<0.22",
     "onnx>=1.18.0",
     "onnxruntime>=1.20.1",
     "babeldoc>=0.5.0",
@@ -85,4 +86,3 @@ packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18
 
 [tool.hatch.build.targets.sdist]
 include = ["ainiee_cli.py", "pyproject.toml", "README.md", "LICENSE"]
-

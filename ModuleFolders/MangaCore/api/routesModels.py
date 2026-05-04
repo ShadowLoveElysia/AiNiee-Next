@@ -84,6 +84,10 @@ def get_runtime_readiness(
     manga_detect_engine: str = "",
     manga_segment_engine: str = "",
     manga_inpaint_engine: str = "",
+    manga_runtime_device: str = "",
+    manga_detect_device: str = "",
+    manga_ocr_device: str = "",
+    manga_inpaint_device: str = "",
 ) -> dict[str, object]:
     config_snapshot = {
         key: value
@@ -92,6 +96,10 @@ def get_runtime_readiness(
             "manga_detect_engine": manga_detect_engine,
             "manga_segment_engine": manga_segment_engine,
             "manga_inpaint_engine": manga_inpaint_engine,
+            "manga_runtime_device": manga_runtime_device,
+            "manga_detect_device": manga_detect_device,
+            "manga_ocr_device": manga_ocr_device,
+            "manga_inpaint_device": manga_inpaint_device,
         }.items()
         if value
     }

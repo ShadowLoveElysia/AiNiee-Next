@@ -911,6 +911,23 @@ register_config(ConfigItem(
     category="advanced"
 ))
 
+# --- MangaCore Runtime 配置 (ADVANCED) ---
+for _manga_device_key in (
+    "manga_runtime_device",
+    "manga_detect_device",
+    "manga_ocr_device",
+    "manga_inpaint_device",
+):
+    register_config(ConfigItem(
+        key=_manga_device_key,
+        default="auto",
+        level=ConfigLevel.ADVANCED,
+        config_type=ConfigType.CHOICE,
+        i18n_key=f"setting_{_manga_device_key}",
+        choices=["auto", "cpu", "cuda", "mps"],
+        category="manga"
+    ))
+
 # --- 系统级配置 (SYSTEM) - 不对用户显示 ---
 register_config(ConfigItem(
     key="translation_project",

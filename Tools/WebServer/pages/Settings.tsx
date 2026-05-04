@@ -353,6 +353,33 @@ export const Settings: React.FC = () => {
   const isAnthropicThinking = activePlatformConfig.api_format === 'Anthropic';
   const isDeepSeekThinking = activePlatformKey.toLowerCase() === 'deepseek';
   const isOpenAIThinking = activePlatformConfig.api_format === 'OpenAI';
+  const mangaDeviceOptions = [
+    { value: 'auto', label: t('manga_settings_device_auto') },
+    { value: 'cpu', label: t('manga_settings_device_cpu') },
+    { value: 'cuda', label: t('manga_settings_device_cuda') },
+    { value: 'mps', label: t('manga_settings_device_mps') },
+  ];
+  const DeviceSelect = ({ field, label }: { field: keyof AppConfig, label: string }) => (
+    <div className="space-y-2">
+      <label className="text-xs font-semibold text-slate-400 uppercase">{label}</label>
+      <select
+        value={(config[field] as string) || 'auto'}
+        onChange={(e) => handleChange(field, e.target.value)}
+        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm"
+      >
+        {mangaDeviceOptions.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+  const deviceState = [
+    config.manga_runtime_device || 'auto',
+    config.manga_detect_device || 'auto',
+    config.manga_ocr_device || 'auto',
+    config.manga_inpaint_device || 'auto',
+  ];
+  const forcedCuda = deviceState.some(value => String(value).toLowerCase() === 'cuda');
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
       <div className="flex justify-between items-center sticky top-0 bg-background/95 backdrop-blur z-20 py-4 border-b border-slate-800">
@@ -819,6 +846,21 @@ export const Settings: React.FC = () => {
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm">
                   {PROJECT_TYPES.map(p => <option key={p} value={p}>{p}</option>)}
                </select>
+            </div>
+
+            <div className="p-4 border border-slate-700 rounded-lg bg-slate-900/30">
+              <h4 className="text-slate-200 font-medium text-sm mb-4">{t('manga_settings_visual_runtime')}</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <DeviceSelect field="manga_runtime_device" label={t('manga_settings_runtime_device')} />
+                <DeviceSelect field="manga_detect_device" label={t('manga_settings_detect_device')} />
+                <DeviceSelect field="manga_ocr_device" label={t('manga_settings_ocr_device')} />
+                <DeviceSelect field="manga_inpaint_device" label={t('manga_settings_inpaint_device')} />
+              </div>
+              {forcedCuda && (
+                <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-300">
+                  {t('manga_settings_cuda_runtime_hint')}
+                </div>
+              )}
             </div>
 
              <div className="p-4 border border-slate-700 rounded-lg bg-slate-900/30">

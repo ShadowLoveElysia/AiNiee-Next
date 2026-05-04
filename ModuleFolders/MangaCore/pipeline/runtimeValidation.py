@@ -8,6 +8,7 @@ from time import perf_counter
 from typing import Callable
 from urllib.parse import quote
 
+from ModuleFolders.MangaCore.bridge.providerAdapter import runtime_device_from_config
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine, DetectRegion
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintEngine
@@ -417,14 +418,21 @@ class MangaRuntimeValidator:
     def _configure_engines(self, session: MangaProjectSession) -> None:
         snapshot = session.config_snapshot if isinstance(getattr(session, "config_snapshot", None), dict) else {}
         if hasattr(self.ocr_engine, "configure"):
-            self.ocr_engine.configure(snapshot.get("manga_ocr_engine"))
+            self.ocr_engine.configure(
+                snapshot.get("manga_ocr_engine"),
+                device=runtime_device_from_config(snapshot, "ocr"),
+            )
         if hasattr(self.detect_engine, "configure"):
             self.detect_engine.configure(
                 detector_id=snapshot.get("manga_detect_engine"),
                 segmenter_id=snapshot.get("manga_segment_engine"),
+                device=runtime_device_from_config(snapshot, "detect"),
             )
         if hasattr(self.inpaint_engine, "configure"):
-            self.inpaint_engine.configure(snapshot.get("manga_inpaint_engine"))
+            self.inpaint_engine.configure(
+                snapshot.get("manga_inpaint_engine"),
+                device=runtime_device_from_config(snapshot, "inpaint"),
+            )
 
     def _run_detect(
         self,

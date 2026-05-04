@@ -231,6 +231,10 @@ export interface AppConfig {
   target_language: string;
   
   translation_project: string;
+  manga_runtime_device?: string;
+  manga_detect_device?: string;
+  manga_ocr_device?: string;
+  manga_inpaint_device?: string;
   
   // --- Performance ---
   user_thread_counts: number;

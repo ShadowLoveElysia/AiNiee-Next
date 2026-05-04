@@ -122,6 +122,10 @@ class TaskConfig(Base):
         self.structured_output_mode = 0
         self.enable_stream_api = True  # 流式API开关，默认启用
         self.use_openai_sdk = False    # 请求模式：True=OpenAI SDK, False=原生HTTPX
+        self.manga_runtime_device = "auto"
+        self.manga_detect_device = "auto"
+        self.manga_ocr_device = "auto"
+        self.manga_inpaint_device = "auto"
         self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
 
     def __repr__(self) -> str:

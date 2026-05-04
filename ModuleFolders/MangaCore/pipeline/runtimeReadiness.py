@@ -5,7 +5,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ModuleFolders.MangaCore.bridge.providerAdapter import (
+    RuntimeDeviceStatus,
     get_runtime_dependency_status,
+    runtime_device_status_from_config,
     get_runtime_requirement_status,
 )
 from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
@@ -33,6 +35,7 @@ class RuntimeReadinessItem:
     required_assets: list[str] = field(default_factory=list)
     required_asset_paths: list[str] = field(default_factory=list)
     missing_asset_paths: list[str] = field(default_factory=list)
+    device: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -71,6 +74,24 @@ def _format_missing_modules(missing_modules: list[str]) -> str:
     return ", ".join(missing_modules) if missing_modules else ""
 
 
+def _device_blocks_runtime(device_status: RuntimeDeviceStatus) -> bool:
+    configured = str(device_status.configured or "auto")
+    if configured.startswith("cuda"):
+        return not device_status.cuda_available
+    if configured == "mps":
+        return not device_status.mps_available
+    return False
+
+
+def _device_requirement_text(device_status: RuntimeDeviceStatus) -> str:
+    configured = str(device_status.configured or "auto")
+    if configured.startswith("cuda"):
+        return "CUDA-enabled torch/onnxruntime-gpu"
+    if configured == "mps":
+        return "MPS-enabled torch"
+    return configured
+
+
 def _build_unknown_item(stage: str, model_id: str, exc: Exception) -> RuntimeReadinessItem:
     message = f"{stage}: unknown manga model `{model_id}` ({exc})"
     return RuntimeReadinessItem(
@@ -91,6 +112,7 @@ def _build_item(
     status: dict[str, object],
     dependency_status,
     requirement_status,
+    device_status: RuntimeDeviceStatus,
 ) -> RuntimeReadinessItem:
     available = bool(status.get("available"))
     runtime_supported = bool(status.get("runtime_supported"))
@@ -121,6 +143,7 @@ def _build_item(
         required_assets=required_assets,
         required_asset_paths=required_asset_paths,
         missing_asset_paths=missing_asset_paths,
+        device=device_status.to_dict(),
     )
 
     if not available:
@@ -131,6 +154,25 @@ def _build_item(
         item.message_args = [stage, model_id]
         item.action_hint_key = "manga_runtime_readiness_action_prepare_model"
         item.action_hint_args = [model_id]
+        return item
+
+    if stage != "segment" and _device_blocks_runtime(device_status):
+        item.status = "missing_device"
+        item.blocking = True
+        item.message = (
+            f"{stage}: model `{model_id}` requested `{device_status.configured}`, "
+            f"but the runtime resolved to `{device_status.resolved}` because {_device_requirement_text(device_status)} is unavailable."
+        )
+        item.message_key = "manga_runtime_readiness_missing_device"
+        item.message_args = [
+            stage,
+            model_id,
+            device_status.configured,
+            device_status.resolved,
+            _device_requirement_text(device_status),
+        ]
+        item.action_hint_key = "manga_runtime_readiness_action_install_runtime_requirements"
+        item.action_hint_args = ["ModuleFolders/MangaCore/runtime/requirements_gpu.txt"]
         return item
 
     if stage != "segment" and not runtime_supported:
@@ -166,6 +208,10 @@ def build_manga_runtime_readiness(
 ) -> RuntimeReadinessReport:
     store = MangaModelStore(root_dir=model_root_dir) if model_root_dir is not None else MangaModelStore()
     required_model_ids = _resolve_required_model_ids(config_snapshot)
+    device_status_by_stage = {
+        stage: runtime_device_status_from_config(config_snapshot, stage)
+        for stage in ("detect", "ocr", "inpaint")
+    }
     items: list[RuntimeReadinessItem] = []
 
     for stage, model_id in required_model_ids.items():
@@ -184,6 +230,7 @@ def build_manga_runtime_readiness(
                 status=status,
                 dependency_status=dependency_status,
                 requirement_status=requirement_status,
+                device_status=device_status_by_stage.get(stage, RuntimeDeviceStatus()),
             )
         )
 
@@ -203,5 +250,9 @@ def build_manga_runtime_readiness(
             "ready_stage_count": len(ready_items),
             "blocking_stage_count": len(blocking_items),
             "status_counts": status_counts,
+            "devices": {
+                stage: status.to_dict()
+                for stage, status in device_status_by_stage.items()
+            },
         },
     )

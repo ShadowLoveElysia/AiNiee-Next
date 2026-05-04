@@ -112,6 +112,7 @@ class SettingsMenuBuilder:
             ("api", "label_category_api"),
             ("response_check", "label_category_response_check"),
             ("automation", "label_category_automation"),
+            ("manga", "label_category_manga"),
             ("advanced", "label_category_advanced"),
         ]
 

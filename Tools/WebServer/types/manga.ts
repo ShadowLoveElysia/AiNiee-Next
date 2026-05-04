@@ -116,15 +116,34 @@ export interface MangaModelPackageStatus {
   runtime_engine_id?: string;
 }
 
+export interface MangaRuntimeDeviceStatus {
+  configured: string;
+  resolved: string;
+  torch_available?: boolean;
+  cuda_available?: boolean;
+  cuda_device_count?: number;
+  cuda_device_name?: string;
+  mps_available?: boolean;
+  onnx_available?: boolean;
+  onnx_providers?: string[];
+  onnx_cuda_available?: boolean;
+}
+
 export interface MangaOcrEngineStatus {
   configured_engine_id: string;
   runtime_engine_id: string;
+  configured_device?: string;
+  resolved_device?: string;
+  device?: MangaRuntimeDeviceStatus;
   package?: MangaModelPackageStatus;
 }
 
 export interface MangaDetectEngineStatus {
   configured_detector_id: string;
   configured_segmenter_id: string;
+  configured_device?: string;
+  resolved_device?: string;
+  device?: MangaRuntimeDeviceStatus;
   runtime_detector_id: string;
   runtime_segmenter_id: string;
   detector_package?: MangaModelPackageStatus;
@@ -134,6 +153,9 @@ export interface MangaDetectEngineStatus {
 export interface MangaInpaintEngineStatus {
   configured_engine_id: string;
   runtime_engine_id: string;
+  configured_device?: string;
+  resolved_device?: string;
+  device?: MangaRuntimeDeviceStatus;
   package?: MangaModelPackageStatus;
 }
 
@@ -164,6 +186,7 @@ export interface MangaRuntimeReadinessItem {
   required_assets?: string[];
   required_asset_paths?: string[];
   missing_asset_paths?: string[];
+  device?: MangaRuntimeDeviceStatus;
 }
 
 export interface MangaRuntimeReadinessReport {

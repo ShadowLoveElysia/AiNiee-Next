@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
+from ModuleFolders.MangaCore.bridge.providerAdapter import runtime_device_from_config
 from ModuleFolders.MangaCore.pipeline.engines.detect import DetectEngine, DetectResult
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintEngine, InpaintResult
 from ModuleFolders.MangaCore.pipeline.engines.ocr import OcrEngine
@@ -204,14 +205,21 @@ class MangaPageRunner:
     def _configure_engines(self, session: MangaProjectSession) -> None:
         snapshot = session.config_snapshot if isinstance(getattr(session, "config_snapshot", None), dict) else {}
         if hasattr(self.ocr_engine, "configure"):
-            self.ocr_engine.configure(snapshot.get("manga_ocr_engine"))
+            self.ocr_engine.configure(
+                snapshot.get("manga_ocr_engine"),
+                device=runtime_device_from_config(snapshot, "ocr"),
+            )
         if hasattr(self.detect_engine, "configure"):
             self.detect_engine.configure(
                 detector_id=snapshot.get("manga_detect_engine"),
                 segmenter_id=snapshot.get("manga_segment_engine"),
+                device=runtime_device_from_config(snapshot, "detect"),
             )
         if hasattr(self.inpaint_engine, "configure"):
-            self.inpaint_engine.configure(snapshot.get("manga_inpaint_engine"))
+            self.inpaint_engine.configure(
+                snapshot.get("manga_inpaint_engine"),
+                device=runtime_device_from_config(snapshot, "inpaint"),
+            )
 
     def _process_current_page(
         self,

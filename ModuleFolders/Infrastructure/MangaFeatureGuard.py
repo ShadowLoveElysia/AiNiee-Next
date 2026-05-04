@@ -94,6 +94,7 @@ def get_manga_feature_status(
         provider_adapter_module = importlib.import_module("ModuleFolders.MangaCore.bridge.providerAdapter")
         MangaModelStore = getattr(model_store_module, "MangaModelStore")
         get_runtime_dependency_status = getattr(provider_adapter_module, "get_runtime_dependency_status")
+        runtime_device_status_from_config = getattr(provider_adapter_module, "runtime_device_status_from_config")
     except Exception as exc:
         return MangaFeatureStatus(
             available=False,
@@ -179,6 +180,35 @@ def get_manga_feature_status(
                         message_key="manga_runtime_preflight_missing_dependency",
                         message=message,
                         message_args=[stage, model_id, missing_modules],
+                    )
+                )
+                continue
+
+        if stage in {"detect", "ocr", "inpaint"}:
+            device_status = runtime_device_status_from_config(config_snapshot, stage)
+            configured_device = str(getattr(device_status, "configured", "auto") or "auto")
+            resolved_device = str(getattr(device_status, "resolved", "cpu") or "cpu")
+            device_missing = (
+                configured_device.startswith("cuda") and not bool(getattr(device_status, "cuda_available", False))
+            ) or (
+                configured_device == "mps" and not bool(getattr(device_status, "mps_available", False))
+            )
+            if device_missing:
+                runtime_problem_ids.append(model_id)
+                requirement = "CUDA-enabled torch/onnxruntime-gpu" if configured_device.startswith("cuda") else "MPS-enabled torch"
+                message = (
+                    f"{stage}: 已强制使用 `{configured_device}`，但当前运行时解析为 `{resolved_device}`，"
+                    f"缺少 {requirement}。"
+                )
+                details.append(message)
+                issues.append(
+                    _runtime_issue(
+                        code="missing_device",
+                        stage=stage,
+                        model_id=model_id,
+                        message_key="manga_runtime_preflight_missing_device",
+                        message=message,
+                        message_args=[stage, model_id, configured_device, resolved_device, requirement],
                     )
                 )
 

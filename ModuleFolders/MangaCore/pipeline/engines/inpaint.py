@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageChops, ImageFilter
 
-from ModuleFolders.MangaCore.bridge.providerAdapter import get_runtime_asset_status, run_inpaint_runtime
+from ModuleFolders.MangaCore.bridge.providerAdapter import (
+    get_runtime_asset_status,
+    get_runtime_device_status,
+    run_inpaint_runtime,
+)
 
 DEFAULT_INPAINT_ENGINE_ID = "aot-inpainting"
 ALTERNATIVE_INPAINT_ENGINE_IDS = ("lama-manga",)
@@ -59,15 +63,19 @@ class InpaintResult:
 class InpaintEngine:
     stage = "inpaint"
 
-    def __init__(self, engine_id: str | None = None) -> None:
+    def __init__(self, engine_id: str | None = None, device: str | None = None) -> None:
         self.engine_id = str(engine_id or DEFAULT_INPAINT_ENGINE_ID)
+        self.device = str(device or "auto")
 
-    def configure(self, engine_id: str | None = None) -> None:
+    def configure(self, engine_id: str | None = None, device: str | None = None) -> None:
         if engine_id:
             self.engine_id = str(engine_id)
+        if device is not None and str(device).strip():
+            self.device = str(device).strip()
 
     def describe(self) -> dict[str, object]:
         runtime_status = get_runtime_asset_status(self.engine_id)
+        device_status = get_runtime_device_status(self.device)
         runtime_engine_id = runtime_status.runtime_engine_id if runtime_status.available else "opencv-telea"
         if not runtime_status.available and self.engine_id == "lama-manga":
             runtime_engine_id = "opencv-ns" if cv2 is not None else "pil-median-fallback"
@@ -75,6 +83,9 @@ class InpaintEngine:
             runtime_engine_id = "pil-median-fallback"
         return {
             "configured_engine_id": self.engine_id,
+            "configured_device": device_status.configured,
+            "resolved_device": device_status.resolved,
+            "device": device_status.to_dict(),
             "runtime_engine_id": runtime_engine_id,
             "supported_engine_ids": [DEFAULT_INPAINT_ENGINE_ID, *ALTERNATIVE_INPAINT_ENGINE_IDS],
         }
@@ -117,6 +128,7 @@ class InpaintEngine:
                     brush_mask_path=brush_mask_path,
                     output_path=output_path,
                     engine_id=self.engine_id,
+                    device=self.device,
                 )
                 if runtime_result is not None:
                     return InpaintResult(

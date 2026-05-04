@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-
-from huggingface_hub import snapshot_download
 
 from ModuleFolders.MangaCore.bridge.providerAdapter import (
     download_runtime_assets,
@@ -13,6 +13,7 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_inpaint_runtime_id,
     get_ocr_runtime_id,
     get_runtime_asset_status,
+    runtime_device_status_from_config,
 )
 from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package, list_model_packages
 
@@ -23,6 +24,7 @@ _DIRECT_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
         "dbnet.safetensors",
     ),
 }
+_DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 
 
 def _now_iso() -> str:
@@ -31,6 +33,37 @@ def _now_iso() -> str:
 
 def _safe_name(value: str) -> str:
     return re.sub(r"[^a-z0-9._-]+", "-", value.lower()).strip("-") or "model"
+
+
+def _ensure_huggingface_endpoint() -> str:
+    endpoint = (os.environ.get("HF_ENDPOINT") or _DEFAULT_HF_ENDPOINT).rstrip("/")
+    os.environ["HF_ENDPOINT"] = endpoint
+    os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
+    return endpoint
+
+
+def _snapshot_download(repo_id: str, cache_dir: str) -> str:
+    endpoint = _ensure_huggingface_endpoint()
+    try:
+        from huggingface_hub import snapshot_download
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "huggingface-hub is required only when downloading non-runtime MangaCore "
+            "model packages with Hugging Face snapshots. The default Manga runtime "
+            "model downloader does not use huggingface-hub."
+        ) from exc
+
+    kwargs: dict[str, object] = {
+        "repo_id": repo_id,
+        "cache_dir": cache_dir,
+        "local_files_only": False,
+    }
+    try:
+        if "endpoint" in inspect.signature(snapshot_download).parameters:
+            kwargs["endpoint"] = endpoint
+    except (TypeError, ValueError):
+        pass
+    return str(snapshot_download(**kwargs))
 
 
 class MangaModelStore:
@@ -128,11 +161,7 @@ class MangaModelStore:
             )
 
         self.huggingface_cache_dir().mkdir(parents=True, exist_ok=True)
-        snapshot_path = snapshot_download(
-            repo_id=package.repo_id,
-            cache_dir=str(self.huggingface_cache_dir()),
-            local_files_only=False,
-        )
+        snapshot_path = _snapshot_download(package.repo_id, str(self.huggingface_cache_dir()))
         return self.register_downloaded_snapshot(
             model_id,
             snapshot_path,
@@ -164,16 +193,25 @@ def build_engine_status(config_snapshot: dict[str, object] | None = None) -> dic
     segment_id = str(snapshot.get("manga_segment_engine") or "comic-text-detector")
     inpaint_id = str(snapshot.get("manga_inpaint_engine") or "aot-inpainting")
     detector_runtime_id, segmenter_runtime_id = get_detect_runtime_ids(detect_id, segment_id, store.root_dir)
+    ocr_device = runtime_device_status_from_config(snapshot, "ocr")
+    detect_device = runtime_device_status_from_config(snapshot, "detect")
+    inpaint_device = runtime_device_status_from_config(snapshot, "inpaint")
 
     return {
         "ocr": {
             "configured_engine_id": ocr_id,
+            "configured_device": ocr_device.configured,
+            "resolved_device": ocr_device.resolved,
+            "device": ocr_device.to_dict(),
             "runtime_engine_id": get_ocr_runtime_id(ocr_id, store.root_dir),
             "package": store.get_status(ocr_id),
         },
         "detect": {
             "configured_detector_id": detect_id,
             "configured_segmenter_id": segment_id,
+            "configured_device": detect_device.configured,
+            "resolved_device": detect_device.resolved,
+            "device": detect_device.to_dict(),
             "runtime_detector_id": detector_runtime_id,
             "runtime_segmenter_id": segmenter_runtime_id,
             "detector_package": store.get_status(detect_id),
@@ -181,6 +219,9 @@ def build_engine_status(config_snapshot: dict[str, object] | None = None) -> dic
         },
         "inpaint": {
             "configured_engine_id": inpaint_id,
+            "configured_device": inpaint_device.configured,
+            "resolved_device": inpaint_device.resolved,
+            "device": inpaint_device.to_dict(),
             "runtime_engine_id": get_inpaint_runtime_id(inpaint_id, store.root_dir),
             "package": store.get_status(inpaint_id),
         },

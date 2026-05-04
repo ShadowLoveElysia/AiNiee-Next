@@ -295,6 +295,10 @@ class CommandModeRunner:
             "manga_detect_engine",
             "manga_segment_engine",
             "manga_inpaint_engine",
+            "manga_runtime_device",
+            "manga_detect_device",
+            "manga_ocr_device",
+            "manga_inpaint_device",
         ):
             manga_value = str(getattr(args, manga_key, "") or "").strip()
             if manga_value:
@@ -631,8 +635,11 @@ class CommandModeRunner:
                 return 2
 
             self._manga_log(
-                "[yellow][MangaCore][/yellow] Runtime preflight failed, but --manga-allow-fallback was set; "
-                "first-pass pipeline will use fallback runtimes where possible."
+                "[yellow][MangaCore][/yellow] "
+                + self._i18n_format(
+                    "manga_runtime_preflight_allow_fallback",
+                    "Runtime preflight failed, but --manga-allow-fallback was set; first-pass pipeline will use fallback runtimes where possible.",
+                )
             )
             self._log_manga_runtime_preflight_status(model_status, style="yellow")
 
@@ -656,11 +663,26 @@ class CommandModeRunner:
             f"({translation_settings['api_key_state']} API key)"
         )
         self._manga_log(
-            "[bold cyan][MangaCore][/bold cyan] Visual engines: "
-            f"ocr={config_snapshot.get('manga_ocr_engine')}, "
-            f"detect={config_snapshot.get('manga_detect_engine')}, "
-            f"segment={config_snapshot.get('manga_segment_engine')}, "
-            f"inpaint={config_snapshot.get('manga_inpaint_engine')}"
+            "[bold cyan][MangaCore][/bold cyan] "
+            + self._i18n_format(
+                "manga_cli_visual_engines",
+                "Visual engines: ocr={}, detect={}, segment={}, inpaint={}",
+                config_snapshot.get("manga_ocr_engine"),
+                config_snapshot.get("manga_detect_engine"),
+                config_snapshot.get("manga_segment_engine"),
+                config_snapshot.get("manga_inpaint_engine"),
+            )
+        )
+        self._manga_log(
+            "[bold cyan][MangaCore][/bold cyan] "
+            + self._i18n_format(
+                "manga_cli_visual_devices",
+                "Visual devices: default={}, detect={}, ocr={}, inpaint={}",
+                config_snapshot.get("manga_runtime_device"),
+                config_snapshot.get("manga_detect_device"),
+                config_snapshot.get("manga_ocr_device"),
+                config_snapshot.get("manga_inpaint_device"),
+            )
         )
 
         try:

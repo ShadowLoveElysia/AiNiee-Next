@@ -67,6 +67,10 @@ DEFAULT_CONFIG = {
     "exclude_rule_str": "",
     "recent_projects": [],
     "mcp_server_port": 8765,
+    "manga_runtime_device": "auto",
+    "manga_detect_device": "auto",
+    "manga_ocr_device": "auto",
+    "manga_inpaint_device": "auto",
     "label_output_path": "",
     "polishing_output_path": "",
     "platforms": {

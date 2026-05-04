@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -60,6 +61,25 @@ class DownloadResult:
 MANGA_TRANSLATOR_RELEASE = "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3"
 MANGA_TRANSLATOR_MODELSCOPE = "https://www.modelscope.cn/models/hgmzhn/manga-translator-ui/resolve/master"
 HF_RESOLVE = "https://huggingface.co"
+DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+
+
+def _ensure_huggingface_endpoint() -> str:
+    endpoint = (os.environ.get("HF_ENDPOINT") or DEFAULT_HF_ENDPOINT).rstrip("/")
+    os.environ["HF_ENDPOINT"] = endpoint
+    os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
+    return endpoint
+
+
+def _resolve_download_url(url: str) -> str:
+    endpoint = _ensure_huggingface_endpoint()
+    origin = HF_RESOLVE.rstrip("/")
+    if url == origin:
+        return endpoint
+    prefix = f"{origin}/"
+    if url.startswith(prefix):
+        return f"{endpoint}/{url[len(prefix):]}"
+    return url
 
 
 ASSETS: tuple[DownloadAsset, ...] = (
@@ -575,7 +595,8 @@ def _download_file(
     partial_path = destination.with_name(f"{destination.name}.part")
     last_error: Exception | None = None
 
-    for index, url in enumerate(asset.urls, start=1):
+    for index, raw_url in enumerate(asset.urls, start=1):
+        url = _resolve_download_url(raw_url)
         try:
             if index > 1:
                 if display is not None and display.enabled:
