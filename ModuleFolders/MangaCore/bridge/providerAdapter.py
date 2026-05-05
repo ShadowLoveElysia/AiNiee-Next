@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import shutil
 import sys
@@ -207,6 +208,8 @@ _RUNTIME_INSTANCE_CACHE: dict[tuple[str, str, str, str], Any] = {}
 _ASCII_RUNTIME_MODEL_ROOT_CACHE: dict[tuple[str, str], Path] = {}
 _DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 _DEFAULT_RUNTIME_DEVICE = "auto"
+_PADDLEOCR_VL_MANGA_REPO_ID = "jzhang533/PaddleOCR-VL-For-Manga"
+_PADDLEOCR_VL_MANGA_MARKER = ".ainiee_hf_snapshot.json"
 _VALID_RUNTIME_DEVICE_PREFIXES = ("auto", "cpu", "cuda", "mps")
 _STAGE_RUNTIME_DEVICE_KEYS = {
     "detect": "manga_detect_device",
@@ -480,7 +483,17 @@ def _local_runtime_assets_available(model_id: str, root_dir: str | Path | None =
     if not required_assets:
         return False
     model_root = _resolve_model_root(root_dir)
-    return all((model_root / asset_path).exists() for asset_path in required_assets)
+    if not all((model_root / asset_path).exists() for asset_path in required_assets):
+        return False
+    if str(model_id) != "paddleocr-vl-1.5":
+        return True
+
+    marker_path = model_root / "ocr" / "PaddleOCR-VL-1.5" / _PADDLEOCR_VL_MANGA_MARKER
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return marker.get("repo_id") == _PADDLEOCR_VL_MANGA_REPO_ID
 
 
 def get_runtime_dependency_status(model_id: str) -> RuntimeDependencyStatus:
@@ -520,6 +533,15 @@ def get_runtime_requirement_status(
         for asset_path in required_asset_paths
         if not Path(asset_path).exists()
     )
+    if str(model_id) == "paddleocr-vl-1.5" and not missing_asset_paths:
+        marker_path = model_root / "ocr" / "PaddleOCR-VL-1.5" / _PADDLEOCR_VL_MANGA_MARKER
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except Exception:
+            missing_asset_paths = (str(marker_path),)
+        else:
+            if marker.get("repo_id") != _PADDLEOCR_VL_MANGA_REPO_ID:
+                missing_asset_paths = (str(marker_path),)
     return RuntimeRequirementStatus(
         supported=True,
         model_root=str(model_root),
@@ -659,12 +681,19 @@ def get_runtime_asset_status(model_id: str, root_dir: str | Path | None = None) 
         storage_path = str(Path(wrapper.model_dir))
         wrapper_available = bool(wrapper.is_downloaded())
         local_available = _local_runtime_assets_available(model_id, root_dir)
-        available = wrapper_available or local_available
-        extra["status_source"] = "wrapper" if wrapper_available else "local-files"
+        if str(model_id) == "paddleocr-vl-1.5":
+            available = local_available
+            extra["status_source"] = "local-files" if local_available else "manga-snapshot-marker"
+            extra["wrapper_downloaded"] = str(wrapper_available).lower()
+        else:
+            available = wrapper_available or local_available
+            extra["status_source"] = "wrapper" if wrapper_available else "local-files"
     except Exception as exc:
         storage_path = _runtime_storage_path(model_id, root_dir)
         available = _local_runtime_assets_available(model_id, root_dir)
         extra["status_source"] = "local-files" if available else "wrapper-error"
+        if str(model_id) == "paddleocr-vl-1.5" and not available:
+            extra["status_source"] = "manga-snapshot-marker"
         extra["status_error"] = str(exc)
     if spec["kind"] == "detect":
         extra["runtime_segmenter_id"] = "comic-text-bubble-detector/mask"
@@ -681,6 +710,16 @@ def download_runtime_assets(model_id: str, root_dir: str | Path | None = None) -
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return None
+    if str(model_id) == "paddleocr-vl-1.5":
+        from ModuleFolders.Service.HttpService.ModelDownload import (
+            prepare_models,
+            resolve_assets_for_model_ids,
+        )
+
+        prepare_models((str(model_id),), root_dir=_resolve_model_root(root_dir))
+        for asset in resolve_assets_for_model_ids((str(model_id),)):
+            if asset.is_hf_snapshot:
+                return get_runtime_asset_status(model_id, root_dir)
 
     wrapper = _build_runtime_wrapper(model_id, root_dir)
     _await_sync(wrapper.download())

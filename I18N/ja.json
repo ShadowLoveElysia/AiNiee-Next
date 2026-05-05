@@ -79,6 +79,8 @@
     "manga_quality_issue_inpaint_not_run": "自動最終レンダー前に修復処理が実行されていません。",
     "manga_quality_issue_inpaint_empty_mask": "訳文テキストボックスがありますが、修復マスクが空です。原文が残っている可能性があります。",
     "manga_quality_issue_inpaint_fallback": "修復段階は回退モードを使用しました: {}。",
+    "manga_quality_issue_layout_warning_blocking": "レンダーでブロック対象の組版警告が発生しました: {} 個のテキストボックス、理由: {}。",
+    "manga_quality_issue_layout_warning": "レンダーで組版診断警告が発生しました: {} 個のテキストボックス。",
     "menu_start_polishing": "推敲タスクを開始",
     "menu_start_all_in_one": "翻訳 & 推敲 (オールインワン)",
     "menu_export_only": "書き出しのみ実行 (キャッシュに基づく)",

@@ -105,10 +105,43 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/4] Installing manga runtime dependencies (%BACKEND_LABEL%)...
-uv pip install --python "%MAIN_PYTHON%" -r "%REQUIREMENTS_FILE%"
+echo [2/4] Repairing broken manga runtime package metadata...
+"%MAIN_PYTHON%" "%CD%\ModuleFolders\MangaCore\runtime\repair_runtime_metadata.py"
 if errorlevel 1 (
-    echo [ERROR] Failed to install manga runtime dependencies.
+    echo [ERROR] Failed to repair manga runtime package metadata.
+    popd
+    pause
+    exit /b 1
+)
+
+echo [3/4] Installing manga runtime dependencies (%BACKEND_LABEL%)...
+uv pip install --python "%MAIN_PYTHON%" -r "ModuleFolders\MangaCore\runtime\requirements_common.txt"
+if errorlevel 1 (
+    echo [ERROR] Failed to install common manga runtime dependencies.
+    popd
+    pause
+    exit /b 1
+)
+
+echo [3/4] Installing visual runtime packages (%BACKEND_LABEL%)...
+uv pip uninstall --python "%MAIN_PYTHON%" torch torchvision torchaudio onnxruntime onnxruntime-gpu
+if /I "%BACKEND%"=="gpu" (
+    uv pip install --python "%MAIN_PYTHON%" --default-index https://pypi.org/simple --reinstall ^
+        https://download.pytorch.org/whl/cu128/torch/torch-2.8.0%%2Bcu128-cp312-cp312-win_amd64.whl ^
+        https://download.pytorch.org/whl/cu128/torchvision/torchvision-0.23.0%%2Bcu128-cp312-cp312-win_amd64.whl ^
+        https://download.pytorch.org/whl/cu128/torchaudio/torchaudio-2.8.0%%2Bcu128-cp312-cp312-win_amd64.whl ^
+        onnxruntime-gpu==1.20.1
+) else if /I "%BACKEND%"=="cpu" (
+    uv pip install --python "%MAIN_PYTHON%" --default-index https://pypi.org/simple --reinstall ^
+        https://download.pytorch.org/whl/cpu/torch/torch-2.8.0%%2Bcpu-cp312-cp312-win_amd64.whl ^
+        https://download.pytorch.org/whl/cpu/torchvision/torchvision-0.23.0%%2Bcpu-cp312-cp312-win_amd64.whl ^
+        https://download.pytorch.org/whl/cpu/torchaudio/torchaudio-2.8.0%%2Bcpu-cp312-cp312-win_amd64.whl ^
+        onnxruntime==1.20.1
+) else (
+    uv pip install --python "%MAIN_PYTHON%" -r "%REQUIREMENTS_FILE%"
+)
+if errorlevel 1 (
+    echo [ERROR] Failed to install visual runtime packages.
     popd
     pause
     exit /b 1

@@ -33,5 +33,5 @@ DEFAULT_TEXT_STYLE = {
     "line_spacing": 1.2,
     "fill": "#111111",
     "stroke_color": "#ffffff",
-    "stroke_width": 2,
+    "stroke_width": 0,
 }

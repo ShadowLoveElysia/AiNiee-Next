@@ -447,13 +447,20 @@ class MangaRuntimeValidator:
         bubble_path = output_dir / "bubbleMask.png"
         regions_path = output_dir / "detectResults.json"
         try:
-            result = self.detect_engine.run(source_path, page.width, page.height)
+            result = self.detect_engine.run(
+                source_path,
+                page.width,
+                page.height,
+                include_inverted_candidates=True,
+            )
             self.detect_engine.write_masks(
                 result,
                 size=(page.width, page.height),
                 segment_path=segment_path,
                 bubble_path=bubble_path,
             )
+            cleanup_text_regions = result.cleanup_text_regions
+            ocr_candidate_regions = result.ocr_candidate_regions
             regions_payload = result.to_dict()
             MangaProjectPersistence.write_page_artifact(
                 session,
@@ -478,10 +485,14 @@ class MangaRuntimeValidator:
                     warning_message=result.warning_message,
                     fallback_reason="" if used_runtime else "Detector runtime assets are unavailable; heuristic text-region grouping was used.",
                     metrics={
-                        "text_region_count": len(result.text_regions),
+                        "region_count": len(result.text_regions),
+                        "text_region_count": len(cleanup_text_regions),
+                        "ocr_candidate_region_count": len(ocr_candidate_regions),
                         "bubble_region_count": len(result.bubble_regions),
                         "detector_ok": result.ok,
                         "text_regions": [region.to_dict() for region in result.text_regions],
+                        "cleanup_text_regions": [region.to_dict() for region in cleanup_text_regions],
+                        "ocr_candidate_regions": [region.to_dict() for region in ocr_candidate_regions],
                     },
                     artifacts={
                         "detect_results": _relative_to_project(session, regions_path),

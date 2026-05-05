@@ -76,6 +76,7 @@ def _issue(
     message_key: str,
     message: str,
     *message_args: object,
+    blocks_final: bool = True,
 ) -> QualityIssue:
     return QualityIssue(
         code=code,
@@ -83,8 +84,27 @@ def _issue(
         message_key=message_key,
         message=message,
         message_args=list(message_args),
-        blocks_final=True,
+        blocks_final=blocks_final,
     )
+
+
+LAYOUT_BLOCKING_WARNING_CODES = {
+    "layout_overflow",
+    "layout_truncated",
+    "font_too_small",
+    "font_scaled_too_small",
+    "font_scaled_too_large",
+}
+
+
+def _layout_warning_codes(layout_warnings: list[dict[str, object]]) -> set[str]:
+    codes: set[str] = set()
+    for item in layout_warnings:
+        warnings = item.get("warnings") if isinstance(item, dict) else None
+        if not isinstance(warnings, list):
+            continue
+        codes.update(str(warning) for warning in warnings if str(warning or "").strip())
+    return codes
 
 
 def _is_detect_fallback(result: DetectResult) -> bool:
@@ -97,6 +117,14 @@ def _is_inpaint_runtime(runtime_engine_id: str) -> bool:
         or runtime_engine_id.startswith("opencv-")
         or runtime_engine_id.startswith("pil-")
     )
+
+
+def _cleanup_text_region_count(result: DetectResult) -> int:
+    return len(result.cleanup_text_regions)
+
+
+def _ocr_candidate_region_count(result: DetectResult) -> int:
+    return len(result.ocr_candidate_regions)
 
 
 def describe_ocr_last_run(ocr_engine: object) -> dict[str, object]:
@@ -144,7 +172,9 @@ def evaluate_automatic_pipeline_quality(
             )
         )
 
-    if not detect_result.ok or not detect_result.text_regions:
+    cleanup_text_region_count = _cleanup_text_region_count(detect_result)
+    ocr_candidate_region_count = _ocr_candidate_region_count(detect_result)
+    if not detect_result.ok or cleanup_text_region_count <= 0:
         issues.append(
             _issue(
                 "detect_no_text_regions",
@@ -241,6 +271,19 @@ def evaluate_automatic_pipeline_quality(
         layout_warnings = render_result.layout_warnings or []
         if layout_warnings:
             warning_count = len(layout_warnings)
+            warning_codes = _layout_warning_codes(layout_warnings)
+            blocking_warning_codes = sorted(warning_codes & LAYOUT_BLOCKING_WARNING_CODES)
+            if blocking_warning_codes:
+                issues.append(
+                    _issue(
+                        "layout_warning_blocking",
+                        "render",
+                        "manga_quality_issue_layout_warning_blocking",
+                        f"Render produced blocking layout warning(s) for {warning_count} text block(s): {', '.join(blocking_warning_codes)}.",
+                        warning_count,
+                        ", ".join(blocking_warning_codes),
+                    )
+                )
             issues.append(
                 _issue(
                     "layout_warning",
@@ -248,6 +291,7 @@ def evaluate_automatic_pipeline_quality(
                     "manga_quality_issue_layout_warning",
                     f"Render produced layout warning(s) for {warning_count} text block(s).",
                     warning_count,
+                    blocks_final=False,
                 )
             )
 
@@ -256,7 +300,9 @@ def evaluate_automatic_pipeline_quality(
     metrics = {
         "block_count": block_count,
         "translated_blocks": translated_blocks,
-        "detect_text_region_count": len(detect_result.text_regions),
+        "detect_text_region_count": cleanup_text_region_count,
+        "detect_ocr_candidate_region_count": ocr_candidate_region_count,
+        "detect_region_count": len(detect_result.text_regions),
         "detect_bubble_region_count": len(detect_result.bubble_regions),
         "inpaint_mask_pixels": inpaint_result.mask_pixels if inpaint_result is not None else 0,
         "layout_fit_failed_blocks": render_result.layout_fit_failed_blocks if render_result is not None else 0,

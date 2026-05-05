@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import re
+import threading
 import shutil
 import sys
 from dataclasses import dataclass
@@ -44,10 +46,17 @@ class DownloadAsset:
     sha256: str = ""
     filename: str = ""
     archive_members: tuple[ArchiveMember, ...] = ()
+    hf_repo_id: str = ""
+    hf_destination: str = ""
+    hf_required_files: tuple[str, ...] = ()
 
     @property
     def is_archive(self) -> bool:
         return bool(self.archive_members)
+
+    @property
+    def is_hf_snapshot(self) -> bool:
+        return bool(self.hf_repo_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,18 +65,30 @@ class DownloadResult:
     downloaded: bool = False
     skipped: bool = False
     extracted: bool = False
+    snapshot: bool = False
 
 
 MANGA_TRANSLATOR_RELEASE = "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3"
 MANGA_TRANSLATOR_MODELSCOPE = "https://www.modelscope.cn/models/hgmzhn/manga-translator-ui/resolve/master"
 HF_RESOLVE = "https://huggingface.co"
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+PADDLEOCR_VL_MANGA_REPO_ID = "jzhang533/PaddleOCR-VL-For-Manga"
+PADDLEOCR_VL_MANGA_DESTINATION = "ocr/PaddleOCR-VL-1.5"
+PADDLEOCR_VL_MANGA_REQUIRED_FILES = (
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "processing_paddleocr_vl.py",
+    "tokenizer.json",
+    "tokenizer_config.json",
+)
 
 
 def _ensure_huggingface_endpoint() -> str:
     endpoint = (os.environ.get("HF_ENDPOINT") or DEFAULT_HF_ENDPOINT).rstrip("/")
     os.environ["HF_ENDPOINT"] = endpoint
     os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     return endpoint
 
 
@@ -124,12 +145,10 @@ ASSETS: tuple[DownloadAsset, ...] = (
     DownloadAsset(
         asset_id="paddleocr-vl-1.5-model",
         model_ids=("paddleocr-vl-1.5",),
-        urls=(f"{MANGA_TRANSLATOR_MODELSCOPE}/PaddleOCR-VL-1.5.7z",),
-        filename="PaddleOCR-VL-1.5.7z",
-        sha256="6427e6fbe68f28cdb99594ea39d98d6169f38f04d386b0f4eb62cc176510c2eb",
-        archive_members=(
-            ArchiveMember("PaddleOCR-VL-1.5", "ocr/PaddleOCR-VL-1.5"),
-        ),
+        urls=(),
+        hf_repo_id=PADDLEOCR_VL_MANGA_REPO_ID,
+        hf_destination=PADDLEOCR_VL_MANGA_DESTINATION,
+        hf_required_files=PADDLEOCR_VL_MANGA_REQUIRED_FILES,
     ),
     DownloadAsset(
         asset_id="mit48px-color-model",
@@ -218,7 +237,7 @@ def _print_download_panel(root_dir: Path, model_ids: Iterable[str], asset_count:
     if console is None:
         print(f"[MangaCore] Model root: {root_dir}")
         print(f"[MangaCore] Target models: {', '.join(model_ids)}")
-        print("[MangaCore] Download method: requests")
+        print("[MangaCore] Download method: requests + Hugging Face snapshot")
         return
 
     from rich.panel import Panel
@@ -227,7 +246,7 @@ def _print_download_panel(root_dir: Path, model_ids: Iterable[str], asset_count:
         (
             f"[bold]Model root[/bold]: {root_dir}",
             f"[bold]Target models[/bold]: {', '.join(model_ids)}",
-            "[bold]Download method[/bold]: requests",
+            "[bold]Download method[/bold]: requests + Hugging Face snapshot",
             f"[bold]Assets[/bold]: {asset_count}",
         )
     )
@@ -240,12 +259,13 @@ def _print_download_summary(results: Iterable[DownloadResult], registered_count:
     downloaded = sum(1 for result in result_list if result.downloaded)
     skipped = sum(1 for result in result_list if result.skipped)
     extracted = sum(1 for result in result_list if result.extracted)
+    snapshots = sum(1 for result in result_list if result.snapshot)
     console = _get_rich_console()
     if console is None:
         print(
             "[MangaCore] Download summary: "
             f"assets={total}, network_downloads={downloaded}, skipped={skipped}, "
-            f"extracted={extracted}, registered_models={registered_count}"
+            f"extracted={extracted}, snapshots={snapshots}, registered_models={registered_count}"
         )
         return
 
@@ -257,6 +277,7 @@ def _print_download_summary(results: Iterable[DownloadResult], registered_count:
             f"[bold]Network downloads[/bold]: {downloaded}",
             f"[bold]Skipped existing assets[/bold]: {skipped}",
             f"[bold]Archives extracted[/bold]: {extracted}",
+            f"[bold]Snapshots prepared[/bold]: {snapshots}",
             f"[bold]Registered models[/bold]: {registered_count}",
         )
     )
@@ -342,6 +363,18 @@ class DownloadDisplay:
         )
         self._refresh()
 
+    def start_unit_progress(self, description: str, total: int) -> None:
+        if not self.enabled or self.progress is None:
+            return
+        self._remove_task()
+        self.current_url = ""
+        self.status = description
+        self.task_id = self.progress.add_task(
+            description,
+            total=total if total else None,
+        )
+        self._refresh()
+
     def advance(self, completed_bytes: int) -> None:
         if self.progress is not None and self.task_id is not None:
             self.progress.update(self.task_id, advance=completed_bytes)
@@ -378,7 +411,7 @@ class DownloadDisplay:
         lines: list[Any] = [
             f"[bold]Model root[/bold]: {self.root_dir}",
             f"[bold]Target models[/bold]: {', '.join(self.model_ids)}",
-            "[bold]Download method[/bold]: requests",
+            "[bold]Download method[/bold]: requests + Hugging Face snapshot",
             f"[bold]Assets[/bold]: {len(self.assets)}",
         ]
 
@@ -429,11 +462,17 @@ def _download_cache_dir(root_dir: Path) -> Path:
     return root_dir / ".downloads"
 
 
+def _hf_snapshot_marker_path(root_dir: Path, asset: DownloadAsset) -> Path:
+    return root_dir / asset.hf_destination / ".ainiee_hf_snapshot.json"
+
+
 def _archive_download_path(root_dir: Path, asset: DownloadAsset) -> Path:
     return _download_cache_dir(root_dir) / _asset_filename(asset)
 
 
 def _asset_download_path(root_dir: Path, asset: DownloadAsset) -> Path:
+    if asset.is_hf_snapshot:
+        return root_dir / asset.hf_destination
     if asset.is_archive:
         return _archive_download_path(root_dir, asset)
     return root_dir / asset.destination
@@ -472,8 +511,25 @@ def _archive_targets(root_dir: Path, asset: DownloadAsset) -> list[Path]:
     return [root_dir / member.destination for member in asset.archive_members]
 
 
+def _hf_snapshot_ready(asset: DownloadAsset, root_dir: Path) -> bool:
+    destination = root_dir / asset.hf_destination
+    if not asset.is_hf_snapshot or not destination.is_dir():
+        return False
+    if any(not (destination / filename).is_file() for filename in asset.hf_required_files):
+        return False
+
+    marker_path = _hf_snapshot_marker_path(root_dir, asset)
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return marker.get("repo_id") == asset.hf_repo_id
+
+
 def is_asset_ready(asset: DownloadAsset, root_dir: str | Path) -> bool:
     root = Path(root_dir)
+    if asset.is_hf_snapshot:
+        return _hf_snapshot_ready(asset, root)
     if asset.is_archive:
         return all(target.exists() for target in _archive_targets(root, asset))
     return _is_file_ready(root / asset.destination, asset.sha256)
@@ -714,6 +770,181 @@ def _extract_archive(
     return True
 
 
+def _copy_hf_snapshot(snapshot_path: Path, destination: Path, *, force: bool = False) -> None:
+    if destination.exists():
+        if force:
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        else:
+            return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        snapshot_path,
+        destination,
+        ignore=shutil.ignore_patterns(".git", ".cache", "*.lock"),
+    )
+
+
+def _write_hf_snapshot_marker(root_dir: Path, asset: DownloadAsset, snapshot_path: Path) -> None:
+    marker_path = _hf_snapshot_marker_path(root_dir, asset)
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "repo_id": asset.hf_repo_id,
+        "snapshot_path": str(snapshot_path.resolve()),
+        "downloaded_at": _now_iso(),
+        "asset_id": asset.asset_id,
+    }
+    with open(marker_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+def _snapshot_progress_class(display: DownloadDisplay | None):
+    if display is None or not display.enabled:
+        return None
+
+    class SnapshotProgress:
+        _lock = threading.RLock()
+
+        def __init__(self, iterable=None, *args, **kwargs) -> None:
+            self.iterable = iterable
+            self.total = int(kwargs.get("total") or 0)
+            self.n = int(kwargs.get("initial") or 0)
+            self.description = str(kwargs.get("desc") or "HF snapshot files")
+
+        def __enter__(self):
+            self._start()
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            if self.total and self.n < self.total:
+                display.advance(self.total - self.n)
+                self.n = self.total
+
+        def __iter__(self):
+            if self.iterable is None:
+                return iter(())
+            for item in self.iterable:
+                yield item
+                self.update(1)
+
+        def update(self, n: int = 1, *args, **kwargs) -> None:
+            self._start()
+            increment = int(n or 0)
+            if increment > 0:
+                self.n += increment
+                display.advance(increment)
+
+        def close(self) -> None:
+            return None
+
+        def refresh(self, *args, **kwargs) -> None:
+            return None
+
+        def reset(self, total: int | None = None, *args, **kwargs) -> None:
+            if total is not None:
+                self.total = int(total or 0)
+            self.n = 0
+            self._start()
+
+        def set_description(self, desc: str | None = None, *args, **kwargs) -> None:
+            if desc:
+                self.description = str(desc)
+                display.set_status(self.description)
+
+        def _start(self) -> None:
+            if display.task_id is None:
+                display.start_unit_progress(self.description, self.total)
+
+        @classmethod
+        def get_lock(cls):
+            return cls._lock
+
+        @classmethod
+        def set_lock(cls, lock) -> None:
+            cls._lock = lock
+
+    return SnapshotProgress
+
+
+def _snapshot_download(repo_id: str, cache_dir: Path, local_dir: Path, display: DownloadDisplay | None = None) -> str:
+    endpoint = _ensure_huggingface_endpoint()
+    try:
+        from huggingface_hub import snapshot_download
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "huggingface-hub is required to download the MangaCore PaddleOCR-VL manga snapshot."
+        ) from exc
+
+    kwargs: dict[str, object] = {
+        "repo_id": repo_id,
+        "cache_dir": str(cache_dir),
+        "local_dir": str(local_dir),
+        "local_files_only": False,
+    }
+    try:
+        signature = inspect.signature(snapshot_download)
+    except (TypeError, ValueError):
+        pass
+    else:
+        supports_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "endpoint" in signature.parameters or supports_kwargs:
+            kwargs["endpoint"] = endpoint
+        progress_class = _snapshot_progress_class(display)
+        if progress_class is not None and ("tqdm_class" in signature.parameters or supports_kwargs):
+            kwargs["tqdm_class"] = progress_class
+    return str(snapshot_download(**kwargs))
+
+
+def _download_hf_snapshot_asset(
+    asset: DownloadAsset,
+    root_dir: Path,
+    *,
+    force: bool = False,
+    display: DownloadDisplay | None = None,
+) -> DownloadResult:
+    if _hf_snapshot_ready(asset, root_dir) and not force:
+        if display is not None and display.enabled:
+            display.finish_current(f"Skipped: {root_dir / asset.hf_destination}")
+        else:
+            _print(f"[SKIP] {asset.asset_id} -> {root_dir / asset.hf_destination}", style="dim")
+        return DownloadResult(asset_id=asset.asset_id, skipped=True, snapshot=True)
+
+    if display is not None and display.enabled:
+        display.set_status(f"Downloading HF snapshot: {asset.hf_repo_id}")
+    else:
+        _print(f"[HF] {asset.asset_id}: {asset.hf_repo_id}", style="cyan")
+
+    snapshot_path = Path(
+        _snapshot_download(
+            asset.hf_repo_id,
+            _download_cache_dir(root_dir) / "huggingface-cache",
+            _download_cache_dir(root_dir) / "huggingface" / _safe_name(asset.asset_id),
+            display=display,
+        )
+    )
+    destination = root_dir / asset.hf_destination
+    _copy_hf_snapshot(snapshot_path, destination, force=True)
+
+    missing = [filename for filename in asset.hf_required_files if not (destination / filename).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"Hugging Face snapshot {asset.hf_repo_id} is missing required files: {', '.join(missing)}"
+        )
+
+    _write_hf_snapshot_marker(root_dir, asset, snapshot_path)
+    if display is not None and display.enabled:
+        display.finish_current(f"Ready: {destination}")
+    else:
+        _print(f"[OK] {asset.asset_id} -> {destination}", style="green")
+    return DownloadResult(asset_id=asset.asset_id, downloaded=True, snapshot=True)
+
+
 def download_asset(
     asset: DownloadAsset,
     root_dir: str | Path,
@@ -729,6 +960,9 @@ def download_asset(
     owns_session = session is None
     active_session = session or requests.Session()
     try:
+        if asset.is_hf_snapshot:
+            return _download_hf_snapshot_asset(asset, root, force=force, display=display)
+
         download_path = _asset_download_path(root, asset)
         if asset.is_archive:
             downloaded = False
@@ -851,7 +1085,7 @@ def prepare_models(
 def main(argv: list[str] | None = None) -> int:
     project_root = _project_root()
     parser = argparse.ArgumentParser(
-        description="Prepare MangaCore model assets with direct requests downloads.",
+        description="Prepare MangaCore model assets with requests downloads and Hugging Face snapshots.",
     )
     parser.add_argument(
         "model_ids",

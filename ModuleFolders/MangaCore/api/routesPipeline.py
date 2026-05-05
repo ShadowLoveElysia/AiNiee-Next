@@ -181,7 +181,15 @@ def _diff_runtime_validation_reports(
         "error_message",
         "fallback_reason",
     ]
-    metric_keys = ["seed_count", "text_region_count", "bubble_region_count", "assignment_count", "mask_pixels"]
+    metric_keys = [
+        "seed_count",
+        "region_count",
+        "text_region_count",
+        "ocr_candidate_region_count",
+        "bubble_region_count",
+        "assignment_count",
+        "mask_pixels",
+    ]
     for stage_id in stage_keys:
         before_stage = before_stages.get(stage_id, {})
         after_stage = after_stages.get(stage_id, {})

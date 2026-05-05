@@ -67,12 +67,15 @@ MANGA_MODEL_CATALOG: dict[str, MangaModelPackage] = {
     "paddleocr-vl-1.5": MangaModelPackage(
         model_id="paddleocr-vl-1.5",
         stage="ocr",
-        display_name="PaddleOCR-VL-1.5",
-        repo_id="PaddlePaddle/PaddleOCR-VL-1.5",
-        repo_url="https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5",
-        source_url="https://huggingface.co/docs/transformers/en/model_doc/paddleocr_vl",
-        description="Koharu's default OCR model card and architecture docs.",
-        runtime_notes=["Koharu uses the GGUF/mmproj path; this repo is the documented upstream model card."],
+        display_name="PaddleOCR-VL-For-Manga",
+        repo_id="jzhang533/PaddleOCR-VL-For-Manga",
+        repo_url="https://huggingface.co/jzhang533/PaddleOCR-VL-For-Manga",
+        source_url="https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5",
+        description="Manga-finetuned PaddleOCR-VL default OCR weights for MangaCore.",
+        runtime_notes=[
+            "Engine id stays paddleocr-vl-1.5 for config/runtime compatibility.",
+            "Local runtime directory remains ocr/PaddleOCR-VL-1.5.",
+        ],
     ),
     "manga-ocr": MangaModelPackage(
         model_id="manga-ocr",

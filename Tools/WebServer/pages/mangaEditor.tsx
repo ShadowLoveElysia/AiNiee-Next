@@ -271,7 +271,7 @@ const buildProjectAssetUrl = (projectId: string, relativePath: string) => {
 };
 
 const pickOverlayBaseImageUrl = (page: MangaPageDetail) => (
-  page.layers.rendered_url || page.layers.inpainted_url || page.layers.source_url
+  page.layers.inpainted_url || page.layers.source_url
 );
 
 const pickRuntimeStageImageUrl = (stage: MangaRuntimeValidationStage, projectId: string) => {
@@ -551,7 +551,7 @@ export const MangaEditor: React.FC = () => {
           line_spacing: 1.2,
           fill: '#111111',
           stroke_color: '#ffffff',
-          stroke_width: 2,
+          stroke_width: 0,
         }),
         ...patch,
       },

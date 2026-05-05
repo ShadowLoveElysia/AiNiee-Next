@@ -12,7 +12,7 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     run_detect_runtime,
 )
 from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
-from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed
+from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed, find_inverted_monologue_components
 from ModuleFolders.MangaCore.render.planner import LAYOUT_ASSIGNMENT_STATUSES
 
 DEFAULT_DETECT_ENGINE_ID = "comic-text-bubble-detector"
@@ -85,6 +85,14 @@ class DetectResult:
     segment_mask_data: np.ndarray | None = field(default=None, repr=False)
     bubble_mask_data: np.ndarray | None = field(default=None, repr=False)
 
+    @property
+    def cleanup_text_regions(self) -> list[DetectRegion]:
+        return [region for region in self.text_regions if region.kind == "text"]
+
+    @property
+    def ocr_candidate_regions(self) -> list[DetectRegion]:
+        return [region for region in self.text_regions if region.kind == "ocr_candidate"]
+
     def to_dict(self) -> dict[str, object]:
         return {
             "ok": self.ok,
@@ -92,7 +100,9 @@ class DetectResult:
             "configured_segmenter_id": self.configured_segmenter_id,
             "runtime_detector_id": self.runtime_detector_id,
             "runtime_segmenter_id": self.runtime_segmenter_id,
-            "text_region_count": len(self.text_regions),
+            "region_count": len(self.text_regions),
+            "text_region_count": len(self.cleanup_text_regions),
+            "ocr_candidate_region_count": len(self.ocr_candidate_regions),
             "bubble_region_count": len(self.bubble_regions),
             "warning_message": self.warning_message,
             "text_regions": [region.to_dict() for region in self.text_regions],
@@ -150,8 +160,10 @@ class DetectEngine:
         seeds: list[TextSeed] | None = None,
         assignments: list[BubbleAssignment] | None = None,
         blocks: list[MangaTextBlock] | None = None,
+        include_inverted_candidates: bool = False,
     ) -> DetectResult:
         image_path = Path(image_path)
+        has_authoritative_text_source = seeds is not None or blocks is not None
         text_seeds = list(seeds or [])
         if not text_seeds and blocks:
             text_seeds = [build_seed_from_block(block, index) for index, block in enumerate(blocks, start=1)]
@@ -160,7 +172,7 @@ class DetectEngine:
             for assignment in assignments or []
             if assignment.status in LAYOUT_ASSIGNMENT_STATUSES and assignment.bubble_id
         }
-        if accepted_seed_ids:
+        if assignments is not None:
             text_seeds = [seed for seed in text_seeds if seed.seed_id in accepted_seed_ids]
 
         runtime_output = None
@@ -189,24 +201,44 @@ class DetectEngine:
         runtime_detector_id = "heuristic-grouping"
         runtime_segmenter_id = "pil-mask-rasterizer"
         if runtime_output is not None and runtime_output.text_regions:
-            text_regions = [
-                DetectRegion(
-                    region_id=str(region.get("region_id", f"region_{index:04d}")),
-                    kind="text",
-                    bbox=[int(value) for value in list(region.get("bbox", []))[:4]],
-                    polygon=[[float(point[0]), float(point[1])] for point in list(region.get("polygon", []))[:4]],
-                    score=float(region.get("score", 1.0) or 0.0),
-                )
-                for index, region in enumerate(runtime_output.text_regions, start=1)
-            ]
-            segment_mask_data = runtime_output.segment_mask
-            bubble_mask_data = runtime_output.bubble_mask
             runtime_detector_id = runtime_output.runtime_detector_id
             runtime_segmenter_id = runtime_output.runtime_segmenter_id
+            if not has_authoritative_text_source:
+                text_regions = [
+                    DetectRegion(
+                        region_id=str(region.get("region_id", f"region_{index:04d}")),
+                        kind="text",
+                        bbox=[int(value) for value in list(region.get("bbox", []))[:4]],
+                        polygon=[[float(point[0]), float(point[1])] for point in list(region.get("polygon", []))[:4]],
+                        score=float(region.get("score", 1.0) or 0.0),
+                    )
+                    for index, region in enumerate(runtime_output.text_regions, start=1)
+                ]
+                segment_mask_data = runtime_output.segment_mask
+                bubble_mask_data = runtime_output.bubble_mask
         elif runtime_status.available and runtime_error:
             runtime_warning = f"Runtime detector failed and fell back to heuristic grouping: {runtime_error}"
         elif runtime_status.available:
             runtime_warning = "Runtime detector was available but returned no regions; fell back to heuristic grouping."
+
+        if include_inverted_candidates:
+            existing_region_boxes = [region.bbox for region in text_regions]
+            for component in find_inverted_monologue_components(image_path, page_width, page_height):
+                component_bbox = [int(value) for value in list(component.get("bbox", []))[:4]]
+                if len(component_bbox) < 4:
+                    continue
+                if any(_boxes_overlap(component_bbox, bbox) > 0.45 for bbox in existing_region_boxes):
+                    continue
+                text_regions.append(
+                    DetectRegion(
+                        region_id=str(component.get("component_id") or f"inverted_region_{len(text_regions) + 1:04d}"),
+                        kind="ocr_candidate",
+                        bbox=component_bbox,
+                        polygon=_bbox_to_polygon(component_bbox),
+                        score=float(component.get("score", 1.0) or 1.0),
+                    )
+                )
+                existing_region_boxes.append(component_bbox)
 
         bubble_regions: list[DetectRegion] = []
         bubble_lookup: dict[str, DetectRegion] = {}
@@ -285,6 +317,8 @@ class DetectEngine:
             runtime_segment_mask = Image.new("L", size, 0)
             segment_draw = ImageDraw.Draw(runtime_segment_mask)
             for region in result.text_regions:
+                if region.kind != "text":
+                    continue
                 segment_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
 
         if runtime_bubble_mask is None:
@@ -293,7 +327,7 @@ class DetectEngine:
             for region in result.bubble_regions:
                 bubble_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
 
-        if result.text_regions:
+        if result.cleanup_text_regions:
             runtime_segment_mask = runtime_segment_mask.filter(ImageFilter.MaxFilter(size=5))
         if result.bubble_regions:
             runtime_bubble_mask = runtime_bubble_mask.filter(ImageFilter.MaxFilter(size=9))
@@ -313,3 +347,18 @@ class DetectEngine:
         if image.size != size:
             image = image.resize(size, resample=Image.Resampling.NEAREST)
         return image
+
+
+def _boxes_overlap(left: list[int], right: list[int]) -> float:
+    lx1, ly1, lx2, ly2 = [int(value) for value in left[:4]]
+    rx1, ry1, rx2, ry2 = [int(value) for value in right[:4]]
+    ix1 = max(lx1, rx1)
+    iy1 = max(ly1, ry1)
+    ix2 = min(lx2, rx2)
+    iy2 = min(ly2, ry2)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    intersection = (ix2 - ix1) * (iy2 - iy1)
+    left_area = max(1, (lx2 - lx1) * (ly2 - ly1))
+    right_area = max(1, (rx2 - rx1) * (ry2 - ry1))
+    return intersection / max(1, min(left_area, right_area))

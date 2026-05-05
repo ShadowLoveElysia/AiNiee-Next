@@ -49,8 +49,8 @@ def _snapshot_download(repo_id: str, cache_dir: str) -> str:
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "huggingface-hub is required only when downloading non-runtime MangaCore "
-            "model packages with Hugging Face snapshots. The default Manga runtime "
-            "model downloader does not use huggingface-hub."
+            "model packages with Hugging Face snapshots. Runtime-backed default models "
+            "use the dedicated MangaCore model downloader."
         ) from exc
 
     kwargs: dict[str, object] = {

@@ -205,6 +205,9 @@ class MangaRuntimeMenu:
             return
 
         self.console.print(Panel(self._t("manga_runtime_uninstalling", "Removing conflicting runtime packages...")))
+        if not self._repair_runtime_metadata():
+            self._wait()
+            return
         if not self._run_uv_pip(["uninstall", "--python", sys.executable, *self.CONFLICT_PACKAGE_NAMES]):
             self._wait()
             return
@@ -221,6 +224,8 @@ class MangaRuntimeMenu:
             self._wait()
 
     def _install_backend(self, backend: dict[str, object]) -> bool:
+        if not self._repair_runtime_metadata():
+            return False
         plans = self._backend_install_plans(str(backend["key"]))
         for index, plan in enumerate(plans):
             source_label = str(plan["label"])
@@ -232,6 +237,25 @@ class MangaRuntimeMenu:
             if self._run_uv_pip(["install", "--python", sys.executable, *plan["install_args"]]):
                 return True
         return False
+
+    def _repair_runtime_metadata(self) -> bool:
+        repair_script = self._project_root() / "ModuleFolders" / "MangaCore" / "runtime" / "repair_runtime_metadata.py"
+        if not repair_script.exists():
+            return True
+
+        cmd = [sys.executable, str(repair_script)]
+        self.console.print(f"[dim]{self._format_command(cmd)}[/dim]")
+        try:
+            process = subprocess.run(
+                cmd,
+                cwd=str(self._project_root()),
+                env=self._uv_env(),
+                check=False,
+            )
+        except Exception as exc:
+            self.console.print(f"[red]{self._t('manga_runtime_command_start_failed', 'Failed to start command')}: {exc}[/red]")
+            return False
+        return process.returncode == 0
 
     def _run_uv_pip(self, pip_args: list[str]) -> bool:
         uv_executable = self._uv_executable()

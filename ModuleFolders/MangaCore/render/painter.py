@@ -14,6 +14,8 @@ from ModuleFolders.MangaCore.render.templates import get_render_template
 from ModuleFolders.MangaCore.render.textNormalize import normalize_manga_dialogue_for_layout
 
 ROTATE_CLOCKWISE_VERTICAL_CHARS = frozenset("-‐‑‒–—―~～〜…·・ー")
+SOURCE_FONT_SCALE_TOO_SMALL = 0.65
+SOURCE_FONT_SCALE_TOO_LARGE = 1.35
 
 
 def _resolve_base_layer(session: MangaProjectSession, page: MangaPage, preset: str) -> Path:
@@ -75,12 +77,14 @@ class MangaRenderer:
                 continue
 
             font, plan = self._fit_block_text(draw, block, text)
+            self._apply_source_font_diagnostics(block, plan)
             self.last_layout_plans.append(plan)
             block.style.font_size = plan.font_size
             block.rendered_direction = plan.direction
             block.flags = _merge_layout_flags(block.flags, plan)
             for line in plan.runs:
-                if _should_rotate_clockwise(plan.direction, line.text):
+                line.rotate_clockwise = _should_rotate_clockwise(plan.direction, line.text)
+                if line.rotate_clockwise:
                     _draw_rotated_text(
                         canvas,
                         line.text,
@@ -115,6 +119,7 @@ class MangaRenderer:
         box_width = max(1, x2 - x1)
         box_height = max(1, y2 - y1)
         base_size = self._estimate_base_font_size(block, text, box_width, box_height)
+        initial_size = max(10, int(block.style.font_size))
         min_size = max(10, min(22, int(base_size * 0.58)))
 
         last_font = load_font(
@@ -143,6 +148,7 @@ class MangaRenderer:
                 allow_truncate=False,
             )
             if plan.fit_ok:
+                plan.initial_font_size = initial_size
                 return font, plan
             last_font = font
             last_plan = plan
@@ -165,23 +171,33 @@ class MangaRenderer:
         if fallback_plan.font_size <= min_size:
             fallback_plan.warnings = sorted({*fallback_plan.warnings, "font_too_small"})
             fallback_plan.fit_ok = False
+        fallback_plan.initial_font_size = initial_size
         return last_font, fallback_plan
 
     @staticmethod
     def _estimate_base_font_size(block, text: str, box_width: int, box_height: int) -> int:
         configured_size = max(10, int(block.style.font_size))
+        source_char_size = _source_char_size_from_block(block)
         if block.rendered_direction == "vertical":
             length = max(1, len("".join(text.split())))
             rough_columns = max(1, min(4, int((length + 9) / 10)))
             by_width = int(box_width / max(1.0, rough_columns * 1.15))
             by_height = int(box_height / max(1.0, min(length, 10) * 1.15))
             geometric = max(12, min(by_width, by_height, int(min(box_width, box_height) * 0.72)))
+            if source_char_size > 0:
+                source_target = int(source_char_size * 0.95)
+                source_limited = min(max(source_target, geometric), int(source_char_size * 1.18))
+                return max(12, min(72, max(configured_size, source_limited)))
             return max(12, min(72, max(configured_size, geometric)))
 
         length = max(1, len(text.replace("\n", "")))
         rough_lines = max(1, min(4, int((length + 8) / 9)))
         by_height = int(box_height / max(1.0, rough_lines * 1.25))
         geometric = max(12, min(by_height, int(min(box_width, box_height) * 0.58)))
+        if source_char_size > 0:
+            source_target = int(source_char_size * 0.92)
+            source_limited = min(max(source_target, geometric), int(source_char_size * 1.16))
+            return max(12, min(72, max(configured_size, source_limited)))
         return max(12, min(72, max(configured_size, geometric)))
 
     def render_session(self, session: MangaProjectSession) -> list[Path]:
@@ -189,6 +205,29 @@ class MangaRenderer:
         for page_ref in session.scene.pages:
             rendered.append(self.render_page(session, session.pages[page_ref.page_id]))
         return rendered
+
+    @staticmethod
+    def _apply_source_font_diagnostics(block, plan: LayoutPlan) -> None:
+        source_char_size = _source_char_size_from_block(block)
+        plan.source_char_size_px = source_char_size
+        plan.source_char_size_confidence = _source_char_size_confidence_from_block(block)
+        if not plan.initial_font_size:
+            plan.initial_font_size = max(10, int(block.style.font_size))
+        if source_char_size <= 0:
+            return
+
+        plan.font_scale_ratio = round(float(plan.font_size) / max(1.0, float(source_char_size)), 4)
+        warnings = set(plan.warnings)
+        if plan.source_char_size_confidence and plan.source_char_size_confidence < 0.5:
+            warnings.add("source_char_size_unreliable")
+        if plan.font_scale_ratio < SOURCE_FONT_SCALE_TOO_SMALL:
+            warnings.add("font_scaled_too_small")
+            warnings.add("font_scaled_down_from_source")
+        elif plan.font_scale_ratio > SOURCE_FONT_SCALE_TOO_LARGE:
+            warnings.add("font_scaled_too_large")
+        plan.warnings = sorted(warnings)
+        if "font_scaled_too_small" in warnings or "font_scaled_too_large" in warnings:
+            plan.fit_ok = False
 
 
 def _merge_layout_flags(flags: list[str], plan: LayoutPlan) -> list[str]:
@@ -199,15 +238,38 @@ def _merge_layout_flags(flags: list[str], plan: LayoutPlan) -> list[str]:
             flag.startswith("layout_")
             or flag.startswith("fit_ok:")
             or flag.startswith("rendered_font_size:")
+            or flag.startswith("font_scale_ratio:")
             or flag in {"font_too_small", "empty_text"}
         )
     ]
     preserved.append(f"fit_ok:{str(plan.fit_ok).lower()}")
     preserved.append(f"rendered_font_size:{plan.font_size}")
+    if plan.font_scale_ratio:
+        preserved.append(f"font_scale_ratio:{plan.font_scale_ratio:.2f}")
     for warning in plan.warnings:
         if warning not in preserved:
             preserved.append(warning)
     return preserved
+
+
+def _source_char_size_from_block(block) -> int:
+    metrics = getattr(block, "source_metrics", {})
+    if not isinstance(metrics, dict):
+        return 0
+    try:
+        return max(0, int(metrics.get("source_char_size_px", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _source_char_size_confidence_from_block(block) -> float:
+    metrics = getattr(block, "source_metrics", {})
+    if not isinstance(metrics, dict):
+        return 0.0
+    try:
+        return max(0.0, min(1.0, float(metrics.get("source_char_size_confidence", 0.0) or 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _should_rotate_clockwise(direction: str, text: str) -> bool:

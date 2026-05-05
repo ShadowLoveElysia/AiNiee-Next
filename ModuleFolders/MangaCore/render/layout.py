@@ -150,11 +150,12 @@ def _horizontal_text_runs(
 
     total_height = sum(height for _line, _width, height in measured_lines) + max(0, len(measured_lines) - 1) * line_gap
     current_y = y1 + max(0, int((available_height - total_height) / 2))
+    max_line_width = max((width for _line, width, _height in measured_lines), default=0)
+    common_x = x1 + max(0, int((available_width - max_line_width) / 2))
 
     positioned: list[PositionedTextLine] = []
     for line, width, height in measured_lines:
-        current_x = x1 + max(0, int((available_width - width) / 2))
-        positioned.append(PositionedTextLine(text=line, x=current_x, y=current_y))
+        positioned.append(PositionedTextLine(text=line, x=common_x, y=current_y))
         current_y += height + line_gap
     return positioned, warnings
 

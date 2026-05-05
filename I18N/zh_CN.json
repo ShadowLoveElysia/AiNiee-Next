@@ -79,6 +79,8 @@
     "manga_quality_issue_inpaint_not_run": "自动成稿前未执行修补。",
     "manga_quality_issue_inpaint_empty_mask": "存在译文文本框，但修补蒙版为空，原文可能仍然可见。",
     "manga_quality_issue_inpaint_fallback": "修补阶段使用回退模式：{}。",
+    "manga_quality_issue_layout_warning_blocking": "渲染产生阻断型排版警告：{} 个文本框，原因：{}。",
+    "manga_quality_issue_layout_warning": "渲染产生排版诊断警告：{} 个文本框。",
     "menu_start_polishing": "开始润色任务",
     "menu_start_all_in_one": "翻译 & 润色 (All in One)",
     "menu_export_only": "仅执行导出 (基于现有缓存)",

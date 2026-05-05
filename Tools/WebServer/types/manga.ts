@@ -227,6 +227,7 @@ export interface MangaTextBlock {
   source_direction: string;
   rendered_direction: string;
   font_prediction: string;
+  source_metrics?: Record<string, any>;
   origin: string;
   placement_mode: string;
   editable: boolean;

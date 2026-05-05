@@ -17,6 +17,7 @@ class MangaTextBlock:
     source_direction: str = "vertical"
     rendered_direction: str = "vertical"
     font_prediction: str = "dialogue_default"
+    source_metrics: dict[str, object] = field(default_factory=dict)
     origin: str = "auto_planned"
     placement_mode: str = "bubble_auto"
     editable: bool = True
@@ -36,6 +37,7 @@ class MangaTextBlock:
             "source_direction": self.source_direction,
             "rendered_direction": self.rendered_direction,
             "font_prediction": self.font_prediction,
+            "source_metrics": self.source_metrics,
             "origin": self.origin,
             "placement_mode": self.placement_mode,
             "editable": self.editable,
@@ -58,6 +60,7 @@ class MangaTextBlock:
             source_direction=str(data.get("source_direction", "vertical")),
             rendered_direction=str(data.get("rendered_direction", "vertical")),
             font_prediction=str(data.get("font_prediction", "dialogue_default")),
+            source_metrics=dict(data.get("source_metrics", {})) if isinstance(data.get("source_metrics"), dict) else {},
             origin=str(data.get("origin", "auto_planned")),
             placement_mode=str(data.get("placement_mode", "bubble_auto")),
             editable=bool(data.get("editable", True)),

@@ -26,7 +26,6 @@ const LAYER_LABELS: Record<MangaOverlayLayerKey, string> = {
 
 const getCurrentBaseLabelKey = (page: MangaPageDetail, viewMode: MangaViewMode) => {
   if (viewMode === 'overlay') {
-    if (page.layers.rendered_url) return 'manga_layer_rendered';
     if (page.layers.inpainted_url) return 'manga_layer_inpainted';
     return 'manga_layer_source';
   }

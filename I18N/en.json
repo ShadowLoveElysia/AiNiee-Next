@@ -79,6 +79,8 @@
     "manga_quality_issue_inpaint_not_run": "Inpaint did not run before automatic final render.",
     "manga_quality_issue_inpaint_empty_mask": "Translated text blocks exist, but the inpaint mask is empty; source text may still be visible.",
     "manga_quality_issue_inpaint_fallback": "Inpaint used fallback mode: {}.",
+    "manga_quality_issue_layout_warning_blocking": "Render produced blocking layout warnings for {} text block(s): {}.",
+    "manga_quality_issue_layout_warning": "Render produced layout diagnostic warnings for {} text block(s).",
     "menu_start_polishing": "Start Polishing Task",
     "menu_start_all_in_one": "Translate & Polish (All-in-One)",
     "menu_export_only": "Export Only (Based on Cache)",

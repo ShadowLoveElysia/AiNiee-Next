@@ -53,6 +53,23 @@ interface FocusHighlightState {
   label: string;
 }
 
+interface MangaRenderLayoutRun {
+  text?: string;
+  x?: number;
+  y?: number;
+  rotate_clockwise?: boolean;
+}
+
+interface MangaRenderLayoutPlan {
+  block_id?: string;
+  direction?: string;
+  bbox?: number[];
+  font_family?: string;
+  font_size?: number;
+  line_spacing?: number;
+  runs?: MangaRenderLayoutRun[];
+}
+
 export interface MangaCanvasProps {
   page: MangaPageDetail | null;
   currentImageUrl: string;
@@ -89,6 +106,39 @@ const buildOverlayBoxStyle = (bbox: number[]): React.CSSProperties => {
     height: Math.max(1, y2 - y1),
   };
 };
+
+const areBboxesEqual = (left: number[] = [], right: number[] = []) => (
+  left.length >= 4
+  && right.length >= 4
+  && left.slice(0, 4).every((value, index) => Math.round(Number(value) || 0) === Math.round(Number(right[index]) || 0))
+);
+
+const normalizePreviewText = (value: string) => value.replace(/\s+/g, '').trim();
+
+const getRenderLayoutPlans = (page: MangaPageDetail | null) => {
+  const plans = page?.quality_gate?.stage_modes?.render?.layout_plans;
+  return Array.isArray(plans) ? plans as MangaRenderLayoutPlan[] : [];
+};
+
+const isDraftDirtyForPreview = (
+  block: MangaPageDetail['blocks'][number],
+  draft: MangaBlockDraft | undefined,
+) => {
+  if (!draft) return false;
+  return (
+    !areBboxesEqual(draft.bbox, block.bbox)
+    || draft.source_text !== (block.source_text || '')
+    || draft.translation !== (block.translation || '')
+    || draft.font_family !== block.style.font_family
+    || draft.font_size !== block.style.font_size
+    || draft.line_spacing !== block.style.line_spacing
+    || draft.fill !== block.style.fill
+    || draft.stroke_color !== block.style.stroke_color
+    || draft.stroke_width !== block.style.stroke_width
+  );
+};
+
+const hasFiniteRunPosition = (run: MangaRenderLayoutRun) => Number.isFinite(Number(run.x)) && Number.isFinite(Number(run.y));
 
 const clampScale = (scale: number, fitScale: number) => {
   const minScale = Math.max(0.05, fitScale * 0.5);
@@ -254,12 +304,82 @@ const buildBlockTextStyle = (
     lineHeight: lineSpacing,
     padding: Math.max(4, Math.round(fontSize * 0.12)),
     textOrientation: isVertical ? 'mixed' : undefined,
-    textShadow: strokeWidth > 0 ? `0 0 ${Math.max(1, strokeWidth)}px ${strokeColor}` : undefined,
     WebkitTextStroke: strokeWidth > 0 ? `${strokeWidth}px ${strokeColor}` : undefined,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
   };
+};
+
+const buildBlockPreviewTextStyle = (
+  block: MangaPageDetail['blocks'][number],
+  draft: MangaBlockDraft | undefined,
+): React.CSSProperties => {
+  const isVertical = block.rendered_direction === 'vertical';
+  return {
+    ...buildBlockTextStyle(block, draft),
+    alignItems: isVertical ? 'center' : 'flex-start',
+    display: 'flex',
+    justifyContent: isVertical ? 'flex-start' : 'center',
+    padding: Math.max(2, Math.round(Number(draft?.font_size ?? block.style.font_size ?? 24) * 0.08)),
+    textAlign: 'start',
+  };
+};
+
+const buildRenderPlanRunStyle = (
+  block: MangaPageDetail['blocks'][number],
+  draft: MangaBlockDraft | undefined,
+  plan: MangaRenderLayoutPlan,
+  run: MangaRenderLayoutRun,
+  bbox: number[],
+): React.CSSProperties => {
+  const [x1, y1] = bbox;
+  const baseStyle = buildBlockTextStyle(block, draft);
+  const left = Math.round(Number(run.x) - x1);
+  const top = Math.round(Number(run.y) - y1);
+  return {
+    ...baseStyle,
+    fontFamily: String(plan.font_family || baseStyle.fontFamily || block.style.font_family || 'serif'),
+    fontSize: Math.max(8, Number(plan.font_size || baseStyle.fontSize || block.style.font_size || 24)),
+    left,
+    lineHeight: Number(plan.line_spacing || baseStyle.lineHeight || block.style.line_spacing || 1.2),
+    padding: 0,
+    position: 'absolute',
+    top,
+    transform: run.rotate_clockwise ? 'rotate(90deg)' : undefined,
+    transformOrigin: run.rotate_clockwise ? 'left top' : undefined,
+    whiteSpace: 'pre',
+    wordBreak: 'normal',
+    writingMode: 'horizontal-tb',
+  };
+};
+
+const isRenderPlanPreviewUsable = (
+  plan: MangaRenderLayoutPlan | undefined,
+  block: MangaPageDetail['blocks'][number],
+  text: string,
+) => {
+  if (!plan || plan.block_id !== block.block_id || !Array.isArray(plan.runs) || plan.runs.length === 0) {
+    return false;
+  }
+  if (plan.direction && plan.direction !== block.rendered_direction) {
+    return false;
+  }
+  if (Array.isArray(plan.bbox) && !areBboxesEqual(plan.bbox, block.bbox)) {
+    return false;
+  }
+  if (plan.font_family && plan.font_family !== block.style.font_family) {
+    return false;
+  }
+  if (Number.isFinite(Number(plan.font_size)) && Math.round(Number(plan.font_size)) !== Math.round(Number(block.style.font_size))) {
+    return false;
+  }
+  if (!plan.runs.every((run) => hasFiniteRunPosition(run) && String(run.text || ''))) {
+    return false;
+  }
+
+  const runText = plan.runs.map((run) => String(run.text || '')).join('');
+  return Boolean(normalizePreviewText(text) && normalizePreviewText(runText) === normalizePreviewText(text));
 };
 
 const CANVAS_TOOLS: Array<{ id: CanvasTool; labelKey: string; icon: typeof MousePointer2 }> = [
@@ -325,6 +445,15 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
         }
       : undefined
   ), [page]);
+  const renderLayoutPlans = useMemo(() => getRenderLayoutPlans(page), [page]);
+  const renderLayoutPlanByBlockId = useMemo(() => {
+    const next = new Map<string, MangaRenderLayoutPlan>();
+    for (const plan of renderLayoutPlans) {
+      const blockId = String(plan.block_id || '');
+      if (blockId) next.set(blockId, plan);
+    }
+    return next;
+  }, [renderLayoutPlans]);
 
   useEffect(() => {
     if (!page || !viewportRef.current) {
@@ -890,6 +1019,13 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   const bbox = draft?.bbox || block.bbox;
                   const overlayLabel = buildOverlayLabel(sourceText, translation, block.block_id);
                   const previewTextStyle = buildBlockTextStyle(block, draft);
+                  const centeredPreviewTextStyle = buildBlockPreviewTextStyle(block, draft);
+                  const previewText = translation || sourceText || block.block_id;
+                  const renderPlan = renderLayoutPlanByBlockId.get(block.block_id);
+                  const canUseRenderPlanPreview = (
+                    !isDraftDirtyForPreview(block, draft)
+                    && isRenderPlanPreviewUsable(renderPlan, block, translation || sourceText)
+                  );
 
                   return (
                     <div
@@ -905,8 +1041,8 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                         activeTool === 'brush' || activeTool === 'restore' ? 'pointer-events-none' : ''
                       } ${
                         isActive
-                          ? 'cursor-move border-cyan-300 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]'
-                          : 'cursor-pointer border-amber-300/70 bg-slate-950/20 hover:border-cyan-300/80'
+                          ? 'cursor-move border-cyan-300 bg-transparent shadow-[0_0_0_1px_rgba(34,211,238,0.25)]'
+                          : 'cursor-pointer border-amber-300/60 bg-transparent hover:border-cyan-300/80 hover:bg-cyan-400/5'
                       }`}
                       style={{
                         ...buildOverlayBoxStyle(bbox),
@@ -946,12 +1082,25 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                         </span>
                       )}
                       {!isInlineEditing && (
-                        <span
-                          className="pointer-events-none absolute inset-0 block overflow-hidden rounded-md bg-white/5"
-                          style={previewTextStyle}
-                        >
-                          {translation || sourceText || block.block_id}
-                        </span>
+                        canUseRenderPlanPreview ? (
+                          <span className="pointer-events-none absolute inset-0 block overflow-hidden rounded-md">
+                            {renderPlan?.runs?.map((run, runIndex) => (
+                              <span
+                                key={`${block.block_id}-run-${runIndex}`}
+                                style={buildRenderPlanRunStyle(block, draft, renderPlan, run, bbox)}
+                              >
+                                {String(run.text || '')}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span
+                            className="pointer-events-none absolute inset-0 block overflow-hidden rounded-md"
+                            style={centeredPreviewTextStyle}
+                          >
+                            {previewText}
+                          </span>
+                        )
                       )}
                       {isInlineEditing && (
                         <textarea

@@ -875,6 +875,7 @@ class MangaPageRunner:
                 source_path,
                 page.width,
                 page.height,
+                include_inverted_candidates=True,
             )
             seeds = self.ocr_engine.run(source_path, regions=pre_detect.text_regions)
             if not seeds:

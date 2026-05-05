@@ -79,6 +79,9 @@ class RenderEngine:
                 "fit_ok": plan.fit_ok,
                 "font_size": plan.font_size,
                 "direction": plan.direction,
+                "source_char_size_px": plan.source_char_size_px,
+                "source_char_size_confidence": plan.source_char_size_confidence,
+                "font_scale_ratio": plan.font_scale_ratio,
             }
             for plan in self.renderer.last_layout_plans
             if plan.warnings or not plan.fit_ok

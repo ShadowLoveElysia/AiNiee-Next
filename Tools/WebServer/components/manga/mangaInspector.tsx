@@ -274,6 +274,25 @@ const extractRuntimeRunId = (outputDir: string) => (
   outputDir.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
 );
 
+const formatMetricValue = (value: any, digits = 2) => {
+  if (value === undefined || value === null || value === '') return '-';
+  const numberValue = Number(value);
+  if (Number.isFinite(numberValue)) {
+    return Number.isInteger(numberValue) ? String(numberValue) : numberValue.toFixed(digits);
+  }
+  return String(value);
+};
+
+const extractFlagValue = (flags: string[] | undefined, prefix: string) => {
+  const match = (flags || []).find((flag) => String(flag).startsWith(prefix));
+  return match ? match.slice(prefix.length) : '';
+};
+
+const getRenderLayoutPlans = (qualityGate: any) => {
+  const plans = qualityGate?.stage_modes?.render?.layout_plans;
+  return Array.isArray(plans) ? plans : [];
+};
+
 const formatQualityIssue = (
   issue: MangaQualityIssue,
   t: (key: string, ...args: any[]) => string,
@@ -372,6 +391,23 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
   const detectOcrMatches = useMemo(() => buildDetectOcrMatches(detectRegions, ocrSeeds), [detectRegions, ocrSeeds]);
   const visibleRuntimeHistory = useMemo(() => runtimeValidationHistory.slice(0, 6), [runtimeValidationHistory]);
   const activeRuntimeRunId = useMemo(() => extractRuntimeRunId(runtimeValidation?.output_dir || ''), [runtimeValidation?.output_dir]);
+  const activeBlockSourceMetrics = activeBlock?.source_metrics || {};
+  const activeBlockRenderPlan = useMemo(() => {
+    if (!activeBlock) return null;
+    return getRenderLayoutPlans(qualityGate).find((plan) => plan?.block_id === activeBlock.block_id) || null;
+  }, [activeBlock, qualityGate]);
+  const activeBlockRenderWarnings = Array.isArray(activeBlockRenderPlan?.warnings) ? activeBlockRenderPlan.warnings : [];
+  const sourceCharSize = activeBlockSourceMetrics.source_char_size_px ?? activeBlockRenderPlan?.source_char_size_px;
+  const sourceCharConfidence = activeBlockSourceMetrics.source_char_size_confidence ?? activeBlockRenderPlan?.source_char_size_confidence;
+  const sourceCharMethod = activeBlockSourceMetrics.source_char_size_method || '-';
+  const initialFontSize = activeBlockSourceMetrics.initial_font_size ?? activeBlockRenderPlan?.initial_font_size;
+  const finalFontSize = activeBlockRenderPlan?.font_size ?? fontSize;
+  const fontScaleRatio = activeBlockRenderPlan?.font_scale_ratio || '';
+  const sourceSeedCount = activeBlockSourceMetrics.source_seed_count ?? extractFlagValue(activeBlock?.flags, 'seed_count:');
+  const sourceSeedIds = Array.isArray(activeBlockSourceMetrics.source_seed_ids) ? activeBlockSourceMetrics.source_seed_ids : [];
+  const sourceBbox = Array.isArray(activeBlockSourceMetrics.source_bbox) ? activeBlockSourceMetrics.source_bbox : [];
+  const sourceLayoutBbox = Array.isArray(activeBlockSourceMetrics.source_layout_bbox) ? activeBlockSourceMetrics.source_layout_bbox : [];
+  const sourceSizeSplit = Boolean(activeBlock?.flags?.includes('source_size_split'));
   const filteredOcrSeeds = useMemo(() => {
     const query = seedSearch.trim().toLowerCase();
     return ocrSeeds.filter((seed) => {
@@ -1261,6 +1297,44 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                     </span>
                   )}
                 />
+              </div>
+            </details>
+
+            <details className="group rounded-lg border border-slate-800 bg-slate-950/42" open={Boolean(sourceCharSize || activeBlockRenderPlan)}>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                <span>{t('manga_source_metrics')}</span>
+                <span className="flex items-center gap-2">
+                  {sourceSizeSplit && <StatusPill tone="amber">{t('manga_source_size_split')}</StatusPill>}
+                  <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+                </span>
+              </summary>
+              <div className="space-y-3 border-t border-slate-800 px-3 py-3">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <MetricTile label={t('manga_source_char_size')} value={formatMetricValue(sourceCharSize)} tone="text-cyan-100" />
+                  <MetricTile label={t('manga_source_char_confidence')} value={formatMetricValue(sourceCharConfidence, 3)} tone="text-cyan-100" />
+                  <MetricTile label={t('manga_initial_font_size')} value={formatMetricValue(initialFontSize)} />
+                  <MetricTile label={t('manga_final_font_size')} value={formatMetricValue(finalFontSize)} />
+                  <MetricTile label={t('manga_font_scale_ratio')} value={formatMetricValue(fontScaleRatio, 3)} tone={Number(fontScaleRatio) > 0 && Number(fontScaleRatio) < 0.7 ? 'text-amber-200' : 'text-slate-100'} />
+                  <MetricTile label={t('manga_source_seed_count')} value={formatMetricValue(sourceSeedCount)} />
+                </div>
+                <div className="grid gap-1.5 text-[11px] text-slate-500">
+                  <div>{t('manga_source_char_method')}: <span className="text-slate-300">{sourceCharMethod}</span></div>
+                  {sourceBbox.length >= 4 && (
+                    <div>{t('manga_source_bbox')}: <span className="text-slate-300">{sourceBbox.join(', ')}</span></div>
+                  )}
+                  {sourceLayoutBbox.length >= 4 && (
+                    <div>{t('manga_source_layout_bbox')}: <span className="text-slate-300">{sourceLayoutBbox.join(', ')}</span></div>
+                  )}
+                  {sourceSeedIds.length > 0 && (
+                    <div>{t('manga_source_seed_ids')}: <span className="text-slate-300">{sourceSeedIds.join(', ')}</span></div>
+                  )}
+                </div>
+                {activeBlockRenderWarnings.length > 0 && (
+                  <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-2.5 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-100">{t('manga_layout_warnings')}</div>
+                    <div className="mt-1 text-xs text-amber-50">{activeBlockRenderWarnings.join(', ')}</div>
+                  </div>
+                )}
               </div>
             </details>
 
