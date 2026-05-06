@@ -16,6 +16,19 @@ This project introduces **uv**, a modern Python package manager, and implements 
 
 ---
 
+## Built-in Smart Diagnostics and Issue Feedback Assistance
+
+AiNiee-Next includes built-in error diagnostics and feedback assistance, so you can use it with confidence: if a task fails, you will not be left with only a cryptic traceback or logs with no clear next step. The system collects context such as the error stack, runtime environment, current platform and model, and recent operation flow, then uses rule-based diagnostics and optional LLM analysis to help determine whether the issue is more likely caused by the API, network, configuration, environment, or the project code itself.
+
+If the diagnostics point to a suspected code issue, the program can also prepare a structured GitHub Issue with the error description, environment information, key traceback, initial analysis, and useful clues for debugging. You do not need to spend extra effort writing the report or interpreting complex errors yourself; the system helps turn the problem into a format that developers can understand, reproduce, and resolve more quickly.
+
+- **Clearer next steps**: Helps distinguish configuration issues, environment issues, API issues, network issues, and suspected code defects
+- **Easier feedback**: Automatically organizes Issue content with environment details, version information, traceback, and analysis results
+- **Lower communication cost**: Reduces repeated follow-up questions between users and developers
+- **Faster troubleshooting**: Turns problem reports into debugging material that is easier for developers to act on
+
+---
+
 ## Performance Showcase
 
 **Built for ultimate performance and stability.**

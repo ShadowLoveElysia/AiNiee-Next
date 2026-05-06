@@ -12,7 +12,6 @@ from ModuleFolders.MangaCore.render.textNormalize import normalize_manga_dialogu
 LAYOUT_ASSIGNMENT_STATUSES = {"assigned", "shared_bubble"}
 SOURCE_CHAR_SIZE_MIN = 10
 SOURCE_CHAR_SIZE_MAX = 96
-SOURCE_SIZE_SPLIT_RATIO = 1.6
 
 
 def _sort_grouped_seeds(seeds: list[TextSeed], direction: str) -> list[TextSeed]:
@@ -99,30 +98,8 @@ def _seed_union_bbox(seeds: list[TextSeed]) -> list[int]:
     ]
 
 
-def _layout_bbox_for_seed_group(
-    inner_bbox: list[int],
-    seeds: list[TextSeed],
-    direction: str,
-    *,
-    split: bool,
-) -> list[int]:
-    if not split or not seeds:
-        return list(inner_bbox)
-
-    source_bbox = _seed_union_bbox(seeds)
-    char_size = int(median(_source_char_sizes(seeds, direction)))
-    pad_x = max(6, int(char_size * (0.85 if direction == "vertical" else 1.2)))
-    pad_y = max(6, int(char_size * (1.2 if direction == "vertical" else 0.85)))
-    x1, y1, x2, y2 = source_bbox
-    candidate = [
-        max(int(inner_bbox[0]), x1 - pad_x),
-        max(int(inner_bbox[1]), y1 - pad_y),
-        min(int(inner_bbox[2]), x2 + pad_x),
-        min(int(inner_bbox[3]), y2 + pad_y),
-    ]
-    if candidate[2] - candidate[0] < char_size or candidate[3] - candidate[1] < char_size:
-        return list(inner_bbox)
-    return candidate
+def _layout_bbox_for_seed_group(inner_bbox: list[int]) -> list[int]:
+    return list(inner_bbox)
 
 
 def _source_size_confidence(seeds: list[TextSeed], sizes: list[int]) -> float:
@@ -225,7 +202,7 @@ def _seed_direction(seed: TextSeed) -> str:
     return str(seed.direction or "").strip().lower()
 
 
-def _should_split_seed_group(current_group: list[TextSeed], next_seed: TextSeed, direction: str) -> bool:
+def _should_split_seed_group(current_group: list[TextSeed], next_seed: TextSeed) -> bool:
     if not current_group:
         return False
 
@@ -236,16 +213,13 @@ def _should_split_seed_group(current_group: list[TextSeed], next_seed: TextSeed,
         if comparable_directions and next_direction not in comparable_directions:
             return True
 
-    current_size = float(median(_source_char_sizes(current_group, direction)))
-    next_size = float(_source_char_size_for_seed(next_seed, direction))
-    ratio = max(current_size, next_size) / max(1.0, min(current_size, next_size))
-    return ratio > SOURCE_SIZE_SPLIT_RATIO
+    return False
 
 
-def _split_ordered_seeds_by_source_size(ordered_seeds: list[TextSeed], direction: str) -> list[list[TextSeed]]:
+def _split_ordered_seeds_by_direction(ordered_seeds: list[TextSeed]) -> list[list[TextSeed]]:
     groups: list[list[TextSeed]] = []
     for seed in ordered_seeds:
-        if not groups or _should_split_seed_group(groups[-1], seed, direction):
+        if not groups or _should_split_seed_group(groups[-1], seed):
             groups.append([seed])
         else:
             groups[-1].append(seed)
@@ -278,8 +252,8 @@ def plan_text_blocks(page_id: str, seeds: list[TextSeed], assignments: list[Bubb
         inner_bbox = group_assignments[0].inner_bbox
         direction = _infer_direction(inner_bbox, bubble_seeds)
         ordered_seeds = _sort_grouped_seeds(bubble_seeds, direction)
-        seed_groups = _split_ordered_seeds_by_source_size(ordered_seeds, direction)
-        split_by_size = len(seed_groups) > 1
+        seed_groups = _split_ordered_seeds_by_direction(ordered_seeds)
+        split_by_direction = len(seed_groups) > 1
         for group_index, seed_group in enumerate(seed_groups, start=1):
             source_text = normalize_manga_dialogue_for_translation(
                 "\n".join(seed.source_text for seed in seed_group if seed.source_text.strip())
@@ -287,12 +261,7 @@ def plan_text_blocks(page_id: str, seeds: list[TextSeed], assignments: list[Bubb
             if not _has_meaningful_text(source_text):
                 continue
 
-            layout_bbox = _layout_bbox_for_seed_group(
-                inner_bbox,
-                seed_group,
-                direction,
-                split=split_by_size,
-            )
+            layout_bbox = _layout_bbox_for_seed_group(inner_bbox)
             metrics = _estimate_source_metrics(
                 source_text=source_text,
                 seeds=seed_group,
@@ -329,8 +298,8 @@ def plan_text_blocks(page_id: str, seeds: list[TextSeed], assignments: list[Bubb
                 f"source_char_size_confidence:{source_size_confidence:.2f}",
                 *[f"seed:{seed.seed_id}" for seed in seed_group],
             ]
-            if split_by_size:
-                flags.append("source_size_split")
+            if split_by_direction:
+                flags.append("source_direction_split")
             if visual_mode:
                 flags.append(f"visual_mode:{visual_mode}")
 

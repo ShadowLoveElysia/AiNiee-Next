@@ -23,6 +23,7 @@ interface BlockTransformState {
   startX: number;
   startY: number;
   startBbox: number[];
+  startFontSize: number;
 }
 
 type CanvasTool = 'select' | 'region' | 'text' | 'brush' | 'restore';
@@ -107,6 +108,95 @@ const buildOverlayBoxStyle = (bbox: number[]): React.CSSProperties => {
   };
 };
 
+const estimateTightTextBox = (
+  bbox: number[],
+  text: string,
+  direction: string,
+  fontSize: number,
+  lineSpacing: number,
+) => {
+  const [x1, y1, x2, y2] = bbox;
+  const boxWidth = Math.max(1, x2 - x1);
+  const boxHeight = Math.max(1, y2 - y1);
+  const characters = String(text || '').replace(/\s+/g, '');
+  if (!characters) return bbox;
+
+  const padding = Math.max(4, Math.round(fontSize * 0.18));
+  if (direction === 'vertical') {
+    const maxRows = Math.max(1, Math.floor((boxHeight - padding * 2) / Math.max(1, fontSize * lineSpacing)));
+    const columns = Math.max(1, Math.ceil(characters.length / maxRows));
+    const estimatedWidth = Math.min(boxWidth, Math.max(MIN_BLOCK_SIZE, Math.round(columns * fontSize * 1.18 + padding * 2)));
+    const rows = Math.min(maxRows, characters.length);
+    const estimatedHeight = Math.min(boxHeight, Math.max(MIN_BLOCK_SIZE, Math.round(rows * fontSize * lineSpacing + padding * 2)));
+    const centerX = (x1 + x2) / 2;
+    const centerY = (y1 + y2) / 2;
+    const tightX1 = Math.round(clampValue(centerX - estimatedWidth / 2, x1, x2 - MIN_BLOCK_SIZE));
+    const tightX2 = Math.round(clampValue(tightX1 + estimatedWidth, tightX1 + MIN_BLOCK_SIZE, x2));
+    const tightY1 = Math.round(clampValue(centerY - estimatedHeight / 2, y1, y2 - MIN_BLOCK_SIZE));
+    const tightY2 = Math.round(clampValue(tightY1 + estimatedHeight, tightY1 + MIN_BLOCK_SIZE, y2));
+    return [tightX1, tightY1, tightX2, tightY2];
+  }
+
+  const hardLines = String(text || '').split(/\r?\n/).filter((line) => line.trim());
+  const lines = Math.max(1, hardLines.length || Math.ceil(characters.length / Math.max(1, Math.floor((boxWidth - padding * 2) / Math.max(1, fontSize)))));
+  const longestLineLength = Math.max(1, ...(hardLines.length ? hardLines.map((line) => Array.from(line.replace(/\s+/g, '')).length) : [Math.ceil(characters.length / lines)]));
+  const estimatedWidth = Math.min(boxWidth, Math.max(MIN_BLOCK_SIZE, Math.round(longestLineLength * fontSize * 0.66 + padding * 2)));
+  const estimatedHeight = Math.min(boxHeight, Math.max(MIN_BLOCK_SIZE, Math.round(lines * fontSize * lineSpacing + padding * 2)));
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+  const tightX1 = Math.round(clampValue(centerX - estimatedWidth / 2, x1, x2 - MIN_BLOCK_SIZE));
+  const tightX2 = Math.round(clampValue(tightX1 + estimatedWidth, tightX1 + MIN_BLOCK_SIZE, x2));
+  const tightY1 = Math.round(clampValue(centerY - estimatedHeight / 2, y1, y2 - MIN_BLOCK_SIZE));
+  const tightY2 = Math.round(clampValue(tightY1 + estimatedHeight, tightY1 + MIN_BLOCK_SIZE, y2));
+  return [tightX1, tightY1, tightX2, tightY2];
+};
+
+const estimateRunWidth = (text: string, fontSize: number) => {
+  const characters = Array.from(text || '');
+  if (!characters.length) return fontSize;
+  return Math.max(fontSize, Math.round(characters.length * fontSize * 0.62));
+};
+
+const tightTextBoxFromRenderPlan = (
+  plan: MangaRenderLayoutPlan | undefined,
+  fallbackBbox: number[],
+  fontSize: number,
+  strokeWidth: number,
+) => {
+  if (!plan?.runs?.length) return null;
+  const direction = String(plan.direction || '');
+  const lineSpacing = Math.max(0.8, Number(plan.line_spacing || 1.2));
+  const padding = Math.max(4, Math.round(fontSize * 0.2) + Math.max(0, Math.round(strokeWidth)));
+  let left = Number.POSITIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+
+  for (const run of plan.runs) {
+    const text = String(run.text || '');
+    const x = Number(run.x);
+    const y = Number(run.y);
+    if (!text || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const width = direction === 'vertical' ? fontSize : estimateRunWidth(text, fontSize);
+    const height = Math.max(fontSize, Math.round(fontSize * lineSpacing));
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x + width);
+    bottom = Math.max(bottom, y + height);
+  }
+
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+    return null;
+  }
+
+  const [x1, y1, x2, y2] = fallbackBbox;
+  const tightX1 = Math.round(clampValue(left - padding, x1, x2 - MIN_BLOCK_SIZE));
+  const tightY1 = Math.round(clampValue(top - padding, y1, y2 - MIN_BLOCK_SIZE));
+  const tightX2 = Math.round(clampValue(right + padding, tightX1 + MIN_BLOCK_SIZE, x2));
+  const tightY2 = Math.round(clampValue(bottom + padding, tightY1 + MIN_BLOCK_SIZE, y2));
+  return [tightX1, tightY1, tightX2, tightY2];
+};
+
 const areBboxesEqual = (left: number[] = [], right: number[] = []) => (
   left.length >= 4
   && right.length >= 4
@@ -148,7 +238,16 @@ const clampScale = (scale: number, fitScale: number) => {
 const clampValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const MIN_BLOCK_SIZE = 12;
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 160;
 const clampBrushRadius = (radius: number) => Math.max(1, Math.min(256, Math.round(Number(radius) || 24)));
+
+const isCornerResizeMode = (mode: BlockTransformMode) => (
+  mode === 'resize-nw'
+  || mode === 'resize-ne'
+  || mode === 'resize-sw'
+  || mode === 'resize-se'
+);
 
 const normalizeBlockBbox = (bbox: number[], pageWidth: number, pageHeight: number) => {
   const values = bbox.slice(0, 4).map((value) => Math.round(Number(value) || 0));
@@ -208,6 +307,39 @@ const transformBlockBbox = (
   }
 
   return [x1, y1, x2, y2].map(Math.round);
+};
+
+const scaleFontSizeForCornerResize = (
+  startBbox: number[],
+  nextBbox: number[],
+  startFontSize: number,
+) => {
+  const startWidth = Math.max(1, startBbox[2] - startBbox[0]);
+  const startHeight = Math.max(1, startBbox[3] - startBbox[1]);
+  const nextWidth = Math.max(1, nextBbox[2] - nextBbox[0]);
+  const nextHeight = Math.max(1, nextBbox[3] - nextBbox[1]);
+  const startDiagonal = Math.max(1, Math.hypot(startWidth, startHeight));
+  const nextDiagonal = Math.max(1, Math.hypot(nextWidth, nextHeight));
+  const scaleRatio = nextDiagonal / startDiagonal;
+  return Math.round(clampValue(startFontSize * scaleRatio, MIN_FONT_SIZE, MAX_FONT_SIZE));
+};
+
+const transformBlockDraft = (
+  state: BlockTransformState,
+  clientX: number,
+  clientY: number,
+  scale: number,
+  pageWidth: number,
+  pageHeight: number,
+): Partial<MangaBlockDraft> => {
+  const bbox = transformBlockBbox(state, clientX, clientY, scale, pageWidth, pageHeight);
+  if (!isCornerResizeMode(state.mode)) {
+    return { bbox };
+  }
+  return {
+    bbox,
+    font_size: scaleFontSizeForCornerResize(state.startBbox, bbox, state.startFontSize),
+  };
 };
 
 const moveBlockBbox = (
@@ -390,15 +522,15 @@ const CANVAS_TOOLS: Array<{ id: CanvasTool; labelKey: string; icon: typeof Mouse
   { id: 'restore', labelKey: 'manga_tool_restore_brush', icon: RotateCcw },
 ];
 
-const BLOCK_RESIZE_HANDLES: Array<{ mode: BlockTransformMode; className: string }> = [
-  { mode: 'resize-nw', className: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize' },
-  { mode: 'resize-n', className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize' },
-  { mode: 'resize-ne', className: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize' },
-  { mode: 'resize-e', className: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
-  { mode: 'resize-w', className: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
-  { mode: 'resize-sw', className: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize' },
-  { mode: 'resize-s', className: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 cursor-ns-resize' },
-  { mode: 'resize-se', className: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize' },
+const BLOCK_RESIZE_HANDLES: Array<{ mode: BlockTransformMode; className: string; corner: boolean }> = [
+  { mode: 'resize-nw', corner: true, className: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize' },
+  { mode: 'resize-n', corner: false, className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize' },
+  { mode: 'resize-ne', corner: true, className: 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize' },
+  { mode: 'resize-e', corner: false, className: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'resize-w', corner: false, className: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'resize-sw', corner: true, className: 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize' },
+  { mode: 'resize-s', corner: false, className: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 cursor-ns-resize' },
+  { mode: 'resize-se', corner: true, className: 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize' },
 ];
 
 export const MangaCanvas: React.FC<MangaCanvasProps> = ({
@@ -555,7 +687,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
       const currentPage = pageRef.current;
       if (!currentPage) return;
       event.preventDefault();
-      const bbox = transformBlockBbox(
+      const patch = transformBlockDraft(
         blockTransform,
         event.clientX,
         event.clientY,
@@ -563,7 +695,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
         currentPage.width,
         currentPage.height,
       );
-      onUpdateDraftRef.current(blockTransform.blockId, { bbox });
+      onUpdateDraftRef.current(blockTransform.blockId, patch);
     };
 
     const handleBlockPointerEnd = (event: PointerEvent) => {
@@ -616,6 +748,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
     blockId: string,
     bbox: number[],
     mode: BlockTransformMode,
+    fontSize: number,
   ) => {
     if (!page || event.button !== 0) return;
     event.preventDefault();
@@ -629,6 +762,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
       startX: event.clientX,
       startY: event.clientY,
       startBbox: normalizeBlockBbox(bbox, page.width, page.height),
+      startFontSize: Math.max(MIN_FONT_SIZE, Number(fontSize) || 24),
     });
   };
 
@@ -1017,23 +1151,34 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                     ? block.source_text || block.block_id
                     : sourceText || block.block_id;
                   const bbox = draft?.bbox || block.bbox;
+                  const draftFontSize = Number(draft?.font_size ?? block.style.font_size ?? 24);
+                  const draftLineSpacing = Math.max(0.8, Number(draft?.line_spacing ?? block.style.line_spacing ?? 1.2));
+                  const draftStrokeWidth = Math.max(0, Number(draft?.stroke_width ?? block.style.stroke_width ?? 0));
                   const overlayLabel = buildOverlayLabel(sourceText, translation, block.block_id);
                   const previewTextStyle = buildBlockTextStyle(block, draft);
                   const centeredPreviewTextStyle = buildBlockPreviewTextStyle(block, draft);
                   const previewText = translation || sourceText || block.block_id;
                   const renderPlan = renderLayoutPlanByBlockId.get(block.block_id);
+                  const draftChanged = isDraftDirtyForPreview(block, draft);
+                  const draftBboxChanged = draft ? !areBboxesEqual(draft.bbox, block.bbox) : false;
                   const canUseRenderPlanPreview = (
-                    !isDraftDirtyForPreview(block, draft)
+                    !draftChanged
                     && isRenderPlanPreviewUsable(renderPlan, block, translation || sourceText)
                   );
+                  const tightRenderBox = canUseRenderPlanPreview
+                    ? tightTextBoxFromRenderPlan(renderPlan, bbox, draftFontSize, draftStrokeWidth)
+                    : null;
+                  const visibleBbox = tightRenderBox || (!draftBboxChanged
+                    ? estimateTightTextBox(bbox, previewText, block.rendered_direction, draftFontSize, draftLineSpacing)
+                    : bbox);
 
                   return (
                     <div
                       key={block.block_id}
                       role="button"
                       tabIndex={0}
-                      onPointerDown={(event) => beginBlockTransform(event, block.block_id, bbox, 'move')}
-                      onKeyDown={(event) => handleBlockKeyDown(event, block.block_id, bbox)}
+                      onPointerDown={(event) => beginBlockTransform(event, block.block_id, visibleBbox, 'move', draftFontSize)}
+                      onKeyDown={(event) => handleBlockKeyDown(event, block.block_id, visibleBbox)}
                       onDoubleClick={(event) => {
                         startInlineEdit(event, block.block_id, 'translation');
                       }}
@@ -1045,7 +1190,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                           : 'cursor-pointer border-amber-300/60 bg-transparent hover:border-cyan-300/80 hover:bg-cyan-400/5'
                       }`}
                       style={{
-                        ...buildOverlayBoxStyle(bbox),
+                        ...buildOverlayBoxStyle(visibleBbox),
                         opacity: layerControls.overlay.opacity,
                       }}
                       title={`${block.block_id} | ${overlayLabel}`}
@@ -1087,7 +1232,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                             {renderPlan?.runs?.map((run, runIndex) => (
                               <span
                                 key={`${block.block_id}-run-${runIndex}`}
-                                style={buildRenderPlanRunStyle(block, draft, renderPlan, run, bbox)}
+                                style={buildRenderPlanRunStyle(block, draft, renderPlan, run, visibleBbox)}
                               >
                                 {String(run.text || '')}
                               </span>
@@ -1126,8 +1271,10 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                         <span
                           key={handle.mode}
                           aria-hidden="true"
-                          onPointerDown={(event) => beginBlockTransform(event, block.block_id, bbox, handle.mode)}
-                          className={`absolute h-3 w-3 rounded-sm border border-cyan-100 bg-slate-950 shadow-[0_0_0_1px_rgba(8,47,73,0.85)] ${handle.className}`}
+                          onPointerDown={(event) => beginBlockTransform(event, block.block_id, visibleBbox, handle.mode, draftFontSize)}
+                          className={`absolute border border-cyan-100 bg-slate-950 shadow-[0_0_0_1px_rgba(8,47,73,0.85)] ${
+                            handle.corner ? 'h-4 w-4 rounded-full' : 'h-3 w-3 rounded-sm'
+                          } ${handle.className}`}
                         />
                       ))}
                     </div>

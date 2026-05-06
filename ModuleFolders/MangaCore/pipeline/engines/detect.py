@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_runtime_asset_status,
@@ -18,6 +18,8 @@ from ModuleFolders.MangaCore.render.planner import LAYOUT_ASSIGNMENT_STATUSES
 DEFAULT_DETECT_ENGINE_ID = "comic-text-bubble-detector"
 DEFAULT_SEGMENT_ENGINE_ID = "comic-text-detector"
 ALTERNATIVE_DETECT_ENGINE_IDS = ("pp-doclayoutv3", "speech-bubble-segmentation")
+CLEANUP_TEXT_MASK_EXPAND = 13
+RUNTIME_SEGMENT_MAX_AUTHORITY_RATIO = 0.65
 
 
 def _bbox_to_polygon(bbox: list[int]) -> list[list[float]]:
@@ -203,6 +205,7 @@ class DetectEngine:
         if runtime_output is not None and runtime_output.text_regions:
             runtime_detector_id = runtime_output.runtime_detector_id
             runtime_segmenter_id = runtime_output.runtime_segmenter_id
+            segment_mask_data = runtime_output.segment_mask
             if not has_authoritative_text_source:
                 text_regions = [
                     DetectRegion(
@@ -214,7 +217,6 @@ class DetectEngine:
                     )
                     for index, region in enumerate(runtime_output.text_regions, start=1)
                 ]
-                segment_mask_data = runtime_output.segment_mask
                 bubble_mask_data = runtime_output.bubble_mask
         elif runtime_status.available and runtime_error:
             runtime_warning = f"Runtime detector failed and fell back to heuristic grouping: {runtime_error}"
@@ -313,13 +315,24 @@ class DetectEngine:
         runtime_segment_mask = self._mask_image_from_result(result.segment_mask_data, size)
         runtime_bubble_mask = self._mask_image_from_result(result.bubble_mask_data, size)
 
-        if runtime_segment_mask is None:
-            runtime_segment_mask = Image.new("L", size, 0)
-            segment_draw = ImageDraw.Draw(runtime_segment_mask)
+        fallback_segment_mask = Image.new("L", size, 0)
+        if result.cleanup_text_regions:
+            segment_draw = ImageDraw.Draw(fallback_segment_mask)
             for region in result.text_regions:
                 if region.kind != "text":
                     continue
                 segment_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
+            fallback_segment_mask = fallback_segment_mask.filter(ImageFilter.MaxFilter(size=CLEANUP_TEXT_MASK_EXPAND))
+
+        if runtime_segment_mask is None or not result.cleanup_text_regions:
+            runtime_segment_mask = fallback_segment_mask
+        else:
+            clipped_runtime_segment_mask = self._clip_runtime_segment_mask(
+                runtime_segment_mask,
+                result=result,
+                size=size,
+            )
+            runtime_segment_mask = ImageChops.lighter(clipped_runtime_segment_mask, fallback_segment_mask)
 
         if runtime_bubble_mask is None:
             runtime_bubble_mask = Image.new("L", size, 0)
@@ -334,6 +347,33 @@ class DetectEngine:
 
         runtime_segment_mask.save(segment_path, format="PNG")
         runtime_bubble_mask.save(bubble_path, format="PNG")
+
+    @staticmethod
+    def _clip_runtime_segment_mask(
+        runtime_segment_mask: Image.Image,
+        *,
+        result: DetectResult,
+        size: tuple[int, int],
+    ) -> Image.Image:
+        authority_mask = Image.new("L", size, 0)
+        authority_draw = ImageDraw.Draw(authority_mask)
+        authority_regions = result.bubble_regions or result.cleanup_text_regions
+        for region in authority_regions:
+            authority_draw.polygon([(point[0], point[1]) for point in region.polygon], fill=255)
+        if not result.bubble_regions:
+            authority_mask = authority_mask.filter(ImageFilter.MaxFilter(size=CLEANUP_TEXT_MASK_EXPAND))
+
+        authority_pixels = int(np.count_nonzero(np.asarray(authority_mask, dtype=np.uint8)))
+        if authority_pixels <= 0:
+            return Image.new("L", size, 0)
+
+        clipped = ImageChops.multiply(runtime_segment_mask, authority_mask)
+        clipped_pixels = int(np.count_nonzero(np.asarray(clipped, dtype=np.uint8)))
+        if clipped_pixels <= 0:
+            return Image.new("L", size, 0)
+        if clipped_pixels > int(authority_pixels * RUNTIME_SEGMENT_MAX_AUTHORITY_RATIO):
+            return Image.new("L", size, 0)
+        return clipped
 
     @staticmethod
     def _mask_image_from_result(mask: np.ndarray | None, size: tuple[int, int]) -> Image.Image | None:
