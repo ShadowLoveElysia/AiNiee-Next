@@ -228,7 +228,7 @@ class MangaRenderer:
     def render_session(self, session: MangaProjectSession) -> list[Path]:
         rendered: list[Path] = []
         for page_ref in session.scene.pages:
-            rendered.append(self.render_page(session, session.pages[page_ref.page_id]))
+            rendered.append(self.render_page(session, session.get_page(page_ref.page_id)))
         return rendered
 
     @staticmethod

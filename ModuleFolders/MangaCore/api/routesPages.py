@@ -229,17 +229,19 @@ def _refresh_page_inpaint_and_render(session: MangaProjectSession, page) -> tupl
 def _mark_page_edited(session: MangaProjectSession, page) -> None:
     page.status = "edited"
     session.manifest.updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    session.mark_page_dirty(page.page_id)
     MangaProjectPersistence.save_session(session)
 
 
 @router.get("/projects/{project_id}/pages/{page_id}")
-def get_page(project_id: str, page_id: str) -> dict[str, object]:
+def get_page(project_id: str, page_id: str, diagnostics: bool = True) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    page = session.pages.get(page_id)
-    if page is None:
+    try:
+        page = session.get_page(page_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
 
-    return {
+    payload: dict[str, object] = {
         "page_id": page.page_id,
         "index": page.index,
         "width": page.width,
@@ -258,15 +260,28 @@ def get_page(project_id: str, page_id: str) -> dict[str, object]:
             "restore_url": f"/api/manga/projects/{project_id}/assets/{_ensure_restore_mask_path(session, page)}?v={_asset_version(session, page.masks.restore)}",
         },
         "blocks": [block.to_dict() for block in page.text_blocks],
-        "quality_gate": _quality_gate_payload(session, project_id, page),
     }
+    if diagnostics:
+        payload["quality_gate"] = _quality_gate_payload(session, project_id, page)
+    return payload
+
+
+@router.get("/projects/{project_id}/pages/{page_id}/quality")
+def get_page_quality(project_id: str, page_id: str) -> dict[str, object]:
+    session = _get_session_or_404(project_id)
+    try:
+        page = session.get_page(page_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
+    return _quality_gate_payload(session, project_id, page)
 
 
 @router.get("/projects/{project_id}/pages/{page_id}/thumbnail")
 def get_page_thumbnail(project_id: str, page_id: str):
     session = _get_session_or_404(project_id)
-    page = session.pages.get(page_id)
-    if page is None:
+    try:
+        page = session.get_page(page_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
     return FileResponse(_safe_project_asset(session, page.thumbnail_path))
 
@@ -280,8 +295,9 @@ def get_project_asset(project_id: str, asset_path: str):
 @router.post("/projects/{project_id}/pages/{page_id}/brush-mask/strokes")
 def apply_brush_mask_stroke(project_id: str, page_id: str, request: BrushMaskStrokeRequest) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    page = session.pages.get(page_id)
-    if page is None:
+    try:
+        page = session.get_page(page_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
     if not request.points:
         raise HTTPException(status_code=400, detail="Brush stroke requires at least one point.")
@@ -322,8 +338,9 @@ def apply_brush_mask_stroke(project_id: str, page_id: str, request: BrushMaskStr
 @router.post("/projects/{project_id}/pages/{page_id}/restore-mask/strokes")
 def apply_restore_mask_stroke(project_id: str, page_id: str, request: RestoreMaskStrokeRequest) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    page = session.pages.get(page_id)
-    if page is None:
+    try:
+        page = session.get_page(page_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
     if not request.points:
         raise HTTPException(status_code=400, detail="Restore stroke requires at least one point.")

@@ -49,7 +49,7 @@ class PackageExporter:
         result = PackageExportResult()
         blocked_pages: list[str] = []
         for page_ref in session.scene.pages:
-            page = session.pages[page_ref.page_id]
+            page = session.get_page(page_ref.page_id)
             blocked, reasons = page_blocked_from_final(session, page)
             if blocked:
                 suffix = f": {'; '.join(reasons)}" if reasons else ""

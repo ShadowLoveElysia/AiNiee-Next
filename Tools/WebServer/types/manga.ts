@@ -1,10 +1,3 @@
-export interface MangaProjectSummary {
-  project_id: string;
-  name: string;
-  page_count: number;
-  current_page_id: string;
-}
-
 export interface MangaOpenProjectSummary {
   project_id: string;
   name: string;
@@ -94,6 +87,55 @@ export interface MangaScenePageSummary {
     issue_count: number;
     final_allowed: boolean;
   };
+}
+
+export interface MangaProjectManifestSummary {
+  project_id: string;
+  task_id: string;
+  name: string;
+  source_type: string;
+  created_at: string;
+  updated_at: string;
+  source_lang: string;
+  target_lang: string;
+  profile_name: string;
+  rules_profile_name: string;
+  page_count: number;
+  status: string;
+}
+
+export interface MangaProjectTaskConfigSummary {
+  task?: string;
+  input_path?: string;
+  output_path?: string;
+  source_lang?: string;
+  target_lang?: string;
+  profile_name?: string;
+  rules_profile_name?: string;
+  platform?: string;
+  model?: string;
+  api_url?: string;
+  manga_ocr_engine?: string;
+  manga_detect_engine?: string;
+  manga_segment_engine?: string;
+  manga_inpaint_engine?: string;
+  manga_runtime_device?: string;
+  manga_detect_device?: string;
+  manga_ocr_device?: string;
+  manga_inpaint_device?: string;
+  web_mode?: boolean;
+  manga?: boolean;
+}
+
+export interface MangaProjectSummary {
+  project_id: string;
+  name: string;
+  page_count: number;
+  current_page_id: string;
+  project_path?: string;
+  manifest?: MangaProjectManifestSummary;
+  task_config?: MangaProjectTaskConfigSummary;
+  scene?: MangaSceneSummary;
 }
 
 export interface MangaModelPackageStatus {
@@ -206,6 +248,11 @@ export interface MangaSceneSummary {
   engines?: MangaSceneEngineStatus;
   runtime_readiness?: MangaRuntimeReadinessReport;
   pages: MangaScenePageSummary[];
+}
+
+export interface MangaRuntimeStatusSummary {
+  engines: MangaSceneEngineStatus;
+  runtime_readiness: MangaRuntimeReadinessReport;
 }
 
 export interface MangaTextBlockStyle {

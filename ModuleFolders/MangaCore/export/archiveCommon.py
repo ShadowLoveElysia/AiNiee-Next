@@ -10,7 +10,7 @@ from ModuleFolders.MangaCore.project.session import MangaProjectSession
 def iter_rendered_pages(session: MangaProjectSession, *, include_blocked: bool = False) -> list[tuple[str, Path]]:
     files: list[tuple[str, Path]] = []
     for page_ref in session.scene.pages:
-        page = session.pages[page_ref.page_id]
+        page = session.get_page(page_ref.page_id)
         blocked, _reasons = page_blocked_from_final(session, page)
         if blocked and not include_blocked:
             continue

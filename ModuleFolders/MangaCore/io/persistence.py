@@ -23,7 +23,7 @@ from ModuleFolders.MangaCore.project.layers import MangaLayerSet, MangaMaskSet
 from ModuleFolders.MangaCore.project.manifest import MangaProjectManifest
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.scene import MangaScene, ScenePageRef
-from ModuleFolders.MangaCore.project.session import MangaProjectSession
+from ModuleFolders.MangaCore.project.session import LazyPageDict, MangaProjectSession
 
 
 def _now_iso() -> str:
@@ -39,6 +39,12 @@ def _write_json(path: Path, payload: object) -> None:
 def _read_json(path: Path) -> object:
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _page_key_from_id(page_id: str) -> str:
+    if page_id.startswith("page_") and page_id[5:]:
+        return page_id[5:]
+    return page_id
 
 
 def _normalize_image(source: Path, target: Path) -> tuple[int, int]:
@@ -179,28 +185,41 @@ class MangaProjectPersistence:
         manifest = MangaProjectManifest.from_dict(_read_json(project_root / "manifest.json"))
         scene = MangaScene.from_dict(_read_json(project_root / "scene.json"))
         config_snapshot = _read_json(project_root / "configSnapshot.json") if (project_root / "configSnapshot.json").exists() else {}
-        pages: dict[str, MangaPage] = {}
 
-        for page_ref in scene.pages:
-            page_key = f"{page_ref.index:04d}"
-            page_dir = project_root / "pages" / page_key
-            meta = _read_json(page_dir / "pageMeta.json")
-            blocks = _read_json(page_dir / "blocks.json")
-            page = MangaPage.from_disk(
-                meta=meta if isinstance(meta, dict) else {},
-                blocks=blocks if isinstance(blocks, list) else [],
-                thumbnail_path=page_ref.thumbnail_path,
-            )
-            pages[page.page_id] = page
+        def load_page(page_id: str) -> MangaPage:
+            return cls.load_page(project_root, page_id, scene)
 
         return MangaProjectSession(
             project_path=project_root,
             output_root=output_root,
             manifest=manifest,
             scene=scene,
-            pages=pages,
+            pages=LazyPageDict(known_page_ids=[page_ref.page_id for page_ref in scene.pages], loader=load_page),
+            page_loader=load_page,
             config_snapshot=dict(config_snapshot) if isinstance(config_snapshot, dict) else {},
         )
+
+    @classmethod
+    def load_page(cls, project_root: str | Path, page_id: str, scene: MangaScene | None = None) -> MangaPage:
+        root = Path(project_root)
+        page_ref = None
+        if scene is not None:
+            page_ref = next((item for item in scene.pages if item.page_id == page_id), None)
+        page_key = f"{page_ref.index:04d}" if page_ref is not None else _page_key_from_id(page_id)
+        page_dir = root / "pages" / page_key
+        meta = _read_json(page_dir / "pageMeta.json")
+        blocks = _read_json(page_dir / "blocks.json")
+        thumbnail_path = page_ref.thumbnail_path if page_ref is not None else ""
+        if not thumbnail_path and isinstance(meta, dict):
+            thumbnail_path = str(meta.get("thumbnail_path", ""))
+        page = MangaPage.from_disk(
+            meta=meta if isinstance(meta, dict) else {},
+            blocks=blocks if isinstance(blocks, list) else [],
+            thumbnail_path=thumbnail_path,
+        )
+        if page.page_id != page_id:
+            raise KeyError(page_id)
+        return page
 
     @classmethod
     def save_session(cls, session: MangaProjectSession) -> None:
@@ -211,7 +230,9 @@ class MangaProjectPersistence:
         _write_json(project_root / "configSnapshot.json", session.config_snapshot)
         (project_root / "historyLog.log").touch(exist_ok=True)
 
-        for page in session.pages.values():
+        for page in session.loaded_pages():
+            if session.dirty_page_ids and page.page_id not in session.dirty_page_ids:
+                continue
             cls.save_page(session, page)
 
     @classmethod
@@ -222,6 +243,7 @@ class MangaProjectPersistence:
         _write_json(page_dir / "blocks.json", page.to_blocks_dict())
         overlay_path = session.project_path / page.layers.overlay_text
         _write_json(overlay_path, {"blocks": page.to_blocks_dict()})
+        session.clear_page_dirty(page.page_id)
 
     @classmethod
     def append_history(cls, session: MangaProjectSession, lines: list[dict[str, object]]) -> None:
@@ -239,8 +261,14 @@ class MangaProjectPersistence:
 
     @classmethod
     def sync_scene(cls, session: MangaProjectSession) -> None:
-        pages = sorted(session.pages.values(), key=lambda page: page.index)
-        session.manifest.page_count = len(pages)
+        pages = sorted(session.loaded_pages(), key=lambda page: page.index)
+        by_id = {page_ref.page_id: page_ref for page_ref in session.scene.pages}
+        session.manifest.page_count = len(session.scene.pages or pages)
+        if not pages:
+            if not session.scene.current_page_id and session.scene.pages:
+                session.scene.current_page_id = session.scene.pages[0].page_id
+            return
+
         session.scene.pages = [
             ScenePageRef(
                 page_id=page.page_id,
@@ -250,6 +278,11 @@ class MangaProjectPersistence:
             )
             for page in pages
         ]
+        for page_ref in sorted(by_id.values(), key=lambda item: item.index):
+            if page_ref.page_id not in {page.page_id for page in pages}:
+                session.scene.pages.append(page_ref)
+        session.scene.pages.sort(key=lambda item: item.index)
+        session.manifest.page_count = len(session.scene.pages)
         if not session.scene.current_page_id and session.scene.pages:
             session.scene.current_page_id = session.scene.pages[0].page_id
 

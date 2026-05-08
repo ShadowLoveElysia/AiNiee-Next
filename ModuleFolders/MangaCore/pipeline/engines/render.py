@@ -104,7 +104,7 @@ class RenderEngine:
     def run_session(self, session: MangaProjectSession, *, write_final: bool = True) -> list[RenderResult]:
         results: list[RenderResult] = []
         for page_ref in session.scene.pages:
-            page = session.pages[page_ref.page_id]
+            page = session.get_page(page_ref.page_id)
             results.append(self.run_page(session, page, write_final=write_final))
         return results
 

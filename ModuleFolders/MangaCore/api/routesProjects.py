@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from time import monotonic
+
 from fastapi import APIRouter, HTTPException
 
 from ModuleFolders.MangaCore.api.schemas import (
@@ -15,6 +17,32 @@ from ModuleFolders.MangaCore.pipeline.runtimeReadiness import build_manga_runtim
 from ModuleFolders.MangaCore.project.session import MangaProjectSession, SessionRegistry
 
 router = APIRouter(prefix="/api/manga", tags=["manga"])
+
+PROJECT_CONFIG_SUMMARY_KEYS = (
+    "task",
+    "input_path",
+    "output_path",
+    "source_lang",
+    "target_lang",
+    "profile_name",
+    "rules_profile_name",
+    "platform",
+    "model",
+    "api_url",
+    "manga_ocr_engine",
+    "manga_detect_engine",
+    "manga_segment_engine",
+    "manga_inpaint_engine",
+    "manga_runtime_device",
+    "manga_detect_device",
+    "manga_ocr_device",
+    "manga_inpaint_device",
+    "web_mode",
+    "manga",
+)
+
+RUNTIME_STATUS_CACHE_TTL_SECONDS = 8.0
+_runtime_status_cache: dict[str, tuple[float, dict[str, object]]] = {}
 
 
 def _get_session_or_404(project_id: str) -> MangaProjectSession:
@@ -37,15 +65,81 @@ def list_open_projects() -> list[dict[str, object]]:
     ]
 
 
-@router.post("/projects/open")
-def open_project(request: ProjectOpenRequest) -> dict[str, object]:
-    session = SessionRegistry.register(MangaProjectPersistence.load_project(request.project_path))
-    return {
+def _project_config_summary(session: MangaProjectSession) -> dict[str, object]:
+    snapshot = session.config_snapshot if isinstance(session.config_snapshot, dict) else {}
+    return {key: snapshot[key] for key in PROJECT_CONFIG_SUMMARY_KEYS if key in snapshot}
+
+
+def _scene_page_summary(project_id: str, page_ref, quality_gate: dict[str, object] | None = None) -> dict[str, object]:
+    payload = {
+        "page_id": page_ref.page_id,
+        "index": page_ref.index,
+        "status": page_ref.status,
+        "thumbnail_url": f"/api/manga/projects/{project_id}/pages/{page_ref.page_id}/thumbnail",
+    }
+    if quality_gate is not None:
+        payload["quality_gate"] = quality_gate
+    return payload
+
+
+def _project_main_payload(session: MangaProjectSession, *, include_runtime: bool = False, include_quality: bool = False) -> dict[str, object]:
+    payload: dict[str, object] = {
         "project_id": session.manifest.project_id,
         "name": session.manifest.name,
         "page_count": session.manifest.page_count,
+        "project_path": str(session.project_path),
         "current_page_id": session.scene.current_page_id,
+        "manifest": session.manifest.to_dict(),
+        "task_config": _project_config_summary(session),
+        "scene": {
+            "project_id": session.scene.project_id,
+            "current_page_id": session.scene.current_page_id,
+            "render_preset": session.scene.render_preset,
+            "export_preset": session.scene.export_preset,
+            "pages": [
+                _scene_page_summary(
+                    session.manifest.project_id,
+                    page_ref,
+                    _scene_page_quality_payload(session, session.get_page(page_ref.page_id)) if include_quality else None,
+                )
+                for page_ref in session.scene.pages
+            ],
+        },
     }
+    if include_runtime:
+        scene_payload = payload["scene"]
+        if isinstance(scene_payload, dict):
+            scene_payload.update(_runtime_status_payload(session))
+    return payload
+
+
+def _runtime_status_payload(session: MangaProjectSession) -> dict[str, object]:
+    cache_key = session.manifest.project_id
+    now = monotonic()
+    cached = _runtime_status_cache.get(cache_key)
+    if cached is not None:
+        cached_at, payload = cached
+        if now - cached_at < RUNTIME_STATUS_CACHE_TTL_SECONDS:
+            return {
+                "engines": payload.get("engines", {}),
+                "runtime_readiness": payload.get("runtime_readiness", {}),
+            }
+
+    payload = {
+        "engines": build_engine_status(session.config_snapshot),
+        "runtime_readiness": build_manga_runtime_readiness(config_snapshot=session.config_snapshot).to_dict(),
+    }
+    _runtime_status_cache[cache_key] = (now, payload)
+    return {
+        "engines": payload["engines"],
+        "runtime_readiness": payload["runtime_readiness"],
+    }
+
+
+@router.post("/projects/open")
+def open_project(request: ProjectOpenRequest) -> dict[str, object]:
+    session = SessionRegistry.register(MangaProjectPersistence.load_project(request.project_path))
+    return _project_main_payload(session, include_runtime=False, include_quality=False)
 
 
 @router.post("/projects/create-from-task")
@@ -71,9 +165,10 @@ def create_project_from_task(request: ProjectCreateFromTaskRequest) -> dict[str,
 @router.post("/projects/save")
 def save_project(request: ProjectSaveRequest) -> dict[str, object]:
     session = _get_session_or_404(request.project_id)
+    session.load_all_pages()
     render_engine = RenderEngine()
     for page_ref in session.scene.pages:
-        page = session.pages[page_ref.page_id]
+        page = session.get_page(page_ref.page_id)
         blocked, _reasons = page_blocked_from_final(session, page)
         if blocked:
             remove_final_page(session, page)
@@ -103,23 +198,30 @@ def _scene_page_quality_payload(session: MangaProjectSession, page) -> dict[str,
 
 
 @router.get("/projects/{project_id}/scene")
-def get_scene(project_id: str) -> dict[str, object]:
+def get_scene(project_id: str, quality: bool = True, runtime: bool = True) -> dict[str, object]:
     session = _get_session_or_404(project_id)
-    return {
+    payload: dict[str, object] = {
         "project_id": session.scene.project_id,
         "current_page_id": session.scene.current_page_id,
         "render_preset": session.scene.render_preset,
         "export_preset": session.scene.export_preset,
-        "engines": build_engine_status(session.config_snapshot),
-        "runtime_readiness": build_manga_runtime_readiness(config_snapshot=session.config_snapshot).to_dict(),
         "pages": [
-            {
-                "page_id": page.page_id,
-                "index": page.index,
-                "status": page.status,
-                "thumbnail_url": f"/api/manga/projects/{project_id}/pages/{page.page_id}/thumbnail",
-                "quality_gate": _scene_page_quality_payload(session, page),
-            }
-            for page in session.scene.pages
+            _scene_page_summary(
+                project_id,
+                page_ref,
+                _scene_page_quality_payload(session, session.get_page(page_ref.page_id)) if quality else None,
+            )
+            for page_ref in session.scene.pages
         ],
     }
+    if runtime:
+        payload.update(_runtime_status_payload(session))
+    return payload
+
+
+@router.get("/projects/{project_id}/runtime-status")
+def get_runtime_status(project_id: str, refresh: bool = False) -> dict[str, object]:
+    session = _get_session_or_404(project_id)
+    if refresh:
+        _runtime_status_cache.pop(project_id, None)
+    return _runtime_status_payload(session)

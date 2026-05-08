@@ -24,7 +24,7 @@ def _ensure_project_and_page(project_id: str, page_id: str | None = None) -> Man
     session = SessionRegistry.get(project_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Manga project is not open: {project_id}")
-    if page_id and page_id not in session.pages:
+    if page_id and not session.has_page(page_id):
         raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")
     return session
 
@@ -322,7 +322,7 @@ def _run_runtime_validation_job(job_id: str, project_id: str, page_id: str, retr
         session = SessionRegistry.get(project_id)
         if session is None:
             raise RuntimeError(f"Manga project is not open: {project_id}")
-        if page_id not in session.pages:
+        if not session.has_page(page_id):
             raise RuntimeError(f"Page not found: {page_id}")
 
         JobRegistry.update(

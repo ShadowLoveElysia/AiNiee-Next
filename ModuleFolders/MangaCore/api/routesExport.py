@@ -24,7 +24,7 @@ def _get_session_or_404(project_id: str):
 def _blocked_pages_payload(session: MangaProjectSession) -> list[dict[str, object]]:
     blocked_pages: list[dict[str, object]] = []
     for page_ref in session.scene.pages:
-        page = session.pages[page_ref.page_id]
+        page = session.get_page(page_ref.page_id)
         blocked, _reasons = page_blocked_from_final(session, page)
         if not blocked:
             continue

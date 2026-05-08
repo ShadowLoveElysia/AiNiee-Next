@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MousePointer2, Paintbrush, RotateCcw, SquareDashedMousePointer, Type } from 'lucide-react';
+import { Loader2, MousePointer2, Paintbrush, RotateCcw, SquareDashedMousePointer, Type } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail } from '../../types/manga';
@@ -73,6 +73,7 @@ interface MangaRenderLayoutPlan {
 
 export interface MangaCanvasProps {
   page: MangaPageDetail | null;
+  isPageLoading?: boolean;
   currentImageUrl: string;
   viewMode: MangaViewMode;
   activeBlockId: string;
@@ -535,6 +536,7 @@ const BLOCK_RESIZE_HANDLES: Array<{ mode: BlockTransformMode; className: string;
 
 export const MangaCanvas: React.FC<MangaCanvasProps> = ({
   page,
+  isPageLoading = false,
   currentImageUrl,
   viewMode,
   activeBlockId,
@@ -979,8 +981,14 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
 
         {!page ? (
           <div className="absolute inset-0 flex items-center justify-center text-center text-slate-500">
-            <div className="text-xs uppercase tracking-[0.28em] mb-3">{t('manga_canvas_title')}</div>
-            <div className="text-lg font-semibold text-slate-300">{t('manga_canvas_empty')}</div>
+            {isPageLoading ? (
+              <Loader2 size={30} className="animate-spin text-slate-500" />
+            ) : (
+              <div>
+                <div className="text-xs uppercase tracking-[0.28em] mb-3">{t('manga_canvas_title')}</div>
+                <div className="text-lg font-semibold text-slate-300">{t('manga_canvas_empty')}</div>
+              </div>
+            )}
           </div>
         ) : (
           <>

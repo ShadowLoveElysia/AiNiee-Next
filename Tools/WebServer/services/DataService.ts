@@ -1,6 +1,6 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
 import type { MangaBrushStrokePayload } from '../components/manga/shared';
-import { MangaDeleteRuntimeValidationHistoryResult, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaProjectSummary, MangaRuntimeReadinessReport, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
+import { MangaDeleteRuntimeValidationHistoryResult, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaPageQualityGate, MangaProjectSummary, MangaRuntimeReadinessReport, MangaRuntimeStatusSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -485,17 +485,41 @@ export const DataService = {
         return Array.isArray(data) ? data : [];
     },
 
-    async getMangaScene(projectId: string): Promise<MangaSceneSummary> {
-        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/scene`);
+    async getMangaScene(projectId: string, options?: { quality?: boolean; runtime?: boolean }): Promise<MangaSceneSummary> {
+        const params = new URLSearchParams();
+        if (options?.quality === false) params.set('quality', 'false');
+        if (options?.runtime === false) params.set('runtime', 'false');
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/scene${suffix}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga scene');
         return data;
     },
 
-    async getMangaPage(projectId: string, pageId: string): Promise<MangaPageDetail> {
-        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}`);
+    async getMangaRuntimeStatus(projectId: string, refresh = false): Promise<MangaRuntimeStatusSummary> {
+        const params = new URLSearchParams();
+        if (refresh) params.set('refresh', 'true');
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/runtime-status${suffix}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga runtime status');
+        return data;
+    },
+
+    async getMangaPage(projectId: string, pageId: string, options?: { diagnostics?: boolean }): Promise<MangaPageDetail> {
+        const params = new URLSearchParams();
+        if (options?.diagnostics === false) params.set('diagnostics', 'false');
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}${suffix}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga page');
+        return data;
+    },
+
+    async getMangaPageQuality(projectId: string, pageId: string): Promise<MangaPageQualityGate> {
+        const res = await fetch(`${API_BASE}/manga/projects/${projectId}/pages/${pageId}/quality`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga page quality');
         return data;
     },
 

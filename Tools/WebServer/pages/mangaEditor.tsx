@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw, Star } from 'lucide-react';
 import { MangaBlocksPanel } from '../components/manga/mangaBlocksPanel';
 import { MangaCanvas } from '../components/manga/mangaCanvas';
@@ -36,6 +36,41 @@ const getInitialViewMode = (): MangaViewMode => {
 };
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const PAGE_NEIGHBOR_PRELOAD_RADIUS = 2;
+const PAGE_NEAR_PRELOAD_CONCURRENCY = 2;
+const PAGE_BACKGROUND_PRELOAD_DELAY_MS = 700;
+
+const buildPageCacheKey = (projectId: string, pageId: string) => `${projectId}:${pageId}`;
+
+const buildPredictivePageOrder = (
+  pages: MangaSceneSummary['pages'],
+  pageId: string,
+) => {
+  const currentIndex = pages.findIndex((item) => item.page_id === pageId);
+  if (currentIndex < 0) return { nearby: [] as string[], background: [] as string[] };
+
+  const visited = new Set<string>([pageId]);
+  const nearby: string[] = [];
+  const background: string[] = [];
+  const pushAt = (index: number, target: string[]) => {
+    const nextPageId = pages[index]?.page_id || '';
+    if (!nextPageId || visited.has(nextPageId)) return;
+    visited.add(nextPageId);
+    target.push(nextPageId);
+  };
+
+  for (let distance = 1; distance <= PAGE_NEIGHBOR_PRELOAD_RADIUS; distance += 1) {
+    pushAt(currentIndex + distance, nearby);
+    pushAt(currentIndex - distance, nearby);
+  }
+  for (let distance = PAGE_NEIGHBOR_PRELOAD_RADIUS + 1; distance < pages.length; distance += 1) {
+    pushAt(currentIndex + distance, background);
+    pushAt(currentIndex - distance, background);
+  }
+
+  return { nearby, background };
+};
 
 const formatStageLabel = (value: string, t: (key: string) => string) => {
   const key = `manga_stage_${value}`;
@@ -327,6 +362,15 @@ export const MangaEditor: React.FC = () => {
   const [scene, setScene] = useState<MangaSceneSummary | null>(null);
   const [page, setPage] = useState<MangaPageDetail | null>(null);
   const [selectedPageId, setSelectedPageId] = useState('');
+  const [loadingPageId, setLoadingPageId] = useState('');
+  const selectedPageIdRef = useRef('');
+  const pageLoadSeqRef = useRef(0);
+  const activeProjectIdRef = useRef('');
+  const scenePagesRef = useRef<MangaSceneSummary['pages']>([]);
+  const pageCacheRef = useRef<Map<string, MangaPageDetail>>(new Map());
+  const pageCacheEpochRef = useRef<Map<string, number>>(new Map());
+  const pagePreloadInflightRef = useRef<Set<string>>(new Set());
+  const pagePreloadSeqRef = useRef(0);
   const [selectedPageIds, setSelectedPageIds] = useState<string[]>([]);
   const [activeBlockId, setActiveBlockId] = useState('');
   const [viewMode, setViewMode] = useState<MangaViewMode>(getInitialViewMode());
@@ -486,7 +530,9 @@ export const MangaEditor: React.FC = () => {
 
   const statusLeftText = page
     ? t('manga_status_page_loaded', page.index, page.width, page.height, page.blocks.length, t(`manga_view_${viewMode}`), canvasZoomPercent)
-    : t('manga_status_no_page_loaded');
+    : loadingPageId
+      ? t('manga_status_page_loading')
+      : t('manga_status_no_page_loaded');
 
   const statusCenterText = canvasPointer
     ? t('manga_status_cursor', canvasPointer.x, canvasPointer.y, Math.round(canvasPointer.normalizedX * 100), Math.round(canvasPointer.normalizedY * 100))
@@ -508,6 +554,14 @@ export const MangaEditor: React.FC = () => {
       }, 4000);
     }
   };
+
+  useEffect(() => {
+    selectedPageIdRef.current = selectedPageId;
+  }, [selectedPageId]);
+
+  useEffect(() => {
+    scenePagesRef.current = scene?.pages || [];
+  }, [scene?.pages]);
 
   const refreshOpenProjects = async () => {
     try {
@@ -576,31 +630,164 @@ export const MangaEditor: React.FC = () => {
 
   const isProjectPathPinned = (path: string) => pinnedProjectPaths.includes(path.trim());
 
-  const loadPage = async (projectId: string, pageId: string) => {
-    const detail = await DataService.getMangaPage(projectId, pageId);
-    setPage(detail);
-    setSelectedPageId(pageId);
-    setRuntimeValidation(null);
-    setRuntimeValidationDiff(null);
-    setDraftsFromPage(detail);
-    setScene((current) => (current ? { ...current, current_page_id: pageId } : current));
+  const cachePageDetail = (projectId: string, detail: MangaPageDetail) => {
+    if (activeProjectIdRef.current !== projectId) return;
+    pageCacheRef.current.set(buildPageCacheKey(projectId, detail.page_id), detail);
+  };
+
+  const getCachedPageDetail = (projectId: string, pageId: string) => (
+    activeProjectIdRef.current === projectId
+      ? pageCacheRef.current.get(buildPageCacheKey(projectId, pageId)) || null
+      : null
+  );
+
+  const invalidateCachedPage = (projectId: string, pageId: string) => {
+    if (!projectId || !pageId) return;
+    pageCacheRef.current.delete(buildPageCacheKey(projectId, pageId));
+    pageCacheEpochRef.current.set(
+      buildPageCacheKey(projectId, pageId),
+      (pageCacheEpochRef.current.get(buildPageCacheKey(projectId, pageId)) || 0) + 1,
+    );
+  };
+
+  const invalidateCachedPages = (projectId: string, pageIds: string[]) => {
+    Array.from(new Set(pageIds.filter(Boolean))).forEach((pageId) => invalidateCachedPage(projectId, pageId));
+  };
+
+  const resetPagePreloadState = (projectId = '') => {
+    activeProjectIdRef.current = projectId;
+    pageCacheRef.current.clear();
+    pageCacheEpochRef.current.clear();
+    pagePreloadInflightRef.current.clear();
+    pagePreloadSeqRef.current += 1;
+  };
+
+  const preloadPageCore = async (
+    projectId: string,
+    pageId: string,
+    seq: number,
+  ) => {
+    if (!pageId || activeProjectIdRef.current !== projectId) return;
+    const cacheKey = buildPageCacheKey(projectId, pageId);
+    if (pageCacheRef.current.has(cacheKey) || pagePreloadInflightRef.current.has(cacheKey)) return;
+    const cacheEpoch = pageCacheEpochRef.current.get(cacheKey) || 0;
+    pagePreloadInflightRef.current.add(cacheKey);
+    try {
+      const detail = await DataService.getMangaPage(projectId, pageId, { diagnostics: false });
+      if (
+        activeProjectIdRef.current !== projectId
+        || pagePreloadSeqRef.current !== seq
+        || (pageCacheEpochRef.current.get(cacheKey) || 0) !== cacheEpoch
+      ) return;
+      cachePageDetail(projectId, detail);
+    } catch {
+      // Predictive page loading must never block the active editor path.
+    } finally {
+      pagePreloadInflightRef.current.delete(cacheKey);
+    }
+  };
+
+  const schedulePagePreload = (projectId: string, pageId: string) => {
+    const pages = scenePagesRef.current;
+    if (!projectId || !pageId || pages.length === 0) return;
+    const { nearby, background } = buildPredictivePageOrder(pages, pageId);
+    pagePreloadSeqRef.current += 1;
+    const seq = pagePreloadSeqRef.current;
+
+    const run = async () => {
+      for (let start = 0; start < nearby.length; start += PAGE_NEAR_PRELOAD_CONCURRENCY) {
+        if (pagePreloadSeqRef.current !== seq || activeProjectIdRef.current !== projectId) return;
+        await Promise.all(
+          nearby.slice(start, start + PAGE_NEAR_PRELOAD_CONCURRENCY)
+            .map((nextPageId) => preloadPageCore(projectId, nextPageId, seq)),
+        );
+      }
+
+      for (const nextPageId of background) {
+        if (pagePreloadSeqRef.current !== seq || activeProjectIdRef.current !== projectId) return;
+        await delay(PAGE_BACKGROUND_PRELOAD_DELAY_MS);
+        await preloadPageCore(projectId, nextPageId, seq);
+      }
+    };
+
+    void run();
+  };
+
+  const refreshPageDiagnostics = async (projectId: string, pageId: string) => {
+    try {
+      const qualityGate = await DataService.getMangaPageQuality(projectId, pageId);
+      if (activeProjectIdRef.current !== projectId || selectedPageIdRef.current !== pageId) return;
+      setPage((current) => (
+        current?.page_id === pageId
+          ? { ...current, quality_gate: qualityGate }
+          : current
+      ));
+    } catch {
+      // Quality diagnostics are non-blocking; the editable page core is still usable.
+    }
     try {
       const latestValidation = await DataService.getLatestMangaRuntimeValidation(projectId, pageId);
+      if (activeProjectIdRef.current !== projectId || selectedPageIdRef.current !== pageId) return;
       setRuntimeValidation(latestValidation);
       setActiveRuntimeStage(latestValidation?.stages.find((stage) => !stage.ok)?.stage || latestValidation?.stages[0]?.stage || '');
     } catch {
+      if (activeProjectIdRef.current !== projectId || selectedPageIdRef.current !== pageId) return;
       setRuntimeValidation(null);
       setActiveRuntimeStage('');
     }
     try {
-      setRuntimeValidationHistory(await DataService.listMangaRuntimeValidationHistory(projectId, pageId));
+      const history = await DataService.listMangaRuntimeValidationHistory(projectId, pageId);
+      if (activeProjectIdRef.current !== projectId || selectedPageIdRef.current !== pageId) return;
+      setRuntimeValidationHistory(history);
     } catch {
+      if (activeProjectIdRef.current !== projectId || selectedPageIdRef.current !== pageId) return;
       setRuntimeValidationHistory([]);
     }
   };
 
+  const loadPage = async (projectId: string, pageId: string) => {
+    if (!pageId) return;
+    const loadSeq = pageLoadSeqRef.current + 1;
+    pageLoadSeqRef.current = loadSeq;
+    selectedPageIdRef.current = pageId;
+    setSelectedPageId(pageId);
+    setRuntimeValidation(null);
+    setRuntimeValidationDiff(null);
+    setRuntimeValidationHistory([]);
+    setActiveRuntimeStage('');
+    setScene((current) => (current ? { ...current, current_page_id: pageId } : current));
+
+    const cachedDetail = getCachedPageDetail(projectId, pageId);
+    if (cachedDetail) {
+      setLoadingPageId('');
+      setPage(cachedDetail);
+      setDraftsFromPage(cachedDetail);
+      void refreshPageDiagnostics(projectId, pageId);
+      schedulePagePreload(projectId, pageId);
+      return;
+    }
+
+    setLoadingPageId(pageId);
+    setPage((current) => (current?.page_id === pageId ? current : null));
+    setBlockDrafts({});
+    setActiveBlockId('');
+    try {
+      const detail = await DataService.getMangaPage(projectId, pageId, { diagnostics: false });
+      if (pageLoadSeqRef.current !== loadSeq || activeProjectIdRef.current !== projectId) return;
+      cachePageDetail(projectId, detail);
+      setPage(detail);
+      setLoadingPageId((current) => (current === pageId ? '' : current));
+      setDraftsFromPage(detail);
+      void refreshPageDiagnostics(projectId, pageId);
+      schedulePagePreload(projectId, pageId);
+    } finally {
+      setLoadingPageId((current) => (current === pageId && pageLoadSeqRef.current === loadSeq ? '' : current));
+    }
+  };
+
   const refreshScene = async (projectId: string) => {
-    const sceneSummary = await DataService.getMangaScene(projectId);
+    const sceneSummary = await DataService.getMangaScene(projectId, { runtime: false });
+    scenePagesRef.current = sceneSummary.pages;
     setScene(sceneSummary);
     return sceneSummary;
   };
@@ -620,19 +807,39 @@ export const MangaEditor: React.FC = () => {
   const refreshCurrentPage = async (projectId: string, pageId?: string) => {
     const targetPageId = pageId || selectedPageId || scene?.current_page_id || '';
     if (!targetPageId) return;
+    invalidateCachedPage(projectId, targetPageId);
     await loadPage(projectId, targetPageId);
   };
 
-  const syncProjectState = async (projectId: string, preferredPageId?: string) => {
-    const nextScene = await refreshScene(projectId);
-    const nextPageId = preferredPageId || nextScene.current_page_id || nextScene.pages[0]?.page_id || '';
-    if (nextPageId) {
-      await loadPage(projectId, nextPageId);
-    } else {
-      setPage(null);
-      setSelectedPageId('');
-      setActiveBlockId('');
+  const hydrateProjectRuntimeState = async (projectId: string) => {
+    try {
+      const runtimeStatus = await DataService.getMangaRuntimeStatus(projectId);
+      setScene((current) => (
+        current
+          ? {
+              ...current,
+              engines: runtimeStatus.engines,
+              runtime_readiness: runtimeStatus.runtime_readiness,
+            }
+          : current
+      ));
+    } catch {
+      // The editor can continue with the lightweight project manifest; page detail actions will surface concrete errors.
     }
+  };
+
+  const syncProjectState = async (projectId: string, preferredPageId?: string) => {
+      const nextScene = await refreshScene(projectId);
+      const nextPageId = preferredPageId || nextScene.current_page_id || nextScene.pages[0]?.page_id || '';
+      if (nextPageId) {
+        invalidateCachedPage(projectId, nextPageId);
+        await loadPage(projectId, nextPageId);
+      } else {
+        setPage(null);
+        setSelectedPageId('');
+        setLoadingPageId('');
+        setActiveBlockId('');
+      }
   };
 
   const waitForJob = async (
@@ -740,12 +947,21 @@ export const MangaEditor: React.FC = () => {
     setIsLoading(true);
     try {
       const opened = await DataService.openMangaProject(nextPath);
-      const sceneSummary = await DataService.getMangaScene(opened.project_id);
+      resetPagePreloadState(opened.project_id);
+      const sceneSummary = opened.scene || await DataService.getMangaScene(opened.project_id, { quality: false, runtime: false });
+      scenePagesRef.current = sceneSummary.pages;
       setProject(opened);
       setScene(sceneSummary);
       setSelectedPageIds([]);
       setActiveJob(null);
       setActiveBlockId('');
+      setPage(null);
+      setLoadingPageId('');
+      setRuntimeValidation(null);
+      setRuntimeValidationDiff(null);
+      setRuntimeValidationHistory([]);
+      setActiveRuntimeStage('');
+      setBlockDrafts({});
       setRecentProjectPaths(rememberRecentProjectPath(nextPath));
       void refreshFontCatalog(opened.project_id);
 
@@ -756,11 +972,15 @@ export const MangaEditor: React.FC = () => {
           : sceneSummary.current_page_id || sceneSummary.pages[0]?.page_id || ''
       );
       if (firstPageId) {
-        await loadPage(opened.project_id, firstPageId);
+        setSelectedPageId(firstPageId);
+        setScene((current) => (current ? { ...current, current_page_id: firstPageId } : current));
+        void loadPage(opened.project_id, firstPageId);
       } else {
         setPage(null);
         setSelectedPageId('');
+        setLoadingPageId('');
       }
+      void hydrateProjectRuntimeState(opened.project_id);
       void refreshOpenProjects();
     } catch (err: any) {
       setError(err.message || t('manga_error_open_project_failed'));
@@ -783,9 +1003,12 @@ export const MangaEditor: React.FC = () => {
       if (options?.syncDraftsBefore) {
         await applyDraftChanges(true);
       }
-      const job = await runner(project.project_id, selectedPageId);
+      const targetPageId = selectedPageId;
+      invalidateCachedPage(project.project_id, targetPageId);
+      const job = await runner(project.project_id, targetPageId);
       const settled = await waitForJob(project.project_id, job);
-      await syncProjectState(project.project_id, selectedPageId);
+      invalidateCachedPage(project.project_id, targetPageId);
+      await syncProjectState(project.project_id, targetPageId);
       if (options?.nextViewMode) {
         setViewMode(options.nextViewMode);
       }
@@ -963,8 +1186,10 @@ export const MangaEditor: React.FC = () => {
     }
 
     await withBusyAction('translate selected pages', async () => {
+      invalidateCachedPages(project.project_id, pageIds);
       const job = await DataService.translateSelectedMangaPages(project.project_id, pageIds);
       const settled = await waitForJob(project.project_id, job);
+      invalidateCachedPages(project.project_id, pageIds);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('overlay');
       showNotice(settled.status === 'completed' ? 'success' : 'warning', formatJobMessage(settled, t));
@@ -981,11 +1206,13 @@ export const MangaEditor: React.FC = () => {
     }
 
     await withBusyAction('first pass selected pages', async () => {
+      invalidateCachedPages(project.project_id, pageIds);
       const job = await DataService.translateSelectedMangaPages(project.project_id, pageIds, {
         autoInpaint: true,
         autoRender: true,
       });
       const settled = await waitForJob(project.project_id, job);
+      invalidateCachedPages(project.project_id, pageIds);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('rendered');
       const settledMessage = formatJobMessage(settled, t);
@@ -1022,8 +1249,10 @@ export const MangaEditor: React.FC = () => {
     }
 
     await withBusyAction('plan selected pages', async () => {
+      invalidateCachedPages(project.project_id, pageIds);
       const job = await DataService.planSelectedMangaPages(project.project_id, pageIds);
       const settled = await waitForJob(project.project_id, job);
+      invalidateCachedPages(project.project_id, pageIds);
       await syncProjectState(project.project_id, selectedPageId || pageIds[0]);
       setViewMode('overlay');
       showNotice(settled.status === 'completed' ? 'success' : 'warning', formatJobMessage(settled, t));
@@ -1045,12 +1274,15 @@ export const MangaEditor: React.FC = () => {
       showNotice('warning', t('manga_notice_save_before_switch'));
       return;
     }
+    resetPagePreloadState('');
     setProject(null);
     setScene(null);
     setPage(null);
     setSelectedPageId('');
+    setLoadingPageId('');
     setSelectedPageIds([]);
     setActiveBlockId('');
+    setBlockDrafts({});
     setActiveJob(null);
     setRuntimeValidation(null);
     setRuntimeValidationHistory([]);
@@ -1157,6 +1389,7 @@ export const MangaEditor: React.FC = () => {
 
     await withBusyAction('undo', async () => {
       const result = await DataService.undoMangaOps(project.project_id);
+      resetPagePreloadState(project.project_id);
       await syncProjectState(project.project_id, page.page_id);
       showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? t('manga_notice_undo_applied') : t('manga_notice_nothing_to_undo')));
     });
@@ -1167,6 +1400,7 @@ export const MangaEditor: React.FC = () => {
 
     await withBusyAction('redo', async () => {
       const result = await DataService.redoMangaOps(project.project_id);
+      resetPagePreloadState(project.project_id);
       await syncProjectState(project.project_id, page.page_id);
       showNotice(result.ok ? 'success' : 'warning', result.message || (result.ok ? t('manga_notice_redo_applied') : t('manga_notice_nothing_to_redo')));
     });
@@ -1461,12 +1695,14 @@ export const MangaEditor: React.FC = () => {
           selectedPageId={selectedPageId}
           selectedPageIds={selectedPageIds}
           currentPageId={scene?.current_page_id || ''}
+          loadingPageId={page?.page_id === loadingPageId ? '' : loadingPageId}
           onSelectPage={(pageId) => { if (project) void loadPage(project.project_id, pageId); }}
           onTogglePageSelection={togglePageSelection}
         />
 
         <MangaCanvas
           page={page}
+          isPageLoading={Boolean(loadingPageId && !page)}
           currentImageUrl={currentImageUrl}
           viewMode={viewMode}
           activeBlockId={activeBlockId}

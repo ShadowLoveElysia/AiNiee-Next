@@ -750,7 +750,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
         )}
 
         {runtimeValidation && (detectRegions.length > 0 || ocrSeeds.length > 0) && (
-          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38" open={activeRuntimeStage === 'detect' || activeRuntimeStage === 'ocr'}>
+          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <span>{t('manga_detect_ocr_matches')}</span>
               <span className="flex items-center gap-2">
@@ -850,7 +850,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
         )}
 
         {runtimeValidation && ocrSeeds.length > 0 && (
-          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38" open={activeRuntimeStage === 'ocr'}>
+          <details className="group mt-3 rounded-lg border border-slate-800 bg-slate-950/38">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <span>{t('manga_ocr_seed_browser')}</span>
               <span className="flex items-center gap-2">
@@ -936,7 +936,6 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
         <InspectorSection
           title={t('manga_validation_stages')}
           meta={t('manga_validation_stage_count', runtimeValidation.stages.length)}
-          defaultOpen={!runtimeValidation.ok}
         >
           <div className="space-y-2">
             {runtimeValidation.stages.map((stage) => {
@@ -1098,7 +1097,6 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
       <InspectorSection
         title={t('manga_panel_engine_status')}
         meta={missingEngineCount > 0 ? t('manga_engine_missing_count', missingEngineCount) : t('manga_engine_all_ready')}
-        defaultOpen={missingEngineCount > 0}
       >
         <div className="grid gap-2">
           {engineCards.length === 0 && (
@@ -1240,7 +1238,6 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
       <InspectorSection
         title={t('manga_panel_active_block')}
         meta={activeBlock ? activeBlock.block_id : t('manga_active_block_empty')}
-        defaultOpen={Boolean(activeBlock)}
       >
         {!activeBlock ? (
           <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/38 px-3 py-4 text-sm text-slate-500">
@@ -1300,7 +1297,7 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
               </div>
             </details>
 
-            <details className="group rounded-lg border border-slate-800 bg-slate-950/42" open={Boolean(sourceCharSize || activeBlockRenderPlan)}>
+            <details className="group rounded-lg border border-slate-800 bg-slate-950/42">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 <span>{t('manga_source_metrics')}</span>
                 <span className="flex items-center gap-2">

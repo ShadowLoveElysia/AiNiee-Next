@@ -103,16 +103,21 @@ def capture_page_assets_operation(
 
 
 def _restore_page_assets(session: MangaProjectSession, op: Operation) -> int:
+    touched_page = False
     page_state = op.payload.get("page_state")
     if isinstance(page_state, dict):
         page = session.get_page(op.page_id)
         if "status" in page_state:
             page.status = str(page_state["status"])
+            touched_page = True
         if "last_pipeline_stage" in page_state:
             page.last_pipeline_stage = str(page_state["last_pipeline_stage"])
+            touched_page = True
 
     assets = op.payload.get("assets")
     if not isinstance(assets, list):
+        if touched_page:
+            session.mark_page_dirty(op.page_id)
         return 1
 
     restored = 0
@@ -134,6 +139,8 @@ def _restore_page_assets(session: MangaProjectSession, op: Operation) -> int:
         target.write_bytes(base64.b64decode(content_b64.encode("ascii")))
         restored += 1
 
+    if touched_page:
+        session.mark_page_dirty(op.page_id)
     return max(1, restored)
 
 
@@ -185,24 +192,28 @@ def _apply_without_history(session: MangaProjectSession, op: Operation) -> int:
         for key, value in op.patch.items():
             _set_nested(block, key, value)
         session.get_page(op.page_id).status = "edited"
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "UpdatePage":
         page = session.get_page(op.page_id)
         for key, value in op.patch.items():
             _set_nested(page, key, value)
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "UpdateLayer":
         page = session.get_page(op.page_id)
         for key, value in op.patch.items():
             _set_nested(page.layers, key, value)
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "UpdateMask":
         page = session.get_page(op.page_id)
         for key, value in op.patch.items():
             _set_nested(page.masks, key, value)
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "AddTextBlock":
@@ -212,12 +223,14 @@ def _apply_without_history(session: MangaProjectSession, op: Operation) -> int:
         page = session.get_page(op.page_id)
         page.text_blocks.append(MangaTextBlock.from_dict(block_payload))
         page.status = "edited"
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "RemoveTextBlock":
         page = session.get_page(op.page_id)
         page.text_blocks = [block for block in page.text_blocks if block.block_id != op.block_id]
         page.status = "edited"
+        session.mark_page_dirty(op.page_id)
         return 1
 
     if op.type == "RestorePageAssets":

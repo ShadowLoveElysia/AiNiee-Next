@@ -12,7 +12,7 @@ class ImageExporter:
         target_dir = session.output_root / "final" / "pages"
         target_dir.mkdir(parents=True, exist_ok=True)
         exported = 0
-        for page in session.pages.values():
+        for page in session.iter_pages():
             blocked, _reasons = page_blocked_from_final(session, page)
             if blocked:
                 output_path = target_dir / f"{page.index:04d}.png"
