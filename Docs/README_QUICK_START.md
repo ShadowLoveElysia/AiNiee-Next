@@ -3,6 +3,7 @@
 本教程按 `README_IMG` 中的截图编号编写，适合第一次使用 AiNiee-Next 的用户快速完成：下载项目、准备环境、配置 DeepSeek API、调整项目设置、选择提示词并开始翻译。
 
 > 示例环境为 Windows + DeepSeek。其他在线 API 的入口类似，但 API Key、模型名称、API 地址和 SDK 兼容性设置请以对应平台要求为准。
+> 这里选择 DeepSeek 做示范，主要是因为它价格便宜、效果够用、速度和稳定性也比较适合新手入门。它不是唯一选择；熟悉流程后，你也可以换成 OpenAI、Claude、Gemini 或其他兼容平台。
 
 ## 开始前：为什么本教程先教 CLI/TUI，而不是 WebUI
 

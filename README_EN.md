@@ -105,6 +105,8 @@ The screenshot below demonstrates a ~20,000 line file being translated in approx
 
 ## Quick Start
 
+> New users should start with the text guide: [AiNiee-Next Text Quick Start Guide](Docs/README_QUICK_START_EN.md). If you do not have an API key yet, read: [DeepSeek API Key Guide](Docs/DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read: [Prompt, Glossary, Polishing, and Advanced Settings Guide](Docs/TRANSLATION_WORKFLOW_GUIDE_EN.md).
+
 ### Method 1: One-Click Launch (Recommended)
 
 **1. Get the Code**
