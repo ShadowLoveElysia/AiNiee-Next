@@ -16,6 +16,11 @@ from ModuleFolders.MangaCore.render.textNormalize import normalize_manga_dialogu
 ROTATE_CLOCKWISE_VERTICAL_CHARS = frozenset("-‐‑‒–—―~～〜…·・ー")
 SOURCE_FONT_SCALE_TOO_SMALL = 0.65
 SOURCE_FONT_SCALE_TOO_LARGE = 1.35
+FIT_SCORE_FONT_WEIGHT = 8.0
+FIT_SCORE_EXTRA_LINE_PENALTY = 18.0
+FIT_SCORE_EXTRA_COLUMN_PENALTY = 16.0
+FIT_SCORE_SOURCE_SIZE_PENALTY = 5.0
+FIT_SCORE_CONFIGURED_SIZE_PENALTY = 0.35
 
 
 def _resolve_base_layer(session: MangaProjectSession, page: MangaPage, preset: str) -> Path:
@@ -125,15 +130,19 @@ class MangaRenderer:
         min_size = max(10, min(22, int(base_size * 0.58)))
         font_unavailable = self._requested_font_unavailable(block)
 
-        last_font = load_font(
-            size=base_size,
-            font_id=getattr(block.style, "font_id", ""),
-            font_family=block.style.font_family,
-            font_prediction=block.font_prediction,
-            project_path=self._project_path,
-        )
+        best_font = None
+        best_plan: LayoutPlan | None = None
+        first_fit_plan: LayoutPlan | None = None
+        candidate_summaries: list[dict[str, object]] = []
+        last_font = None
         last_plan: LayoutPlan | None = None
-        for size in range(base_size, min_size - 1, -2):
+        for size in _candidate_font_sizes(
+            base_size=base_size,
+            min_size=min_size,
+            initial_size=initial_size,
+            source_char_size=_source_char_size_from_block(block),
+            direction=block.rendered_direction,
+        ):
             font = load_font(
                 size=size,
                 font_id=getattr(block.style, "font_id", ""),
@@ -154,15 +163,37 @@ class MangaRenderer:
                 direction=block.rendered_direction,
                 allow_truncate=False,
             )
+            plan.initial_font_size = initial_size
             if plan.fit_ok:
-                plan.initial_font_size = initial_size
-                if font_unavailable:
-                    plan.warnings = sorted({*plan.warnings, "font_unavailable"})
-                    plan.fit_ok = False
-                return font, plan
+                plan.score = _score_layout_fit_candidate(plan, block, initial_size)
+                if first_fit_plan is None:
+                    first_fit_plan = plan
+                if best_plan is None or plan.score > best_plan.score:
+                    best_font = font
+                    best_plan = plan
+            candidate_summaries.append(_layout_candidate_summary(plan))
             last_font = font
             last_plan = plan
 
+        if best_plan is not None and best_font is not None:
+            best_plan.diagnostics = _layout_candidate_diagnostics(
+                selected_plan=best_plan,
+                first_fit_plan=first_fit_plan,
+                candidate_summaries=candidate_summaries,
+            )
+            if font_unavailable:
+                best_plan.warnings = sorted({*best_plan.warnings, "font_unavailable"})
+                best_plan.fit_ok = False
+            return best_font, best_plan
+
+        if last_font is None:
+            last_font = load_font(
+                size=base_size,
+                font_id=getattr(block.style, "font_id", ""),
+                font_family=block.style.font_family,
+                font_prediction=block.font_prediction,
+                project_path=self._project_path,
+            )
         fallback_plan = build_layout_plan(
             draw=draw,
             block_id=block.block_id,
@@ -185,6 +216,12 @@ class MangaRenderer:
             fallback_plan.warnings = sorted({*fallback_plan.warnings, "font_unavailable"})
             fallback_plan.fit_ok = False
         fallback_plan.initial_font_size = initial_size
+        fallback_plan.score = _score_layout_fit_candidate(fallback_plan, block, initial_size)
+        fallback_plan.diagnostics = _layout_candidate_diagnostics(
+            selected_plan=fallback_plan,
+            first_fit_plan=first_fit_plan,
+            candidate_summaries=candidate_summaries,
+        )
         return last_font, fallback_plan
 
     def _requested_font_unavailable(self, block) -> bool:
@@ -253,6 +290,141 @@ class MangaRenderer:
         plan.warnings = sorted(warnings)
         if "font_scaled_too_small" in warnings or "font_scaled_too_large" in warnings:
             plan.fit_ok = False
+
+
+def _candidate_font_sizes(
+    *,
+    base_size: int,
+    min_size: int,
+    initial_size: int,
+    source_char_size: int,
+    direction: str,
+) -> list[int]:
+    sizes = set(range(max(base_size, min_size), min_size - 1, -2))
+    sizes.add(max(min_size, base_size))
+    sizes.add(max(min_size, initial_size))
+    sizes.add(min_size)
+    if source_char_size > 0:
+        source_target = int(source_char_size * (0.95 if direction == "vertical" else 0.92))
+        for delta in (-2, 0, 2):
+            sizes.add(max(min_size, min(base_size, source_target + delta)))
+    return sorted((size for size in sizes if min_size <= size <= max(base_size, min_size)), reverse=True)
+
+
+def _score_layout_fit_candidate(plan: LayoutPlan, block, initial_size: int) -> float:
+    if not plan.runs:
+        return -100000.0
+
+    score = float(plan.font_size) * FIT_SCORE_FONT_WEIGHT
+    source_char_size = _source_char_size_from_block(block)
+    if source_char_size > 0:
+        target_size = float(source_char_size) * (0.95 if plan.direction == "vertical" else 0.92)
+        score -= abs(float(plan.font_size) - target_size) * FIT_SCORE_SOURCE_SIZE_PENALTY
+    else:
+        score -= abs(float(plan.font_size) - float(initial_size)) * FIT_SCORE_CONFIGURED_SIZE_PENALTY
+
+    if plan.direction == "vertical":
+        score -= max(0, _layout_column_count(plan) - 1) * FIT_SCORE_EXTRA_COLUMN_PENALTY
+        score -= _vertical_column_imbalance(plan) * 1.5
+    else:
+        score -= max(0, len(plan.runs) - 1) * FIT_SCORE_EXTRA_LINE_PENALTY
+        score -= _short_terminal_run_penalty(plan)
+
+    if not plan.fit_ok:
+        score -= 10000.0
+    return round(score, 4)
+
+
+def _layout_candidate_summary(plan: LayoutPlan) -> dict[str, object]:
+    return {
+        "font_size": plan.font_size,
+        "fit_ok": plan.fit_ok,
+        "score": plan.score,
+        "run_count": len(plan.runs),
+        "column_count": _layout_column_count(plan) if plan.direction == "vertical" else 0,
+        "warnings": list(plan.warnings),
+    }
+
+
+def _layout_candidate_diagnostics(
+    *,
+    selected_plan: LayoutPlan,
+    first_fit_plan: LayoutPlan | None,
+    candidate_summaries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    diagnostics: list[dict[str, object]] = []
+    fit_candidate_count = sum(1 for candidate in candidate_summaries if bool(candidate.get("fit_ok")))
+
+    if not selected_plan.fit_ok:
+        diagnostics.append(
+            {
+                "code": "layout_fit_failed",
+                "severity": "warning",
+                "message": "当前文本块没有找到完全适配的字号候选。",
+                "selected_font_size": selected_plan.font_size,
+                "candidate_count": len(candidate_summaries),
+                "fit_candidate_count": fit_candidate_count,
+            }
+        )
+
+    if (
+        first_fit_plan is not None
+        and selected_plan.fit_ok
+        and selected_plan.font_size != first_fit_plan.font_size
+    ):
+        diagnostics.append(
+            {
+                "code": "layout_candidate_score_overrode_first_fit",
+                "severity": "info",
+                "message": "排版评分选择了更自然的断行字号，而不是第一个可适配字号。",
+                "first_fit_font_size": first_fit_plan.font_size,
+                "selected_font_size": selected_plan.font_size,
+                "first_fit_run_count": len(first_fit_plan.runs),
+                "selected_run_count": len(selected_plan.runs),
+                "selected_score": selected_plan.score,
+                "candidate_count": len(candidate_summaries),
+                "fit_candidate_count": fit_candidate_count,
+            }
+        )
+
+    if selected_plan.warnings:
+        diagnostics.append(
+            {
+                "code": "layout_warnings_present",
+                "severity": "warning",
+                "message": "当前文本块存在排版警告。",
+                "warnings": list(selected_plan.warnings),
+            }
+        )
+
+    return diagnostics
+
+
+def _layout_column_count(plan: LayoutPlan) -> int:
+    return len({run.x for run in plan.runs}) if plan.runs else 0
+
+
+def _vertical_column_imbalance(plan: LayoutPlan) -> int:
+    counts: dict[int, int] = {}
+    for run in plan.runs:
+        counts[run.x] = counts.get(run.x, 0) + 1
+    if len(counts) <= 1:
+        return 0
+    values = list(counts.values())
+    return max(values) - min(values)
+
+
+def _short_terminal_run_penalty(plan: LayoutPlan) -> float:
+    if len(plan.runs) <= 1:
+        return 0.0
+    last_text = str(plan.runs[-1].text or "").strip()
+    if not last_text:
+        return 0.0
+    if len(last_text) == 1:
+        return 14.0
+    if len(last_text) == 2:
+        return 4.0
+    return 0.0
 
 
 def _merge_layout_flags(flags: list[str], plan: LayoutPlan) -> list[str]:

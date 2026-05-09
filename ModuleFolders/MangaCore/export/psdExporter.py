@@ -21,6 +21,7 @@ from ModuleFolders.MangaCore.render.textNormalize import normalize_manga_dialogu
 
 
 PHOTOSHOP_TIMEOUT_SECONDS = 30 * 60
+PSD_STABLE_CHECKS = 3
 
 
 @dataclass(slots=True)
@@ -405,6 +406,8 @@ def _run_photoshop_script(
 
     started_at = time.monotonic()
     last_progress_at = 0.0
+    stable_state: tuple[int, float] | None = None
+    stable_checks = 0
     deadline = time.monotonic() + PHOTOSHOP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_cancel and should_cancel():
@@ -424,11 +427,27 @@ def _run_photoshop_script(
                     "progress": int(payload.get("progress") or 0),
                     "message": payload.get("message") or "Photoshop is generating the PSD.",
                     "elapsed_seconds": int(elapsed),
+                    "psd_detected": stable_state is not None,
+                    "stable_check_count": stable_checks,
+                    "stable_check_target": PSD_STABLE_CHECKS,
+                    "observed_output_size": stable_state[0] if stable_state else 0,
                 }
             )
             progress_callback(payload)
-        if output_path.exists() and output_path.stat().st_size > 0 and output_path.stat().st_mtime > old_mtime:
-            return True, ""
+        if output_path.exists():
+            stat = output_path.stat()
+            current_state = (stat.st_size, stat.st_mtime)
+            if stat.st_size > 0 and stat.st_mtime > old_mtime:
+                if current_state == stable_state:
+                    stable_checks += 1
+                else:
+                    stable_state = current_state
+                    stable_checks = 1
+                if stable_checks >= PSD_STABLE_CHECKS:
+                    return True, ""
+            else:
+                stable_state = None
+                stable_checks = 0
         time.sleep(0.5)
     return False, f"Photoshop PSD export timed out after {PHOTOSHOP_TIMEOUT_SECONDS} seconds."
 

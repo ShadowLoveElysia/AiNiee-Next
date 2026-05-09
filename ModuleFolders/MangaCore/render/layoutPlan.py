@@ -29,6 +29,7 @@ class LayoutPlan:
     fit_ok: bool = True
     score: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    diagnostics: list[dict[str, object]] = field(default_factory=list)
     source_char_size_px: int = 0
     source_char_size_confidence: float = 0.0
     initial_font_size: int = 0
@@ -47,6 +48,7 @@ class LayoutPlan:
             "fit_ok": self.fit_ok,
             "score": self.score,
             "warnings": list(self.warnings),
+            "diagnostics": list(self.diagnostics),
             "source_char_size_px": self.source_char_size_px,
             "source_char_size_confidence": self.source_char_size_confidence,
             "initial_font_size": self.initial_font_size,

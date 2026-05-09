@@ -306,6 +306,15 @@ const formatQualityIssue = (
   return String(issue?.message || issue?.code || '').trim();
 };
 
+const formatLayoutDiagnostic = (diagnostic: any) => {
+  if (!diagnostic || typeof diagnostic !== 'object') return '';
+  const message = String(diagnostic.message || diagnostic.code || '').trim();
+  const warnings = Array.isArray(diagnostic.warnings)
+    ? diagnostic.warnings.map((warning: any) => String(warning || '').trim()).filter(Boolean).join(', ')
+    : '';
+  return warnings ? `${message}: ${warnings}` : message;
+};
+
 const formatI18nPayload = (
   key: string | undefined,
   args: any[] | undefined,
@@ -397,6 +406,8 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
     return getRenderLayoutPlans(qualityGate).find((plan) => plan?.block_id === activeBlock.block_id) || null;
   }, [activeBlock, qualityGate]);
   const activeBlockRenderWarnings = Array.isArray(activeBlockRenderPlan?.warnings) ? activeBlockRenderPlan.warnings : [];
+  const activeBlockRenderDiagnostics = Array.isArray(activeBlockRenderPlan?.diagnostics) ? activeBlockRenderPlan.diagnostics : [];
+  const activeBlockDiagnosticTexts = activeBlockRenderDiagnostics.map(formatLayoutDiagnostic).filter(Boolean);
   const sourceCharSize = activeBlockSourceMetrics.source_char_size_px ?? activeBlockRenderPlan?.source_char_size_px;
   const sourceCharConfidence = activeBlockSourceMetrics.source_char_size_confidence ?? activeBlockRenderPlan?.source_char_size_confidence;
   const sourceCharMethod = activeBlockSourceMetrics.source_char_size_method || '-';
@@ -1330,6 +1341,16 @@ export const MangaInspector: React.FC<MangaInspectorProps> = ({
                   <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-2.5 py-2">
                     <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-100">{t('manga_layout_warnings')}</div>
                     <div className="mt-1 text-xs text-amber-50">{activeBlockRenderWarnings.join(', ')}</div>
+                  </div>
+                )}
+                {activeBlockDiagnosticTexts.length > 0 && (
+                  <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-100">{t('manga_layout_diagnostics')}</div>
+                    <div className="mt-1 space-y-1 text-xs text-cyan-50">
+                      {activeBlockDiagnosticTexts.map((text, index) => (
+                        <div key={`${text}-${index}`}>{text}</div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

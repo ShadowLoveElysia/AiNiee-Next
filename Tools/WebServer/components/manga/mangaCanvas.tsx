@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, MousePointer2, Paintbrush, RotateCcw, SquareDashedMousePointer, Type } from 'lucide-react';
+import { AlertTriangle, Loader2, MousePointer2, Paintbrush, RotateCcw, SquareDashedMousePointer, Type } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaPageDetail } from '../../types/manga';
@@ -61,6 +61,13 @@ interface MangaRenderLayoutRun {
   rotate_clockwise?: boolean;
 }
 
+interface MangaRenderLayoutDiagnostic {
+  code?: string;
+  severity?: string;
+  message?: string;
+  warnings?: string[];
+}
+
 interface MangaRenderLayoutPlan {
   block_id?: string;
   direction?: string;
@@ -68,6 +75,8 @@ interface MangaRenderLayoutPlan {
   font_family?: string;
   font_size?: number;
   line_spacing?: number;
+  warnings?: string[];
+  diagnostics?: MangaRenderLayoutDiagnostic[];
   runs?: MangaRenderLayoutRun[];
 }
 
@@ -209,6 +218,25 @@ const normalizePreviewText = (value: string) => value.replace(/\s+/g, '').trim()
 const getRenderLayoutPlans = (page: MangaPageDetail | null) => {
   const plans = page?.quality_gate?.stage_modes?.render?.layout_plans;
   return Array.isArray(plans) ? plans as MangaRenderLayoutPlan[] : [];
+};
+
+const buildLayoutIssueTexts = (plan: MangaRenderLayoutPlan | undefined) => {
+  if (!plan) return [];
+  const warnings = Array.isArray(plan.warnings)
+    ? plan.warnings.map((warning) => String(warning || '').trim()).filter(Boolean)
+    : [];
+  const diagnostics = Array.isArray(plan.diagnostics)
+    ? plan.diagnostics
+        .map((diagnostic) => {
+          const message = String(diagnostic?.message || diagnostic?.code || '').trim();
+          const nestedWarnings = Array.isArray(diagnostic?.warnings)
+            ? diagnostic.warnings.map((warning) => String(warning || '').trim()).filter(Boolean).join(', ')
+            : '';
+          return nestedWarnings ? `${message}: ${nestedWarnings}` : message;
+        })
+        .filter(Boolean)
+    : [];
+  return Array.from(new Set([...warnings, ...diagnostics])).slice(0, 4);
 };
 
 const isDraftDirtyForPreview = (
@@ -1167,6 +1195,7 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                   const centeredPreviewTextStyle = buildBlockPreviewTextStyle(block, draft);
                   const previewText = translation || sourceText || block.block_id;
                   const renderPlan = renderLayoutPlanByBlockId.get(block.block_id);
+                  const layoutIssueTexts = buildLayoutIssueTexts(renderPlan);
                   const draftChanged = isDraftDirtyForPreview(block, draft);
                   const draftBboxChanged = draft ? !areBboxesEqual(draft.bbox, block.bbox) : false;
                   const canUseRenderPlanPreview = (
@@ -1203,6 +1232,15 @@ export const MangaCanvas: React.FC<MangaCanvasProps> = ({
                       }}
                       title={`${block.block_id} | ${overlayLabel}`}
                     >
+                      {layoutIssueTexts.length > 0 && (
+                        <span
+                          title={layoutIssueTexts.join('\n')}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          className="absolute right-1 top-1 z-20 flex h-5 w-5 items-center justify-center rounded-full border border-amber-200/60 bg-slate-950/88 text-amber-200 shadow-lg shadow-slate-950/35"
+                        >
+                          <AlertTriangle size={12} strokeWidth={2.4} />
+                        </span>
+                      )}
                       <span className="absolute -top-7 left-0 max-w-full truncate rounded-md bg-slate-950/85 px-2 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-100">
                         {overlayLabel}
                       </span>

@@ -1694,6 +1694,9 @@ export const MangaEditor: React.FC = () => {
   const psdExportOutputTargetCount = Number(psdExportProgressPayload.output_target_count || psdExportProgressPageCount || psdScopePageCount || 0);
   const psdExportOutputFailedCount = Number(psdExportProgressPayload.output_failed_count || 0);
   const psdExportElapsedSeconds = Number(psdExportProgressPayload.elapsed_seconds || 0);
+  const psdExportPsdDetected = Boolean(psdExportProgressPayload.psd_detected);
+  const psdExportStableCheckCount = Number(psdExportProgressPayload.stable_check_count || 0);
+  const psdExportStableCheckTarget = Number(psdExportProgressPayload.stable_check_target || 0);
   const psdExportOutputProgressText = psdExportOutputTargetCount > 0
     ? t('manga_psd_export_generated_progress', psdExportOutputCount, psdExportOutputTargetCount, psdExportOutputKind)
     : '';
@@ -1741,7 +1744,9 @@ export const MangaEditor: React.FC = () => {
         ? t('manga_psd_export_cancelled')
         : psdExportProgressStage === 'psd_export_photoshop'
           ? [
-              t('manga_psd_export_waiting_for_psd', psdExportElapsedSeconds),
+              psdExportPsdDetected && psdExportStableCheckTarget > 0
+                ? t('manga_psd_export_verifying_psd', psdExportStableCheckCount, psdExportStableCheckTarget)
+                : t('manga_psd_export_waiting_for_psd', psdExportElapsedSeconds),
               psdExportAttemptDetail,
             ].filter(Boolean).join(' · ')
           : psdExportAttemptDetail
