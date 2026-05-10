@@ -180,6 +180,11 @@ export interface MangaModelPackageStatus {
   source_url?: string;
   description?: string;
   runtime_notes?: string[];
+  aliases?: string[];
+  hardware_tier?: string;
+  quality_tier?: string;
+  recommended_for?: string[];
+  cautions?: string[];
   available?: boolean;
   storage_root?: string;
   cache_dir?: string;
@@ -189,6 +194,31 @@ export interface MangaModelPackageStatus {
   runtime_supported?: boolean;
   runtime_assets_path?: string;
   runtime_engine_id?: string;
+}
+
+export interface MangaModelPresetStatus {
+  preset_id: string;
+  display_name: string;
+  description: string;
+  hardware_tier: string;
+  quality_tier: string;
+  effect_label: string;
+  model_ids: string[];
+  config_overrides?: Record<string, string>;
+  recommended_for?: string[];
+  cautions?: string[];
+  models?: MangaModelPackageStatus[];
+  available_model_ids?: string[];
+  missing_model_ids?: string[];
+  available?: boolean;
+  missing_count?: number;
+  model_count?: number;
+}
+
+export interface MangaModelManagerManifest {
+  default_ocr_model_id: string;
+  presets: MangaModelPresetStatus[];
+  models: MangaModelPackageStatus[];
 }
 
 export interface MangaRuntimeDeviceStatus {

@@ -5,6 +5,24 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_DEFAULT_OCR_MODEL_ID = "mit48px-ocr"
+_FALLBACK_MODEL_ALIASES = {
+    "48px": "mit48px-ocr",
+    "mocr": "manga-ocr",
+    "manga_ocr": "manga-ocr",
+    "paddleocr-vl": "paddleocr-vl-1.5",
+    "paddleocr_vl": "paddleocr-vl-1.5",
+}
+
+
+def _normalize_model_id(model_id: str | None) -> str:
+    try:
+        from ModuleFolders.MangaCore.pipeline.modelCatalog import normalize_model_id
+    except Exception:
+        key = str(model_id or "").strip()
+        return _FALLBACK_MODEL_ALIASES.get(key, key)
+    return normalize_model_id(model_id)
+
 
 @dataclass(slots=True)
 class MangaFeatureStatus:
@@ -45,7 +63,7 @@ def _resolve_required_model_ids(config_snapshot: dict[str, object] | None = None
     return {
         "detect": str(snapshot.get("manga_detect_engine") or "comic-text-bubble-detector"),
         "segment": str(snapshot.get("manga_segment_engine") or "comic-text-detector"),
-        "ocr": str(snapshot.get("manga_ocr_engine") or "paddleocr-vl-1.5"),
+        "ocr": _normalize_model_id(str(snapshot.get("manga_ocr_engine") or _DEFAULT_OCR_MODEL_ID)),
         "inpaint": str(snapshot.get("manga_inpaint_engine") or "aot-inpainting"),
     }
 

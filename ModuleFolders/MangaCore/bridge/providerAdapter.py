@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageChops
 
+from ModuleFolders.MangaCore.pipeline.modelCatalog import DEFAULT_OCR_MODEL_ID, normalize_model_id
 from ModuleFolders.MangaCore.render.bubbleAssign import TextSeed
 
 
@@ -121,6 +122,18 @@ class RuntimeDeviceStatus:
 
 
 _OCR_RUNTIME_SPECS: dict[str, dict[str, str]] = {
+    "32px": {
+        "module": "manga_translator.ocr.model_32px",
+        "class": "Model32pxOCR",
+        "runtime": "32px/torch",
+        "kind": "ocr",
+    },
+    "48px_ctc": {
+        "module": "manga_translator.ocr.model_48px_ctc",
+        "class": "Model48pxCTCOCR",
+        "runtime": "48px_ctc/torch",
+        "kind": "ocr",
+    },
     "paddleocr-vl-1.5": {
         "module": "manga_translator.ocr.model_paddleocr_vl",
         "class": "ModelPaddleOCRVL",
@@ -137,6 +150,30 @@ _OCR_RUNTIME_SPECS: dict[str, dict[str, str]] = {
         "module": "manga_translator.ocr.model_48px",
         "class": "Model48pxOCR",
         "runtime": "mit48px-ocr/torch",
+        "kind": "ocr",
+    },
+    "paddleocr": {
+        "module": "manga_translator.ocr.model_paddleocr",
+        "class": "ModelPaddleOCRChinese",
+        "runtime": "paddleocr/onnx",
+        "kind": "ocr",
+    },
+    "paddleocr_korean": {
+        "module": "manga_translator.ocr.model_paddleocr",
+        "class": "ModelPaddleOCRKorean",
+        "runtime": "paddleocr_korean/onnx",
+        "kind": "ocr",
+    },
+    "paddleocr_latin": {
+        "module": "manga_translator.ocr.model_paddleocr",
+        "class": "ModelPaddleOCRLatin",
+        "runtime": "paddleocr_latin/onnx",
+        "kind": "ocr",
+    },
+    "paddleocr_thai": {
+        "module": "manga_translator.ocr.model_paddleocr",
+        "class": "ModelPaddleOCRThai",
+        "runtime": "paddleocr_thai/onnx",
         "kind": "ocr",
     },
 }
@@ -181,7 +218,49 @@ _RUNTIME_REQUIRED_ASSETS: dict[str, tuple[str, ...]] = {
         "ocr/ocr_ar_48px.ckpt",
         "ocr/alphabet-all-v7.txt",
     ),
+    "32px": (
+        "ocr/ocr.ckpt",
+        "ocr/alphabet-all-v5.txt",
+    ),
+    "48px_ctc": (
+        "ocr/ocr-ctc.ckpt",
+        "ocr/alphabet-all-v5.txt",
+    ),
+    "manga-ocr": (
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+        "ocr/manga_ocr/config.json",
+        "ocr/manga_ocr/preprocessor_config.json",
+        "ocr/manga_ocr/pytorch_model.bin",
+        "ocr/manga_ocr/special_tokens_map.json",
+        "ocr/manga_ocr/tokenizer_config.json",
+        "ocr/manga_ocr/vocab.txt",
+    ),
     "mit48px-ocr": (
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "paddleocr": (
+        "ocr/ch_PP-OCRv5_rec_server_infer.onnx",
+        "ocr/ppocrv5_dict.txt",
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "paddleocr_korean": (
+        "ocr/korean_PP-OCRv5_rec_mobile_infer.onnx",
+        "ocr/ppocrv5_korean_dict.txt",
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "paddleocr_latin": (
+        "ocr/latin_PP-OCRv5_rec_mobile_infer.onnx",
+        "ocr/ppocrv5_latin_dict.txt",
+        "ocr/ocr_ar_48px.ckpt",
+        "ocr/alphabet-all-v7.txt",
+    ),
+    "paddleocr_thai": (
+        "ocr/thai_PP-OCRv5_rec_mobile_infer.onnx",
+        "ocr/ppocrv5_thai_dict.txt",
         "ocr/ocr_ar_48px.ckpt",
         "ocr/alphabet-all-v7.txt",
     ),
@@ -196,9 +275,15 @@ _RUNTIME_REQUIRED_ASSETS: dict[str, tuple[str, ...]] = {
 
 _RUNTIME_REQUIRED_MODULES: dict[str, tuple[str, ...]] = {
     "comic-text-bubble-detector": ("manga_translator", "cv2"),
+    "32px": ("manga_translator", "torch"),
+    "48px_ctc": ("manga_translator", "torch"),
     "paddleocr-vl-1.5": ("manga_translator", "torch", "transformers"),
     "manga-ocr": ("manga_translator", "torch", "transformers"),
     "mit48px-ocr": ("manga_translator", "torch"),
+    "paddleocr": ("manga_translator", "torch", "onnxruntime"),
+    "paddleocr_korean": ("manga_translator", "torch", "onnxruntime"),
+    "paddleocr_latin": ("manga_translator", "torch", "onnxruntime"),
+    "paddleocr_thai": ("manga_translator", "torch", "onnxruntime"),
     "aot-inpainting": ("manga_translator", "torch"),
     "lama-manga": ("manga_translator",),
 }
@@ -295,6 +380,10 @@ def _runtime_root_for_wrapper(
 
 def _runtime_cache_root(root_dir: str | Path | None = None) -> Path:
     return _resolve_model_root(root_dir) / "cache"
+
+
+def canonical_runtime_model_id(model_id: str | None) -> str:
+    return normalize_model_id(model_id)
 
 
 def _ensure_huggingface_endpoint() -> str:
@@ -463,10 +552,11 @@ def runtime_device_status_from_config(
 
 
 def _resolve_runtime_spec(model_id: str) -> dict[str, str] | None:
-    return _RUNTIME_SPECS.get(str(model_id))
+    return _RUNTIME_SPECS.get(normalize_model_id(model_id))
 
 
 def _runtime_storage_path(model_id: str, root_dir: str | Path | None = None) -> str:
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return ""
@@ -479,6 +569,7 @@ def _runtime_storage_path(model_id: str, root_dir: str | Path | None = None) -> 
 
 
 def _local_runtime_assets_available(model_id: str, root_dir: str | Path | None = None) -> bool:
+    model_id = normalize_model_id(model_id)
     required_assets = _RUNTIME_REQUIRED_ASSETS.get(str(model_id))
     if not required_assets:
         return False
@@ -497,6 +588,7 @@ def _local_runtime_assets_available(model_id: str, root_dir: str | Path | None =
 
 
 def get_runtime_dependency_status(model_id: str) -> RuntimeDependencyStatus:
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return RuntimeDependencyStatus(supported=False, ok=False)
@@ -521,6 +613,7 @@ def get_runtime_requirement_status(
     model_id: str,
     root_dir: str | Path | None = None,
 ) -> RuntimeRequirementStatus:
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return RuntimeRequirementStatus(supported=False)
@@ -557,6 +650,7 @@ def _build_runtime_wrapper(
     root_dir: str | Path | None = None,
     device: str | None = None,
 ):
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         raise KeyError(f"Unsupported runtime-backed manga model: {model_id}")
@@ -586,6 +680,7 @@ def _build_runtime_wrapper(
 
 
 def _ensure_loaded(model_id: str, root_dir: str | Path | None = None, device: str | None = None):
+    model_id = normalize_model_id(model_id)
     selected_device = _select_device(device)
     wrapper = _build_runtime_wrapper(model_id, root_dir, device=selected_device)
     if not wrapper.is_downloaded():
@@ -671,6 +766,7 @@ def _region_id(region: Any, index: int) -> str:
 
 
 def get_runtime_asset_status(model_id: str, root_dir: str | Path | None = None) -> RuntimeAssetStatus:
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return RuntimeAssetStatus(supported=False, available=False)
@@ -707,19 +803,19 @@ def get_runtime_asset_status(model_id: str, root_dir: str | Path | None = None) 
 
 
 def download_runtime_assets(model_id: str, root_dir: str | Path | None = None) -> RuntimeAssetStatus | None:
+    model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
         return None
-    if str(model_id) == "paddleocr-vl-1.5":
-        from ModuleFolders.Service.HttpService.ModelDownload import (
-            prepare_models,
-            resolve_assets_for_model_ids,
-        )
+    from ModuleFolders.Service.HttpService.ModelDownload import prepare_models, resolve_assets_for_model_ids
 
+    try:
+        resolve_assets_for_model_ids((str(model_id),))
+    except KeyError:
+        pass
+    else:
         prepare_models((str(model_id),), root_dir=_resolve_model_root(root_dir))
-        for asset in resolve_assets_for_model_ids((str(model_id),)):
-            if asset.is_hf_snapshot:
-                return get_runtime_asset_status(model_id, root_dir)
+        return get_runtime_asset_status(model_id, root_dir)
 
     wrapper = _build_runtime_wrapper(model_id, root_dir)
     _await_sync(wrapper.download())
@@ -741,6 +837,7 @@ def get_detect_runtime_ids(
 
 
 def get_ocr_runtime_id(engine_id: str, root_dir: str | Path | None = None) -> str:
+    engine_id = normalize_model_id(engine_id or DEFAULT_OCR_MODEL_ID)
     status = get_runtime_asset_status(engine_id, root_dir)
     if not status.available:
         return "rapidocr-onnxruntime"
@@ -821,6 +918,7 @@ def run_region_ocr_runtime(
     root_dir: str | Path | None = None,
     device: str | None = None,
 ) -> RuntimeOcrOutput | None:
+    engine_id = normalize_model_id(engine_id)
     if engine_id not in _OCR_RUNTIME_SPECS:
         return None
     if not regions:

@@ -2159,7 +2159,7 @@ def main():
         action='store_true',
         help="Print MangaCore runtime/model readiness diagnostics and exit before running a manga pipeline.",
     )
-    parser.add_argument('--manga-ocr-engine', help="MangaCore OCR engine id (default: paddleocr-vl-1.5)")
+    parser.add_argument('--manga-ocr-engine', help="MangaCore OCR engine id (default: mit48px-ocr; aliases: 48px, mocr, paddleocr_vl)")
     parser.add_argument('--manga-detect-engine', help="MangaCore bubble/text detector id (default: comic-text-bubble-detector)")
     parser.add_argument('--manga-segment-engine', help="MangaCore text segmenter id (default: comic-text-detector)")
     parser.add_argument('--manga-inpaint-engine', help="MangaCore inpaint engine id (default: aot-inpainting)")

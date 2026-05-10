@@ -10,7 +10,7 @@ import { MangaTopBar } from '../components/manga/mangaTopBar';
 import { useI18n } from '../contexts/I18nContext';
 import { MangaBlockDraft, MangaBrushStrokePayload, MangaCanvasCommand, MangaCanvasPointer, MangaCanvasRuntimeBox, MangaCanvasRuntimeOverlay, MangaEngineCard, MangaLayerControls, MangaOverlayLayerKey, MangaViewMode, translateMangaEnum } from '../components/manga/shared';
 import { DataService } from '../services/DataService';
-import { MangaExportFormat, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaPsdExportOptions, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
+import { MangaExportFormat, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelManagerManifest, MangaOpenProjectSummary, MangaPageDetail, MangaProjectSummary, MangaPsdExportOptions, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaRuntimeValidationStage, MangaSceneSummary } from '../types/manga';
 
 type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 type PsdExportScope = 'current' | 'selected' | 'all';
@@ -407,6 +407,7 @@ export const MangaEditor: React.FC = () => {
   const [runtimeValidationDiff, setRuntimeValidationDiff] = useState<MangaRuntimeValidationDiffResult | null>(null);
   const [activeRuntimeStage, setActiveRuntimeStage] = useState('');
   const [fontCatalog, setFontCatalog] = useState<MangaFontCatalogEntry[]>([]);
+  const [modelManager, setModelManager] = useState<MangaModelManagerManifest | null>(null);
   const [psdExportOpen, setPsdExportOpen] = useState(false);
   const [psdExportScope, setPsdExportScope] = useState<PsdExportScope>('current');
   const [psdScriptOnly, setPsdScriptOnly] = useState(false);
@@ -458,6 +459,12 @@ export const MangaEditor: React.FC = () => {
         modelId,
         label: String(pkg?.display_name || pkg?.model_id || t('manga_unknown_package')),
         repoId: String(pkg?.repo_id || ''),
+        description: String(pkg?.description || ''),
+        hardwareTier: String(pkg?.hardware_tier || ''),
+        qualityTier: String(pkg?.quality_tier || ''),
+        aliases: Array.isArray(pkg?.aliases) ? pkg.aliases.map(String) : [],
+        recommendedFor: Array.isArray(pkg?.recommended_for) ? pkg.recommended_for.map(String) : [],
+        cautions: Array.isArray(pkg?.cautions) ? pkg.cautions.map(String) : [],
         available: readiness ? !readiness.blocking : Boolean(pkg?.available),
         runtimeSupported: readiness ? Boolean(readiness.runtime_supported) : Boolean(pkg?.runtime_supported),
         runtimeEngineId: String(readiness?.runtime_engine_id || pkg?.runtime_engine_id || ''),
@@ -852,7 +859,11 @@ export const MangaEditor: React.FC = () => {
 
   const hydrateProjectRuntimeState = async (projectId: string, refresh = false) => {
     try {
-      const runtimeStatus = await DataService.getMangaRuntimeStatus(projectId, refresh);
+      const [runtimeStatus, modelManifest] = await Promise.all([
+        DataService.getMangaRuntimeStatus(projectId, refresh),
+        DataService.getMangaModelManager(),
+      ]);
+      setModelManager(modelManifest);
       setScene((current) => (
         current
           ? {
@@ -1166,7 +1177,7 @@ export const MangaEditor: React.FC = () => {
     if (!modelId || !project) return;
 
     await withBusyAction(`download model:${modelId}`, async () => {
-      const job = await DataService.startMangaModelDownload(modelId);
+      const job = await DataService.startMangaModelDownload(modelId, project.project_id);
       const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
       const result = settled.result || {};
       const modelLabel = String(result.display_name || result.model_id || modelId);
@@ -1175,6 +1186,29 @@ export const MangaEditor: React.FC = () => {
         settled.status === 'completed'
           ? t('manga_notice_model_prepared', modelLabel)
           : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', modelLabel),
+      );
+      await refreshScene(project.project_id);
+      await hydrateProjectRuntimeState(project.project_id, true);
+      if (settled.status === 'completed' && runtimeValidation) {
+        showNotice('info', t('manga_notice_model_ready_rerun_runtime'));
+      }
+    });
+  };
+
+  const handleDownloadMangaModelPreset = async (presetId: string) => {
+    if (!presetId || !project) return;
+
+    await withBusyAction(`download model preset:${presetId}`, async () => {
+      const job = await DataService.startMangaModelPresetDownload(presetId, project.project_id);
+      const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      const result = settled.result || {};
+      const preset = (result.preset || {}) as Record<string, any>;
+      const presetLabel = String(preset.display_name || preset.preset_id || presetId);
+      showNotice(
+        settled.status === 'completed' ? 'success' : 'warning',
+        settled.status === 'completed'
+          ? t('manga_notice_model_preset_prepared', presetLabel)
+          : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', presetLabel),
       );
       await refreshScene(project.project_id);
       await hydrateProjectRuntimeState(project.project_id, true);
@@ -2058,6 +2092,7 @@ export const MangaEditor: React.FC = () => {
             activeBlockDraft={activeBlockDraft}
             activeJob={activeJobSummary}
             engineCards={engineCards}
+            modelManager={modelManager}
             runtimeValidation={runtimeValidation}
             runtimeValidationHistory={runtimeValidationHistory}
             runtimeValidationDiff={runtimeValidationDiff}
@@ -2075,6 +2110,7 @@ export const MangaEditor: React.FC = () => {
             onRetryRuntimeValidationStage={(stage) => { void handleRetryRuntimeValidationStage(stage); }}
             onValidateRuntime={() => { void handleValidateRuntime(); }}
             onDownloadModel={(modelId) => { void handleDownloadMangaModel(modelId); }}
+            onDownloadModelPreset={(presetId) => { void handleDownloadMangaModelPreset(presetId); }}
             onFocusRuntimeBox={handleFocusRuntimeBox}
           />
           <MangaLayersPanel

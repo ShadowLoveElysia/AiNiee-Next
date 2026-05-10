@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from ModuleFolders.MangaCore.pipeline.modelCatalog import DEFAULT_OCR_MODEL_ID, normalize_model_id
+
 
 def _arg_or_config(host_config: dict[str, object], args, key: str, default: str) -> str:
     value = getattr(args, key, None) or host_config.get(key) or default
     return str(value).strip()
+
+
+def _model_arg_or_config(host_config: dict[str, object], args, key: str, default: str) -> str:
+    return normalize_model_id(_arg_or_config(host_config, args, key, default))
 
 
 def _stage_device_arg_or_config(host_config: dict[str, object], args, key: str) -> str:
@@ -29,7 +35,7 @@ def build_cli_config_snapshot(host, args) -> dict[str, object]:
         "platform": getattr(args, "platform", None) or config.get("target_platform", ""),
         "model": getattr(args, "model", None) or config.get("model", ""),
         "api_url": getattr(args, "api_url", None) or config.get("base_url", ""),
-        "manga_ocr_engine": _arg_or_config(config, args, "manga_ocr_engine", "paddleocr-vl-1.5"),
+        "manga_ocr_engine": _model_arg_or_config(config, args, "manga_ocr_engine", DEFAULT_OCR_MODEL_ID),
         "manga_detect_engine": _arg_or_config(config, args, "manga_detect_engine", "comic-text-bubble-detector"),
         "manga_segment_engine": _arg_or_config(config, args, "manga_segment_engine", "comic-text-detector"),
         "manga_inpaint_engine": _arg_or_config(config, args, "manga_inpaint_engine", "aot-inpainting"),

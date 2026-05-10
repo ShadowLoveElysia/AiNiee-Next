@@ -6,9 +6,9 @@ import inspect
 import json
 import os
 import re
-import threading
 import shutil
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,11 +16,13 @@ from typing import Any, Iterable
 
 import requests
 
+from ModuleFolders.MangaCore.pipeline.modelCatalog import DEFAULT_OCR_MODEL_ID, normalize_model_id
+
 
 DEFAULT_MODEL_IDS: tuple[str, ...] = (
     "comic-text-bubble-detector",
     "comic-text-detector",
-    "paddleocr-vl-1.5",
+    DEFAULT_OCR_MODEL_ID,
     "aot-inpainting",
 )
 
@@ -152,7 +154,15 @@ ASSETS: tuple[DownloadAsset, ...] = (
     ),
     DownloadAsset(
         asset_id="mit48px-color-model",
-        model_ids=("paddleocr-vl-1.5", "mit48px-ocr"),
+        model_ids=(
+            "paddleocr-vl-1.5",
+            "mit48px-ocr",
+            "manga-ocr",
+            "paddleocr",
+            "paddleocr_korean",
+            "paddleocr_latin",
+            "paddleocr_thai",
+        ),
         urls=(
             f"{MANGA_TRANSLATOR_RELEASE}/ocr_ar_48px.ckpt",
             f"{MANGA_TRANSLATOR_MODELSCOPE}/ocr_ar_48px.ckpt",
@@ -162,13 +172,145 @@ ASSETS: tuple[DownloadAsset, ...] = (
     ),
     DownloadAsset(
         asset_id="mit48px-color-dict",
-        model_ids=("paddleocr-vl-1.5", "mit48px-ocr"),
+        model_ids=(
+            "paddleocr-vl-1.5",
+            "mit48px-ocr",
+            "manga-ocr",
+            "paddleocr",
+            "paddleocr_korean",
+            "paddleocr_latin",
+            "paddleocr_thai",
+        ),
         urls=(
             f"{MANGA_TRANSLATOR_RELEASE}/alphabet-all-v7.txt",
             f"{MANGA_TRANSLATOR_MODELSCOPE}/alphabet-all-v7.txt",
         ),
         destination="ocr/alphabet-all-v7.txt",
         sha256="f5722368146aa0fbcc9f4726866e4efc3203318ebb66c811d8cbbe915576538a",
+    ),
+    DownloadAsset(
+        asset_id="ocr32px-legacy",
+        model_ids=("32px",),
+        urls=(
+            f"{MANGA_TRANSLATOR_RELEASE}/ocr.zip",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ocr.zip",
+        ),
+        filename="ocr.zip",
+        sha256="47405638b96fa2540a5ee841a4cd792f25062c09d9458a973362d40785f95d7a",
+        archive_members=(
+            ArchiveMember("ocr.ckpt", "ocr/ocr.ckpt"),
+            ArchiveMember("alphabet-all-v5.txt", "ocr/alphabet-all-v5.txt"),
+        ),
+    ),
+    DownloadAsset(
+        asset_id="ocr48px-ctc",
+        model_ids=("48px_ctc",),
+        urls=(
+            f"{MANGA_TRANSLATOR_RELEASE}/ocr-ctc.zip",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ocr-ctc.zip",
+        ),
+        filename="ocr-ctc.zip",
+        sha256="fc61c52f7a811bc72c54f6be85df814c6b60f63585175db27cb94a08e0c30101",
+        archive_members=(
+            ArchiveMember("ocr-ctc.ckpt", "ocr/ocr-ctc.ckpt"),
+            ArchiveMember("alphabet-all-v5.txt", "ocr/alphabet-all-v5.txt"),
+        ),
+    ),
+    DownloadAsset(
+        asset_id="manga-ocr-model",
+        model_ids=("manga-ocr",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.9.5/manga_ocr_model.7z",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/manga_ocr_model.7z",
+        ),
+        filename="manga_ocr_model.7z",
+        sha256="5dc27bde275ad981818a06de92a77da18383c0db9b915d6faff2b8acbfe35475",
+        archive_members=(
+            ArchiveMember("manga_ocr_model/config.json", "ocr/manga_ocr/config.json"),
+            ArchiveMember("manga_ocr_model/preprocessor_config.json", "ocr/manga_ocr/preprocessor_config.json"),
+            ArchiveMember("manga_ocr_model/pytorch_model.bin", "ocr/manga_ocr/pytorch_model.bin"),
+            ArchiveMember("manga_ocr_model/special_tokens_map.json", "ocr/manga_ocr/special_tokens_map.json"),
+            ArchiveMember("manga_ocr_model/tokenizer_config.json", "ocr/manga_ocr/tokenizer_config.json"),
+            ArchiveMember("manga_ocr_model/vocab.txt", "ocr/manga_ocr/vocab.txt"),
+        ),
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-ch-onnx",
+        model_ids=("paddleocr",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.1/ch_PP-OCRv5_rec_server_infer.onnx",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ch_PP-OCRv5_rec_server_infer.onnx",
+        ),
+        destination="ocr/ch_PP-OCRv5_rec_server_infer.onnx",
+        sha256="e09385400eaaaef34ceff54aeb7c4f0f1fe014c27fa8b9905d4709b65746562a",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-ch-dict",
+        model_ids=("paddleocr",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.1/ppocrv5_dict.txt",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ppocrv5_dict.txt",
+        ),
+        destination="ocr/ppocrv5_dict.txt",
+        sha256="d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-korean-onnx",
+        model_ids=("paddleocr_korean",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.1/korean_PP-OCRv5_rec_mobile_infer.onnx",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/korean_PP-OCRv5_rec_mobile_infer.onnx",
+        ),
+        destination="ocr/korean_PP-OCRv5_rec_mobile_infer.onnx",
+        sha256="cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-korean-dict",
+        model_ids=("paddleocr_korean",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.1/ppocrv5_korean_dict.txt",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ppocrv5_korean_dict.txt",
+        ),
+        destination="ocr/ppocrv5_korean_dict.txt",
+        sha256="a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-latin-onnx",
+        model_ids=("paddleocr_latin",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.8.0/latin_PP-OCRv5_rec_mobile_infer.onnx",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/latin_PP-OCRv5_rec_mobile_infer.onnx",
+        ),
+        destination="ocr/latin_PP-OCRv5_rec_mobile_infer.onnx",
+        sha256="614ffc2d6d3902d360fad7f1b0dd455ee45e877069d14c4e51a99dc4ef144409",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-latin-dict",
+        model_ids=("paddleocr_latin",),
+        urls=(
+            "https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.8.0/ppocrv5_latin_dict.txt",
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ppocrv5_latin_dict.txt",
+        ),
+        destination="ocr/ppocrv5_latin_dict.txt",
+        sha256="3c0a8a79b612653c25f765271714f71281e4e955962c153e272b7b8c1d2b13ff",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-thai-onnx",
+        model_ids=("paddleocr_thai",),
+        urls=(
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/thai_PP-OCRv5_rec_mobile_infer.onnx",
+        ),
+        destination="ocr/thai_PP-OCRv5_rec_mobile_infer.onnx",
+        sha256="2b6e56b1872200349e227574c25aeb0e0f9af9b8356e9ff5f75ac543a535669a",
+    ),
+    DownloadAsset(
+        asset_id="ppocrv5-thai-dict",
+        model_ids=("paddleocr_thai",),
+        urls=(
+            f"{MANGA_TRANSLATOR_MODELSCOPE}/ppocrv5_thai_dict.txt",
+        ),
+        destination="ocr/ppocrv5_thai_dict.txt",
+        sha256="57f5406f94bb6688fb7077f7be65f08bbd71cecf48c01ea26c522cb5c4836b7a",
     ),
     DownloadAsset(
         asset_id="aot-inpainting",
@@ -185,8 +327,15 @@ ASSETS: tuple[DownloadAsset, ...] = (
 MODEL_STORAGE_DIRS: dict[str, str] = {
     "comic-text-bubble-detector": "detection",
     "comic-text-detector": "huggingface/mayocream/comic-text-detector",
+    "32px": "ocr",
+    "48px_ctc": "ocr",
     "paddleocr-vl-1.5": "ocr",
+    "manga-ocr": "ocr",
     "mit48px-ocr": "ocr",
+    "paddleocr": "ocr",
+    "paddleocr_korean": "ocr",
+    "paddleocr_latin": "ocr",
+    "paddleocr_thai": "ocr",
     "aot-inpainting": "inpainting",
 }
 
@@ -536,7 +685,7 @@ def is_asset_ready(asset: DownloadAsset, root_dir: str | Path) -> bool:
 
 
 def resolve_assets_for_model_ids(model_ids: Iterable[str]) -> list[DownloadAsset]:
-    requested = tuple(dict.fromkeys(str(model_id) for model_id in model_ids))
+    requested = tuple(dict.fromkeys(normalize_model_id(str(model_id)) for model_id in model_ids))
     known_model_ids = {model_id for asset in ASSETS for model_id in asset.model_ids}
     unknown = [model_id for model_id in requested if model_id not in known_model_ids]
     if unknown:
@@ -1018,6 +1167,7 @@ def _registry_path(root_dir: Path, model_id: str) -> Path:
 
 
 def _register_model(root_dir: Path, model_id: str, asset_ids: Iterable[str]) -> None:
+    model_id = normalize_model_id(model_id)
     _ensure_project_on_path()
     from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package
 
@@ -1042,7 +1192,8 @@ def _register_model(root_dir: Path, model_id: str, asset_ids: Iterable[str]) -> 
 
 def register_downloaded_models(root_dir: str | Path, model_ids: Iterable[str], assets: Iterable[DownloadAsset]) -> None:
     root = Path(root_dir)
-    assets_by_model: dict[str, list[str]] = {str(model_id): [] for model_id in model_ids}
+    requested_model_ids = tuple(dict.fromkeys(normalize_model_id(str(model_id)) for model_id in model_ids))
+    assets_by_model: dict[str, list[str]] = {str(model_id): [] for model_id in requested_model_ids}
     for asset in assets:
         for model_id in asset.model_ids:
             if model_id in assets_by_model:
@@ -1061,7 +1212,7 @@ def prepare_models(
 ) -> None:
     project_root = _project_root()
     root = Path(root_dir).resolve() if root_dir is not None else _default_model_root(project_root)
-    requested_model_ids = tuple(dict.fromkeys(str(model_id) for model_id in model_ids))
+    requested_model_ids = tuple(dict.fromkeys(normalize_model_id(str(model_id)) for model_id in model_ids))
     assets = resolve_assets_for_model_ids(requested_model_ids)
 
     display = DownloadDisplay(root, requested_model_ids, assets)

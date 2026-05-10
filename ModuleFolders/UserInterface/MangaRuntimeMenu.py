@@ -16,6 +16,9 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt
 from rich.table import Table
 
+from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_preset
+from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
+
 
 class MangaRuntimeMenu:
     """MangaCore visual runtime dependency switcher."""
@@ -73,6 +76,13 @@ class MangaRuntimeMenu:
 
             table.add_row(f"[cyan]{option_id}.[/]", self._t("manga_runtime_menu_check", "Check current runtime"))
             action_map[option_id] = self._wait
+            option_id += 1
+
+            table.add_row(
+                f"[cyan]{option_id}.[/]",
+                self._t("manga_model_menu_manage", "Manage/download MangaCore model presets"),
+            )
+            action_map[option_id] = self._show_model_menu
             option_id += 1
 
             recommended = self._recommended_backend()
@@ -136,6 +146,116 @@ class MangaRuntimeMenu:
         self.console.print(
             f"[dim]{self._t('manga_runtime_menu_scope_hint', 'This menu only switches Manga visual runtime packages. It cleans torchaudio if present, but does not install it; tokenizers, transformers, and tiktoken are not touched.')}[/dim]"
         )
+
+    def _show_model_menu(self) -> None:
+        while True:
+            store = MangaModelStore()
+            manifest = store.build_manager_manifest()
+            presets = [item for item in manifest.get("presets", []) if isinstance(item, dict)]
+            models = [item for item in manifest.get("models", []) if isinstance(item, dict)]
+
+            self.host.display_banner()
+            self.console.print(Panel(f"[bold]{self._t('manga_model_menu_title', 'MangaCore Model Manager')}[/bold]"))
+
+            preset_table = Table(show_header=True, expand=False)
+            preset_table.add_column("#", style="cyan")
+            preset_table.add_column(self._t("manga_model_preset", "Preset"))
+            preset_table.add_column(self._t("manga_model_effect", "Effect"))
+            preset_table.add_column(self._t("manga_model_hardware", "Hardware"))
+            preset_table.add_column(self._t("manga_model_status", "Status"))
+            preset_table.add_column(self._t("manga_model_models", "Models"))
+            for index, preset in enumerate(presets, start=1):
+                missing_count = int(preset.get("missing_count") or 0)
+                status = self._t("manga_ready", "Ready") if not missing_count else self._t(
+                    "manga_model_missing_count",
+                    "{} missing",
+                ).format(missing_count)
+                preset_table.add_row(
+                    str(index),
+                    str(preset.get("display_name") or preset.get("preset_id") or ""),
+                    str(preset.get("effect_label") or preset.get("quality_tier") or ""),
+                    str(preset.get("hardware_tier") or ""),
+                    status,
+                    ", ".join(str(model_id) for model_id in preset.get("model_ids", []) or []),
+                )
+            self.console.print(preset_table)
+
+            self.console.print(
+                f"[dim]{self._t('manga_model_menu_hint', 'Choose a preset number to prepare it, 90 to list all models, or 0 to return.')}[/dim]"
+            )
+            choices = [str(i) for i in range(len(presets) + 1)] + ["90"]
+            choice = IntPrompt.ask(
+                f"\n{self.i18n.get('prompt_select')}",
+                choices=choices,
+                show_choices=False,
+            )
+            if choice == 0:
+                return
+            if choice == 90:
+                self._print_model_details(models)
+                self._wait()
+                continue
+
+            selected = presets[choice - 1]
+            preset_id = str(selected.get("preset_id") or "")
+            self._prepare_model_preset(preset_id)
+
+    def _print_model_details(self, models: list[dict[str, object]]) -> None:
+        table = Table(show_header=True, expand=False)
+        table.add_column("ID", style="cyan")
+        table.add_column(self._t("manga_package", "Package"))
+        table.add_column(self._t("manga_model_hardware", "Hardware"))
+        table.add_column(self._t("manga_model_effect", "Effect"))
+        table.add_column(self._t("manga_model_status", "Status"))
+        table.add_column(self._t("manga_model_description", "Description"))
+        for model in models:
+            table.add_row(
+                str(model.get("model_id") or ""),
+                str(model.get("display_name") or ""),
+                str(model.get("hardware_tier") or ""),
+                str(model.get("quality_tier") or ""),
+                self._t("manga_ready", "Ready") if model.get("available") else self._t("manga_missing", "Missing"),
+                str(model.get("description") or ""),
+            )
+        self.console.print(table)
+
+    def _prepare_model_preset(self, preset_id: str) -> None:
+        try:
+            preset = get_model_preset(preset_id)
+        except KeyError as exc:
+            self.console.print(f"[red]{exc}[/red]")
+            self._wait()
+            return
+
+        self.console.print(Panel(str(preset.description), title=str(preset.display_name)))
+        model_ids = ", ".join(preset.model_ids)
+        if not Confirm.ask(
+            self._t("manga_model_confirm_prepare_preset", "Prepare model preset {} ({})?").format(
+                preset.display_name,
+                model_ids,
+            ),
+            default=True,
+        ):
+            return
+
+        try:
+            result = MangaModelStore().download_preset(preset_id)
+        except Exception as exc:
+            self.console.print(f"[red]{self._t('manga_model_prepare_failed', 'Model preparation failed')}: {exc}[/red]")
+            self._wait()
+            return
+
+        overrides = result.get("config_overrides", {})
+        if isinstance(overrides, dict):
+            for key, value in overrides.items():
+                self.host.config[key] = value
+            if overrides:
+                self.host.save_config()
+                self.console.print(
+                    f"[green]{self._t('manga_model_config_applied', 'Model preset config applied')}: {overrides}[/green]"
+                )
+        self.console.print(f"[green]{self._t('manga_model_prepare_done', 'Model preset prepared.')}[/green]")
+        self._wait()
 
     def _package_version(self, package_name: str) -> str:
         try:

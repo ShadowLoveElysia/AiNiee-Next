@@ -15,7 +15,14 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_runtime_asset_status,
     runtime_device_status_from_config,
 )
-from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package, list_model_packages
+from ModuleFolders.MangaCore.pipeline.modelCatalog import (
+    DEFAULT_OCR_MODEL_ID,
+    get_model_preset,
+    get_model_package,
+    list_model_presets,
+    list_model_packages,
+    normalize_model_id,
+)
 
 _DIRECT_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
     "comic-text-detector": (
@@ -79,9 +86,11 @@ class MangaModelStore:
         return self.root_dir / "registry"
 
     def registry_path(self, model_id: str) -> Path:
+        model_id = normalize_model_id(model_id)
         return self.registry_dir() / f"{_safe_name(model_id)}.json"
 
     def local_direct_snapshot_path(self, model_id: str) -> Path | None:
+        model_id = normalize_model_id(model_id)
         package = get_model_package(model_id)
         candidate = self.huggingface_cache_dir() / package.repo_id
         required_files = _DIRECT_REQUIRED_FILES.get(package.model_id)
@@ -94,6 +103,7 @@ class MangaModelStore:
         return None
 
     def get_status(self, model_id: str) -> dict[str, object]:
+        model_id = normalize_model_id(model_id)
         package = get_model_package(model_id)
         record = self._read_record(model_id)
         snapshot_path = Path(record.get("snapshot_path", "")) if record.get("snapshot_path") else None
@@ -125,6 +135,38 @@ class MangaModelStore:
     def list_statuses(self) -> list[dict[str, object]]:
         return [self.get_status(package.model_id) for package in list_model_packages()]
 
+    def build_manager_manifest(self) -> dict[str, object]:
+        statuses = self.list_statuses()
+        statuses_by_id = {str(status.get("model_id") or ""): status for status in statuses}
+        presets: list[dict[str, object]] = []
+        for preset in list_model_presets():
+            preset_payload = preset.to_dict()
+            model_ids = [normalize_model_id(model_id) for model_id in preset.model_ids]
+            preset_statuses = [statuses_by_id[model_id] for model_id in model_ids if model_id in statuses_by_id]
+            available_ids = [
+                model_id
+                for model_id in model_ids
+                if bool(statuses_by_id.get(model_id, {}).get("available"))
+            ]
+            missing_ids = [model_id for model_id in model_ids if model_id not in available_ids]
+            preset_payload.update(
+                {
+                    "model_ids": model_ids,
+                    "models": preset_statuses,
+                    "available_model_ids": available_ids,
+                    "missing_model_ids": missing_ids,
+                    "available": not missing_ids,
+                    "missing_count": len(missing_ids),
+                    "model_count": len(model_ids),
+                }
+            )
+            presets.append(preset_payload)
+        return {
+            "default_ocr_model_id": DEFAULT_OCR_MODEL_ID,
+            "presets": presets,
+            "models": statuses,
+        }
+
     def register_downloaded_snapshot(
         self,
         model_id: str,
@@ -132,6 +174,7 @@ class MangaModelStore:
         *,
         revision: str = "",
     ) -> dict[str, object]:
+        model_id = normalize_model_id(model_id)
         package = get_model_package(model_id)
         snapshot = Path(snapshot_path).resolve()
         self._write_record(
@@ -148,6 +191,7 @@ class MangaModelStore:
         return self.get_status(model_id)
 
     def download(self, model_id: str) -> dict[str, object]:
+        model_id = normalize_model_id(model_id)
         package = get_model_package(model_id)
         runtime_status = get_runtime_asset_status(model_id, self.root_dir)
         if runtime_status.supported:
@@ -167,6 +211,17 @@ class MangaModelStore:
             snapshot_path,
             revision="downloaded",
         )
+
+    def download_preset(self, preset_id: str) -> dict[str, object]:
+        preset = get_model_preset(preset_id)
+        statuses: list[dict[str, object]] = []
+        for model_id in preset.model_ids:
+            statuses.append(self.download(model_id))
+        return {
+            "preset": preset.to_dict(),
+            "models": statuses,
+            "config_overrides": dict(preset.config_overrides),
+        }
 
     def _read_record(self, model_id: str) -> dict[str, object]:
         path = self.registry_path(model_id)
@@ -188,7 +243,7 @@ def build_engine_status(config_snapshot: dict[str, object] | None = None) -> dic
     snapshot = dict(config_snapshot) if isinstance(config_snapshot, dict) else {}
     store = MangaModelStore()
 
-    ocr_id = str(snapshot.get("manga_ocr_engine") or "paddleocr-vl-1.5")
+    ocr_id = normalize_model_id(str(snapshot.get("manga_ocr_engine") or DEFAULT_OCR_MODEL_ID))
     detect_id = str(snapshot.get("manga_detect_engine") or "comic-text-bubble-detector")
     segment_id = str(snapshot.get("manga_segment_engine") or "comic-text-detector")
     inpaint_id = str(snapshot.get("manga_inpaint_engine") or "aot-inpainting")

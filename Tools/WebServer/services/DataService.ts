@@ -1,6 +1,6 @@
 import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint } from '../types';
 import type { MangaBrushStrokePayload } from '../components/manga/shared';
-import { MangaDeleteRuntimeValidationHistoryResult, MangaExportFormat, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaPageQualityGate, MangaProjectSummary, MangaPsdExportOptions, MangaRuntimeReadinessReport, MangaRuntimeStatusSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
+import { MangaDeleteRuntimeValidationHistoryResult, MangaExportFormat, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelManagerManifest, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaPageQualityGate, MangaProjectSummary, MangaPsdExportOptions, MangaRuntimeReadinessReport, MangaRuntimeStatusSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
 // Base API URL
 const API_BASE = '/api';
@@ -695,12 +695,34 @@ export const DataService = {
         return data;
     },
 
-    async startMangaModelDownload(modelId: string): Promise<MangaJob> {
-        const res = await fetch(`${API_BASE}/manga/models/${encodeURIComponent(modelId)}/download/start`, {
+    async getMangaModelManager(): Promise<MangaModelManagerManifest> {
+        const res = await fetch(`${API_BASE}/manga/models/manager`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga model manager');
+        return data;
+    },
+
+    async startMangaModelDownload(modelId: string, projectId = ''): Promise<MangaJob> {
+        const prefix = projectId
+            ? `${API_BASE}/manga/projects/${encodeURIComponent(projectId)}`
+            : `${API_BASE}/manga`;
+        const res = await fetch(`${prefix}/models/${encodeURIComponent(modelId)}/download/start`, {
             method: 'POST'
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to start manga model preparation');
+        return data;
+    },
+
+    async startMangaModelPresetDownload(presetId: string, projectId = ''): Promise<MangaJob> {
+        const prefix = projectId
+            ? `${API_BASE}/manga/projects/${encodeURIComponent(projectId)}`
+            : `${API_BASE}/manga`;
+        const res = await fetch(`${prefix}/model-presets/${encodeURIComponent(presetId)}/download/start`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to start manga model preset preparation');
         return data;
     },
 

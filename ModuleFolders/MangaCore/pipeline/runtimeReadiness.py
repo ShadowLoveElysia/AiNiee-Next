@@ -10,6 +10,7 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     runtime_device_status_from_config,
     get_runtime_requirement_status,
 )
+from ModuleFolders.MangaCore.pipeline.modelCatalog import DEFAULT_OCR_MODEL_ID, normalize_model_id
 from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
 
 
@@ -65,7 +66,7 @@ def _resolve_required_model_ids(config_snapshot: dict[str, object] | None = None
     return {
         "detect": str(snapshot.get("manga_detect_engine") or "comic-text-bubble-detector"),
         "segment": str(snapshot.get("manga_segment_engine") or "comic-text-detector"),
-        "ocr": str(snapshot.get("manga_ocr_engine") or "paddleocr-vl-1.5"),
+        "ocr": normalize_model_id(str(snapshot.get("manga_ocr_engine") or DEFAULT_OCR_MODEL_ID)),
         "inpaint": str(snapshot.get("manga_inpaint_engine") or "aot-inpainting"),
     }
 

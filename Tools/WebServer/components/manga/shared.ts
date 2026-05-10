@@ -39,6 +39,12 @@ export interface MangaEngineCard {
     modelId: string;
     label: string;
     repoId: string;
+    description?: string;
+    hardwareTier?: string;
+    qualityTier?: string;
+    aliases?: string[];
+    recommendedFor?: string[];
+    cautions?: string[];
     available: boolean;
     runtimeSupported: boolean;
     runtimeEngineId: string;

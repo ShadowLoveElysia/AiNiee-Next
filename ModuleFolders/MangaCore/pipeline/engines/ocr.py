@@ -8,10 +8,20 @@ from ModuleFolders.MangaCore.bridge.providerAdapter import (
     get_runtime_device_status,
     run_region_ocr_runtime,
 )
+from ModuleFolders.MangaCore.pipeline.modelCatalog import DEFAULT_OCR_MODEL_ID, normalize_model_id
 from ModuleFolders.MangaCore.render.bubbleAssign import TextSeed
 
-DEFAULT_OCR_ENGINE_ID = "paddleocr-vl-1.5"
-ALTERNATIVE_OCR_ENGINE_IDS = ("manga-ocr", "mit48px-ocr")
+DEFAULT_OCR_ENGINE_ID = DEFAULT_OCR_MODEL_ID
+ALTERNATIVE_OCR_ENGINE_IDS = (
+    "manga-ocr",
+    "paddleocr-vl-1.5",
+    "32px",
+    "48px_ctc",
+    "paddleocr",
+    "paddleocr_korean",
+    "paddleocr_latin",
+    "paddleocr_thai",
+)
 RUNTIME_OCR_ENGINE_ID = "rapidocr-onnxruntime"
 
 
@@ -32,7 +42,7 @@ class OcrEngine:
     _ocr_instance = None
 
     def __init__(self, engine_id: str | None = None, device: str | None = None) -> None:
-        self.engine_id = str(engine_id or DEFAULT_OCR_ENGINE_ID)
+        self.engine_id = normalize_model_id(engine_id or DEFAULT_OCR_ENGINE_ID)
         self.device = str(device or "auto")
         self.last_runtime_engine_id = RUNTIME_OCR_ENGINE_ID
         self.last_warning_message = ""
@@ -40,7 +50,7 @@ class OcrEngine:
 
     def configure(self, engine_id: str | None = None, device: str | None = None) -> None:
         if engine_id:
-            self.engine_id = str(engine_id)
+            self.engine_id = normalize_model_id(engine_id)
         if device is not None and str(device).strip():
             self.device = str(device).strip()
 

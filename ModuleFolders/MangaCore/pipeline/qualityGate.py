@@ -11,6 +11,8 @@ from ModuleFolders.MangaCore.pipeline.engines.render import RenderResult
 from ModuleFolders.MangaCore.pipeline.engines.translate import TranslationBatchResult
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
+from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
+from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment
 
 QUALITY_GATE_ARTIFACT = "qualityGate.json"
 BLOCKED_PAGE_STATUS = "needs_review"
@@ -95,6 +97,7 @@ LAYOUT_BLOCKING_WARNING_CODES = {
     "font_scaled_too_small",
     "font_scaled_too_large",
     "font_unavailable",
+    "missing_glyph",
 }
 
 
@@ -128,6 +131,131 @@ def _ocr_candidate_region_count(result: DetectResult) -> int:
     return len(result.ocr_candidate_regions)
 
 
+def _is_stable_bubble_assignment(assignment: BubbleAssignment) -> bool:
+    status = str(getattr(assignment, "status", "") or "").strip()
+    bubble_id = str(getattr(assignment, "bubble_id", "") or "").strip()
+    if status not in {"assigned", "shared_bubble"} or not bubble_id:
+        return False
+    try:
+        overlap_ratio = float(getattr(assignment, "overlap_ratio", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        overlap_ratio = 0.0
+    return overlap_ratio > 0.0
+
+
+def _valid_bbox(value: object) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return False
+    try:
+        x1, y1, x2, y2 = [int(item) for item in value]
+    except (TypeError, ValueError):
+        return False
+    return x2 > x1 and y2 > y1
+
+
+def _flag_suffix(flags: list[str], prefix: str) -> str:
+    for flag in flags:
+        if flag.startswith(prefix):
+            return flag[len(prefix):]
+    return ""
+
+
+def _reading_order_index(block: MangaTextBlock) -> int | None:
+    suffix = _flag_suffix(list(getattr(block, "flags", []) or []), "reading_order:")
+    if not suffix:
+        return None
+    try:
+        return int(suffix)
+    except (TypeError, ValueError):
+        return None
+
+
+def _block_has_valid_anchor(block: MangaTextBlock) -> bool:
+    metrics = getattr(block, "source_metrics", {})
+    if not isinstance(metrics, dict):
+        return False
+    return _valid_bbox(metrics.get("source_bbox")) and _valid_bbox(metrics.get("source_layout_bbox"))
+
+
+def _evaluate_planner_contract(
+    *,
+    text_blocks: list[MangaTextBlock],
+    bubble_assignments: list[BubbleAssignment],
+) -> tuple[list[QualityIssue], dict[str, object], dict[str, object]]:
+    issues: list[QualityIssue] = []
+
+    unstable_assignments = [
+        assignment
+        for assignment in bubble_assignments
+        if not _is_stable_bubble_assignment(assignment)
+    ]
+    if unstable_assignments:
+        issues.append(
+            _issue(
+                "bubble_assignment_unstable",
+                "planner",
+                "manga_quality_issue_bubble_assignment_unstable",
+                f"{len(unstable_assignments)} OCR seed(s) do not have a stable bubble assignment.",
+                len(unstable_assignments),
+            )
+        )
+
+    missing_reading_order_blocks: list[str] = []
+    duplicate_reading_order_blocks: list[str] = []
+    seen_order_indexes: set[int] = set()
+    for block in text_blocks:
+        order_index = _reading_order_index(block)
+        if order_index is None:
+            missing_reading_order_blocks.append(block.block_id)
+            continue
+        if order_index in seen_order_indexes:
+            duplicate_reading_order_blocks.append(block.block_id)
+        seen_order_indexes.add(order_index)
+    reading_order_unresolved_count = len(missing_reading_order_blocks) + len(duplicate_reading_order_blocks)
+    if reading_order_unresolved_count:
+        issues.append(
+            _issue(
+                "reading_order_unresolved",
+                "planner",
+                "manga_quality_issue_reading_order_unresolved",
+                f"{reading_order_unresolved_count} text block(s) do not have a stable reading order.",
+                reading_order_unresolved_count,
+            )
+        )
+
+    layout_anchor_missing_blocks = [
+        block.block_id
+        for block in text_blocks
+        if not _block_has_valid_anchor(block)
+    ]
+    if layout_anchor_missing_blocks:
+        issues.append(
+            _issue(
+                "layout_anchor_missing",
+                "planner",
+                "manga_quality_issue_layout_anchor_missing",
+                f"{len(layout_anchor_missing_blocks)} text block(s) are missing source anchor/layout bbox metadata.",
+                len(layout_anchor_missing_blocks),
+            )
+        )
+
+    metrics = {
+        "bubble_assignment_count": len(bubble_assignments),
+        "bubble_assignment_unstable_count": len(unstable_assignments),
+        "reading_order_unresolved_count": reading_order_unresolved_count,
+        "layout_anchor_missing_count": len(layout_anchor_missing_blocks),
+    }
+    stage_modes = {
+        "bubble_assignment_unstable_seed_ids": [assignment.seed_id for assignment in unstable_assignments[:20]],
+        "reading_order_unresolved_block_ids": [
+            *missing_reading_order_blocks[:20],
+            *duplicate_reading_order_blocks[:20],
+        ][:20],
+        "layout_anchor_missing_block_ids": layout_anchor_missing_blocks[:20],
+    }
+    return issues, metrics, stage_modes
+
+
 def describe_ocr_last_run(ocr_engine: object) -> dict[str, object]:
     if hasattr(ocr_engine, "describe_last_run"):
         try:
@@ -156,12 +284,16 @@ def evaluate_automatic_pipeline_quality(
     ocr_last_run: dict[str, object],
     inpaint_result: InpaintResult | None,
     render_result: RenderResult | None = None,
+    text_blocks: list[MangaTextBlock] | None = None,
+    bubble_assignments: list[BubbleAssignment] | None = None,
     block_count: int,
     translated_blocks: int,
     translation_result: TranslationBatchResult | None,
     require_inpaint: bool,
 ) -> PageQualityGate:
     issues: list[QualityIssue] = []
+    text_blocks = list(text_blocks or [])
+    bubble_assignments = list(bubble_assignments or [])
 
     if block_count <= 0:
         issues.append(
@@ -203,6 +335,12 @@ def evaluate_automatic_pipeline_quality(
                 "OCR used a fallback adapter instead of a configured runtime.",
             )
         )
+
+    planner_issues, planner_metrics, planner_stage_modes = _evaluate_planner_contract(
+        text_blocks=text_blocks,
+        bubble_assignments=bubble_assignments,
+    )
+    issues.extend(planner_issues)
 
     if translation_result is not None:
         if not translation_result.ok:
@@ -307,6 +445,7 @@ def evaluate_automatic_pipeline_quality(
         "detect_bubble_region_count": len(detect_result.bubble_regions),
         "inpaint_mask_pixels": inpaint_result.mask_pixels if inpaint_result is not None else 0,
         "layout_fit_failed_blocks": render_result.layout_fit_failed_blocks if render_result is not None else 0,
+        **planner_metrics,
     }
     stage_modes = {
         "detect": {
@@ -316,6 +455,7 @@ def evaluate_automatic_pipeline_quality(
             "runtime_segmenter_id": detect_result.runtime_segmenter_id,
         },
         "ocr": dict(ocr_last_run),
+        "planner": planner_stage_modes,
         "inpaint": inpaint_result.to_dict() if inpaint_result is not None else {},
         "render": render_result.to_dict() if render_result is not None else {},
     }
