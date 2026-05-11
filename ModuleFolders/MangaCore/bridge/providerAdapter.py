@@ -11,7 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from PIL import Image, ImageChops
@@ -802,7 +802,16 @@ def get_runtime_asset_status(model_id: str, root_dir: str | Path | None = None) 
     )
 
 
-def download_runtime_assets(model_id: str, root_dir: str | Path | None = None) -> RuntimeAssetStatus | None:
+DownloadProgressCallback = Callable[[dict[str, object]], None]
+
+
+def download_runtime_assets(
+    model_id: str,
+    root_dir: str | Path | None = None,
+    *,
+    quiet: bool = False,
+    progress_callback: DownloadProgressCallback | None = None,
+) -> RuntimeAssetStatus | None:
     model_id = normalize_model_id(model_id)
     spec = _resolve_runtime_spec(model_id)
     if spec is None:
@@ -814,10 +823,26 @@ def download_runtime_assets(model_id: str, root_dir: str | Path | None = None) -
     except KeyError:
         pass
     else:
-        prepare_models((str(model_id),), root_dir=_resolve_model_root(root_dir))
+        prepare_models(
+            (str(model_id),),
+            root_dir=_resolve_model_root(root_dir),
+            quiet=quiet,
+            progress_callback=progress_callback,
+        )
         return get_runtime_asset_status(model_id, root_dir)
 
     wrapper = _build_runtime_wrapper(model_id, root_dir)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "kind": "manga_model_download",
+                "stage": "wrapper_download",
+                "message": f"Downloading runtime assets: {model_id}",
+                "model_id": model_id,
+                "item_index": 1,
+                "item_count": 1,
+            }
+        )
     _await_sync(wrapper.download())
     return get_runtime_asset_status(model_id, root_dir)
 

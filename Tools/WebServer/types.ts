@@ -231,6 +231,10 @@ export interface AppConfig {
   target_language: string;
   
   translation_project: string;
+  manga_ocr_engine?: string;
+  manga_detect_engine?: string;
+  manga_segment_engine?: string;
+  manga_inpaint_engine?: string;
   manga_runtime_device?: string;
   manga_detect_device?: string;
   manga_ocr_device?: string;

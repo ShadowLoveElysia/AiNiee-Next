@@ -702,6 +702,17 @@ export const DataService = {
         return data;
     },
 
+    async updateMangaProjectConfig(projectId: string, updates: Record<string, string>): Promise<MangaRuntimeStatusSummary & { ok: boolean; updates: Record<string, string>; task_config?: Record<string, any> }> {
+        const res = await fetch(`${API_BASE}/manga/projects/${encodeURIComponent(projectId)}/config`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to update manga project config');
+        return data;
+    },
+
     async startMangaModelDownload(modelId: string, projectId = ''): Promise<MangaJob> {
         const prefix = projectId
             ? `${API_BASE}/manga/projects/${encodeURIComponent(projectId)}`
@@ -723,6 +734,18 @@ export const DataService = {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to start manga model preset preparation');
+        return data;
+    },
+
+    async startMangaAllModelsDownload(projectId = ''): Promise<MangaJob> {
+        const prefix = projectId
+            ? `${API_BASE}/manga/projects/${encodeURIComponent(projectId)}`
+            : `${API_BASE}/manga`;
+        const res = await fetch(`${prefix}/models/download-all/start`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to start all manga model preparation');
         return data;
     },
 
@@ -803,6 +826,13 @@ export const DataService = {
 
     async getMangaJob(projectId: string, jobId: string): Promise<MangaJob> {
         const res = await fetch(`${API_BASE}/manga/projects/${projectId}/jobs/${jobId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga job');
+        return data;
+    },
+
+    async getGlobalMangaJob(jobId: string): Promise<MangaJob> {
+        const res = await fetch(`${API_BASE}/manga/jobs/${jobId}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to fetch manga job');
         return data;

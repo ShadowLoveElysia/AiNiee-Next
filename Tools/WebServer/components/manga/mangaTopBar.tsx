@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Save,
   ScanLine,
+  Settings2,
   Sparkles,
   Type,
   Undo2,
@@ -71,6 +72,8 @@ export interface MangaTopBarProps {
   onUndo: () => void;
   onRedo: () => void;
   onSave: () => void;
+  onOpenModelManager: () => void;
+  modelManagerIssueCount?: number;
   onExportPdf: () => void;
   onExportCbz: () => void;
   onExportEpub: () => void;
@@ -179,6 +182,8 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
   onUndo,
   onRedo,
   onSave,
+  onOpenModelManager,
+  modelManagerIssueCount = 0,
   onExportPdf,
   onExportCbz,
   onExportEpub,
@@ -188,13 +193,28 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
 }) => {
   const { t } = useI18n();
   const [moreFormatsOpen, setMoreFormatsOpen] = useState(false);
+  const [moreFormatsPosition, setMoreFormatsPosition] = useState<{ top: number; right: number } | null>(null);
   const pageLabel = pageCount > 0 ? `${currentPageIndex || 0}/${pageCount}` : t('manga_no_project');
   const isBusy = Boolean(busyAction);
   const busyLabel = busyAction ? t(getBusyLabelKey(busyAction)) : t('manga_llm_ready');
   const exportDisabled = !hasProject || isBusy;
   const runExtraExport = (callback: () => void) => {
     setMoreFormatsOpen(false);
+    setMoreFormatsPosition(null);
     callback();
+  };
+  const toggleMoreFormats = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (moreFormatsOpen) {
+      setMoreFormatsOpen(false);
+      setMoreFormatsPosition(null);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMoreFormatsPosition({
+      top: Math.min(rect.bottom + 8, Math.max(12, window.innerHeight - 220)),
+      right: Math.max(12, window.innerWidth - rect.right),
+    });
+    setMoreFormatsOpen(true);
   };
 
   return (
@@ -343,12 +363,32 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
           <ToolbarButton label={t('manga_action_save')} onClick={onSave} disabled={!hasProject || isBusy} busy={busyAction === 'save project'} icon={<Save size={16} />} compact />
         </ToolbarGroup>
 
-        <ToolbarGroup label={t('manga_toolbar_export')} className="ml-auto">
+        <ToolbarGroup label={t('manga_toolbar_models')}>
+          <button
+            type="button"
+            onClick={onOpenModelManager}
+            title={t('manga_panel_model_manager')}
+            className="relative inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-sm font-semibold text-slate-200 transition-all hover:border-cyan-300/45 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Settings2 size={16} />
+            <span>{t('manga_panel_model_manager')}</span>
+            {modelManagerIssueCount > 0 && (
+              <span
+                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-slate-950 bg-rose-500 text-[10px] font-black text-white"
+                title={t('manga_model_manager_issue_count', modelManagerIssueCount)}
+              >
+                !
+              </span>
+            )}
+          </button>
+        </ToolbarGroup>
+
+        <ToolbarGroup label={t('manga_toolbar_export')} className="relative ml-auto">
           <ToolbarButton label={t('manga_format_pdf')} onClick={onExportPdf} disabled={exportDisabled} busy={busyAction === 'export pdf'} icon={<Download size={16} />} compact />
           <ToolbarButton label={t('manga_format_cbz')} onClick={onExportCbz} disabled={exportDisabled} busy={busyAction === 'export cbz'} icon={<FileArchive size={16} />} compact />
           <button
             type="button"
-            onClick={() => setMoreFormatsOpen((current) => !current)}
+            onClick={toggleMoreFormats}
             disabled={!hasProject}
             aria-expanded={moreFormatsOpen}
             title={t('manga_more_formats')}
@@ -358,7 +398,13 @@ export const MangaTopBar: React.FC<MangaTopBarProps> = ({
             <ChevronDown size={13} className={`transition-transform ${moreFormatsOpen ? 'rotate-180' : ''}`} />
           </button>
           {moreFormatsOpen && (
-            <div className="flex shrink-0 items-center gap-1.5 border-l border-slate-800/85 pl-1.5">
+            <div
+              className="fixed z-50 grid min-w-40 gap-1.5 rounded-xl border border-slate-800 bg-slate-950 p-2 shadow-2xl shadow-black/45"
+              style={{
+                top: moreFormatsPosition?.top ?? 104,
+                right: moreFormatsPosition?.right ?? 12,
+              }}
+            >
               <ToolbarButton label={t('manga_format_epub')} onClick={() => runExtraExport(onExportEpub)} disabled={exportDisabled} busy={busyAction === 'export epub'} icon={<FileText size={16} />} />
               <ToolbarButton label={t('manga_format_zip')} onClick={() => runExtraExport(onExportZip)} disabled={exportDisabled} busy={busyAction === 'export zip'} icon={<FileArchive size={16} />} />
               <ToolbarButton label={t('manga_format_rar')} onClick={() => runExtraExport(onExportRar)} disabled={exportDisabled} busy={busyAction === 'export rar'} icon={<FileArchive size={16} />} />

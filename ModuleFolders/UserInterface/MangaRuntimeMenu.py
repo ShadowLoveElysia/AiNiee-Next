@@ -17,7 +17,7 @@ from rich.prompt import Confirm, IntPrompt
 from rich.table import Table
 
 from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_preset
-from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
+from ModuleFolders.MangaCore.pipeline.modelStore import MANGA_ENGINE_STAGE_CONFIG_KEYS, MangaModelStore
 
 
 class MangaRuntimeMenu:
@@ -183,7 +183,24 @@ class MangaRuntimeMenu:
             self.console.print(
                 f"[dim]{self._t('manga_model_menu_hint', 'Choose a preset number to prepare it, 90 to list all models, or 0 to return.')}[/dim]"
             )
-            choices = [str(i) for i in range(len(presets) + 1)] + ["90"]
+            action_download_all = 91
+            action_select_engine = 92
+            actions_table = Table(show_header=False, box=None)
+            actions_table.add_row(
+                f"[cyan]{action_download_all}.[/]",
+                self._t("manga_model_menu_download_all", "Download all model packages"),
+            )
+            actions_table.add_row(
+                f"[cyan]{action_select_engine}.[/]",
+                self._t("manga_model_menu_select_engine", "Select downloaded MangaCore engines"),
+            )
+            actions_table.add_row(
+                "[cyan]90.[/]",
+                self._t("manga_model_menu_list_all", "List all model packages"),
+            )
+            actions_table.add_row("[red]0.[/]", self.i18n.get("menu_exit"))
+            self.console.print(actions_table)
+            choices = [str(i) for i in range(len(presets) + 1)] + ["90", str(action_download_all), str(action_select_engine)]
             choice = IntPrompt.ask(
                 f"\n{self.i18n.get('prompt_select')}",
                 choices=choices,
@@ -194,6 +211,12 @@ class MangaRuntimeMenu:
             if choice == 90:
                 self._print_model_details(models)
                 self._wait()
+                continue
+            if choice == action_download_all:
+                self._prepare_all_models()
+                continue
+            if choice == action_select_engine:
+                self._select_downloaded_engine()
                 continue
 
             selected = presets[choice - 1]
@@ -256,6 +279,166 @@ class MangaRuntimeMenu:
                 )
         self.console.print(f"[green]{self._t('manga_model_prepare_done', 'Model preset prepared.')}[/green]")
         self._wait()
+
+    def _prepare_all_models(self) -> None:
+        store = MangaModelStore()
+        manifest = store.build_manager_manifest()
+        missing_count = int(manifest.get("missing_count") or 0)
+        model_count = int(manifest.get("model_count") or 0)
+        if not missing_count:
+            self.console.print(f"[green]{self._t('manga_model_all_ready', 'All manga model packages are already prepared.')}[/green]")
+            self._wait()
+            return
+
+        if not Confirm.ask(
+            self._t("manga_model_confirm_prepare_all", "Prepare all MangaCore model packages? This will download {} missing package(s) out of {}.").format(
+                missing_count,
+                model_count,
+            ),
+            default=False,
+        ):
+            return
+
+        try:
+            result = store.download_all()
+        except Exception as exc:
+            self.console.print(f"[red]{self._t('manga_model_prepare_failed', 'Model preparation failed')}: {exc}[/red]")
+            self._wait()
+            return
+
+        remaining = int(result.get("missing_count") or 0)
+        if remaining:
+            self.console.print(
+                f"[yellow]{self._t('manga_model_prepare_all_warning', 'All-model preparation finished with {} package(s) still missing.').format(remaining)}[/yellow]"
+            )
+        else:
+            self.console.print(f"[green]{self._t('manga_model_prepare_all_done', 'All manga model packages prepared.')}[/green]")
+        self._wait()
+
+    def _select_downloaded_engine(self) -> None:
+        while True:
+            manifest = MangaModelStore().build_manager_manifest()
+            engine_options = manifest.get("engine_options", {})
+            if not isinstance(engine_options, dict):
+                engine_options = {}
+
+            self.host.display_banner()
+            self.console.print(Panel(f"[bold]{self._t('manga_model_select_engine_title', 'Select MangaCore Engines')}[/bold]"))
+            self._print_current_engine_config()
+
+            stages = list(MANGA_ENGINE_STAGE_CONFIG_KEYS.keys())
+            table = Table(show_header=True, expand=False)
+            table.add_column("#", style="cyan")
+            table.add_column(self._t("manga_model_stage", "Stage"))
+            table.add_column(self._t("manga_model_current_engine", "Current"))
+            table.add_column(self._t("manga_model_downloaded_selectable", "Downloaded/selectable"))
+            for index, stage in enumerate(stages, start=1):
+                options = [item for item in engine_options.get(stage, []) if isinstance(item, dict)]
+                selectable_count = len([item for item in options if item.get("selectable")])
+                table.add_row(
+                    str(index),
+                    self._stage_label(stage),
+                    str(self.host.config.get(MANGA_ENGINE_STAGE_CONFIG_KEYS[stage], "")),
+                    f"{selectable_count}/{len(options)}",
+                )
+            table.add_row("[red]0[/]", self.i18n.get("menu_exit"), "", "")
+            self.console.print(table)
+
+            choice = IntPrompt.ask(
+                f"\n{self.i18n.get('prompt_select')}",
+                choices=[str(i) for i in range(len(stages) + 1)],
+                show_choices=False,
+            )
+            if choice == 0:
+                return
+            self._select_engine_for_stage(stages[choice - 1], engine_options)
+
+    def _print_current_engine_config(self) -> None:
+        table = Table(show_header=True, expand=False)
+        table.add_column(self._t("manga_model_stage", "Stage"), style="cyan")
+        table.add_column(self._t("manga_model_current_engine", "Current"))
+        for stage, config_key in MANGA_ENGINE_STAGE_CONFIG_KEYS.items():
+            table.add_row(self._stage_label(stage), str(self.host.config.get(config_key, "")))
+        self.console.print(table)
+
+    def _select_engine_for_stage(self, stage: str, engine_options: dict[str, object]) -> None:
+        options = [item for item in engine_options.get(stage, []) if isinstance(item, dict)]
+        if not options:
+            self.console.print(f"[yellow]{self._t('manga_model_no_stage_options', 'No model options are registered for this stage.')}[/yellow]")
+            self._wait()
+            return
+
+        selectable_indices: dict[int, dict[str, object]] = {}
+        table = Table(show_header=True, expand=False)
+        table.add_column("#", style="cyan")
+        table.add_column(self._t("manga_package", "Package"))
+        table.add_column(self._t("manga_model_hardware", "Hardware"))
+        table.add_column(self._t("manga_model_effect", "Effect"))
+        table.add_column(self._t("manga_model_status", "Status"))
+        table.add_column(self._t("manga_model_description", "Description"))
+        for index, option in enumerate(options, start=1):
+            selectable = bool(option.get("selectable"))
+            if selectable:
+                selectable_indices[index] = option
+            status = self._engine_option_status(option)
+            style = "" if selectable else "dim"
+            table.add_row(
+                str(index) if selectable else f"[dim]{index}[/dim]",
+                str(option.get("display_name") or option.get("model_id") or ""),
+                str(option.get("hardware_tier") or ""),
+                str(option.get("quality_tier") or ""),
+                status,
+                str(option.get("description") or ""),
+                style=style,
+            )
+        table.add_row("[red]0[/]", self.i18n.get("menu_exit"), "", "", "", "")
+        self.console.print(table)
+        self.console.print(f"[dim]{self._t('manga_model_available_only_hint', 'Only downloaded and runtime-supported model packages can be selected. Missing packages remain visible but disabled.')}[/dim]")
+
+        choices = ["0", *(str(index) for index in selectable_indices)]
+        if choices == ["0"]:
+            self.console.print(f"[yellow]{self._t('manga_model_no_selectable_options', 'No downloaded selectable model is available for this stage yet.')}[/yellow]")
+            self._wait()
+            return
+
+        choice = IntPrompt.ask(
+            f"\n{self.i18n.get('prompt_select')}",
+            choices=choices,
+            show_choices=False,
+        )
+        if choice == 0:
+            return
+
+        selected = selectable_indices[choice]
+        config_key = MANGA_ENGINE_STAGE_CONFIG_KEYS[stage]
+        model_id = str(selected.get("model_id") or "")
+        self.host.config[config_key] = model_id
+        self.host.save_config()
+        self.console.print(
+            f"[green]{self._t('manga_model_engine_config_saved', 'Manga engine config saved')}: {config_key}={model_id}[/green]"
+        )
+        self._wait()
+
+    def _engine_option_status(self, option: dict[str, object]) -> str:
+        if option.get("selectable"):
+            return self._t("manga_model_selectable", "Selectable")
+        reason = str(option.get("disabled_reason") or "")
+        if reason == "missing":
+            return self._t("manga_model_not_downloaded", "Not downloaded")
+        if reason == "unsupported_runtime":
+            return self._t("manga_model_unsupported_runtime", "Runtime unsupported")
+        return self._t("manga_missing", "Missing")
+
+    def _stage_label(self, stage: str) -> str:
+        if stage == "detect":
+            return self._t("manga_runtime_stage_detect", "Detect")
+        if stage == "segment":
+            return self._t("manga_runtime_stage_segment", "Segment")
+        if stage == "ocr":
+            return self._t("manga_runtime_stage_ocr", "OCR")
+        if stage == "inpaint":
+            return self._t("manga_runtime_stage_inpaint", "Inpaint")
+        return stage
 
     def _package_version(self, package_name: str) -> str:
         try:

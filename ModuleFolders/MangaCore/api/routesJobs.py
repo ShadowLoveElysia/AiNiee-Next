@@ -13,3 +13,11 @@ def get_job(project_id: str, job_id: str) -> dict[str, object]:
     if job is None or (job.project_id and job.project_id != project_id):
         raise HTTPException(status_code=404, detail=f"Manga job not found: {job_id}")
     return job.to_dict()
+
+
+@router.get("/jobs/{job_id}")
+def get_global_job(job_id: str) -> dict[str, object]:
+    job = JobRegistry.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Manga job not found: {job_id}")
+    return job.to_dict()

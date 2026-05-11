@@ -179,7 +179,6 @@ export interface MangaModelPackageStatus {
   repo_url: string;
   source_url?: string;
   description?: string;
-  runtime_notes?: string[];
   aliases?: string[];
   hardware_tier?: string;
   quality_tier?: string;
@@ -194,6 +193,14 @@ export interface MangaModelPackageStatus {
   runtime_supported?: boolean;
   runtime_assets_path?: string;
   runtime_engine_id?: string;
+  runtime_notes?: string[];
+}
+
+export interface MangaModelEngineOption extends MangaModelPackageStatus {
+  config_key: string;
+  selectable: boolean;
+  runtime_selectable?: boolean;
+  disabled_reason?: string;
 }
 
 export interface MangaModelPresetStatus {
@@ -219,6 +226,13 @@ export interface MangaModelManagerManifest {
   default_ocr_model_id: string;
   presets: MangaModelPresetStatus[];
   models: MangaModelPackageStatus[];
+  engine_options?: Record<string, MangaModelEngineOption[]>;
+  model_ids?: string[];
+  available_model_ids?: string[];
+  missing_model_ids?: string[];
+  available?: boolean;
+  missing_count?: number;
+  model_count?: number;
 }
 
 export interface MangaRuntimeDeviceStatus {

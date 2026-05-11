@@ -4,6 +4,7 @@ import { MangaBlocksPanel } from '../components/manga/mangaBlocksPanel';
 import { MangaCanvas } from '../components/manga/mangaCanvas';
 import { MangaInspector } from '../components/manga/mangaInspector';
 import { MangaLayersPanel } from '../components/manga/mangaLayersPanel';
+import { MangaModelManagerDialog } from '../components/manga/mangaModelManagerDialog';
 import { MangaPageStrip } from '../components/manga/mangaPageStrip';
 import { MangaStatusBar } from '../components/manga/mangaStatusBar';
 import { MangaTopBar } from '../components/manga/mangaTopBar';
@@ -147,6 +148,46 @@ const formatJobMessage = (
     if (translated !== key) return translated;
   }
   return String(job.message || '');
+};
+
+const isMangaModelDownloadJob = (job: MangaJob | null) => (
+  Boolean(job?.stage && (
+    job.stage.startsWith('model_download')
+    || job.stage.startsWith('model_preset_download')
+    || job.stage.startsWith('model_all_download')
+  ))
+);
+
+const formatBytes = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let nextValue = value;
+  let unitIndex = 0;
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024;
+    unitIndex += 1;
+  }
+  return `${nextValue >= 10 || unitIndex === 0 ? nextValue.toFixed(0) : nextValue.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const formatDownloadProgressMetric = (payload: Record<string, any>, fallbackProgress: number, t: (key: string, ...args: any[]) => string) => {
+  const unit = String(payload.unit || '');
+  const bytesDownloaded = Number(payload.bytes_downloaded || 0);
+  const bytesTotal = Number(payload.bytes_total || 0);
+  if (unit === 'files' && bytesTotal > 0) {
+    return t('manga_model_download_items', bytesDownloaded, bytesTotal);
+  }
+  if (bytesTotal > 0) {
+    return t('manga_model_download_bytes', formatBytes(bytesDownloaded), formatBytes(bytesTotal));
+  }
+
+  const itemIndex = Number(payload.item_index || 0);
+  const itemCount = Number(payload.item_count || 0);
+  if (itemIndex > 0 && itemCount > 0) {
+    return t('manga_model_download_items', itemIndex, itemCount);
+  }
+
+  return `${Math.max(0, Math.min(100, Math.round(fallbackProgress || 0)))}%`;
 };
 
 const formatI18nPayload = (
@@ -408,6 +449,7 @@ export const MangaEditor: React.FC = () => {
   const [activeRuntimeStage, setActiveRuntimeStage] = useState('');
   const [fontCatalog, setFontCatalog] = useState<MangaFontCatalogEntry[]>([]);
   const [modelManager, setModelManager] = useState<MangaModelManagerManifest | null>(null);
+  const [modelManagerLoading, setModelManagerLoading] = useState(false);
   const [psdExportOpen, setPsdExportOpen] = useState(false);
   const [psdExportScope, setPsdExportScope] = useState<PsdExportScope>('current');
   const [psdScriptOnly, setPsdScriptOnly] = useState(false);
@@ -419,6 +461,7 @@ export const MangaEditor: React.FC = () => {
   const [psdExportProgressOpen, setPsdExportProgressOpen] = useState(false);
   const [psdExportJob, setPsdExportJob] = useState<MangaJob | null>(null);
   const [psdExportCancelling, setPsdExportCancelling] = useState(false);
+  const [modelManagerOpen, setModelManagerOpen] = useState(false);
   const [blockDrafts, setBlockDrafts] = useState<Record<string, MangaBlockDraft>>({});
   const [canvasCommand, setCanvasCommand] = useState<MangaCanvasCommand>({ kind: 'fit', token: 0 });
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
@@ -465,7 +508,7 @@ export const MangaEditor: React.FC = () => {
         aliases: Array.isArray(pkg?.aliases) ? pkg.aliases.map(String) : [],
         recommendedFor: Array.isArray(pkg?.recommended_for) ? pkg.recommended_for.map(String) : [],
         cautions: Array.isArray(pkg?.cautions) ? pkg.cautions.map(String) : [],
-        available: readiness ? !readiness.blocking : Boolean(pkg?.available),
+        available: Boolean(pkg?.available),
         runtimeSupported: readiness ? Boolean(readiness.runtime_supported) : Boolean(pkg?.runtime_supported),
         runtimeEngineId: String(readiness?.runtime_engine_id || pkg?.runtime_engine_id || ''),
         storagePath: String(readiness?.storage_path || pkg?.runtime_assets_path || pkg?.snapshot_path || ''),
@@ -570,6 +613,81 @@ export const MangaEditor: React.FC = () => {
         }
       : null
   ), [activeJob, t]);
+
+  const modelDownloadProgressPayload = useMemo<Record<string, any>>(() => {
+    const payload = activeJob?.result?.progress;
+    return payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, any>
+      : {};
+  }, [activeJob]);
+  const modelDownloadVisible = isMangaModelDownloadJob(activeJob);
+  const modelDownloadRunning = activeJob?.status === 'running';
+  const modelDownloadPercent = Math.max(0, Math.min(100, Number(activeJob?.progress || 0)));
+  const modelDownloadStageLabel = activeJob ? formatStageLabel(activeJob.stage, t) : '';
+  const modelDownloadMessage = activeJob ? formatJobMessage(activeJob, t) : '';
+  const modelDownloadModelLabel = String(
+    modelDownloadProgressPayload.display_name
+    || modelDownloadProgressPayload.model_id
+    || activeJob?.result?.display_name
+    || activeJob?.result?.model_id
+    || '',
+  );
+  const modelDownloadAssetLabel = String(modelDownloadProgressPayload.asset_id || modelDownloadProgressPayload.repo_id || '');
+  const modelDownloadMetric = formatDownloadProgressMetric(modelDownloadProgressPayload, modelDownloadPercent, t);
+  const modelDownloadModelIndex = Number(modelDownloadProgressPayload.model_index || 0);
+  const modelDownloadModelCount = Number(modelDownloadProgressPayload.model_count || 0);
+  const modelDownloadItemIndex = Number(modelDownloadProgressPayload.item_index || 0);
+  const modelDownloadItemCount = Number(modelDownloadProgressPayload.item_count || 0);
+  const modelDownloadDetailRows = [
+    modelDownloadModelLabel
+      ? {
+          label: t('manga_model_download_current_model'),
+          value: modelDownloadModelCount > 1 && modelDownloadModelIndex > 0
+            ? t('manga_model_download_current_model_indexed', modelDownloadModelLabel, modelDownloadModelIndex, modelDownloadModelCount)
+            : modelDownloadModelLabel,
+        }
+      : null,
+    modelDownloadAssetLabel
+      ? {
+          label: t('manga_model_download_current_asset'),
+          value: modelDownloadItemCount > 1 && modelDownloadItemIndex > 0
+            ? t('manga_model_download_current_asset_indexed', modelDownloadAssetLabel, modelDownloadItemIndex, modelDownloadItemCount)
+            : modelDownloadAssetLabel,
+        }
+      : null,
+    modelDownloadProgressPayload.url
+      ? {
+          label: t('manga_model_download_source'),
+          value: String(modelDownloadProgressPayload.url),
+    }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+  const modelDownloadProgressState = modelDownloadVisible
+    ? {
+        visible: true,
+        running: modelDownloadRunning,
+        failed: activeJob?.status === 'failed',
+        progress: modelDownloadPercent,
+        stageLabel: modelDownloadStageLabel,
+        message: modelDownloadMessage,
+        metric: modelDownloadMetric,
+        detailRows: modelDownloadDetailRows,
+        errorMessage: activeJob?.error_message || '',
+      }
+    : null;
+
+  const modelManagerIssueCount = useMemo(() => {
+    const configuredMissingCount = modelManager
+      ? Number(modelManager.missing_count || modelManager.missing_model_ids?.length || 0)
+      : engineCards
+        .flatMap((card) => card.packages)
+        .filter((pkg) => !pkg.available).length;
+    const readinessIssueCount = scene?.runtime_readiness?.items?.filter((item) => {
+      if (!item?.blocking) return false;
+      return String(item.status || '') !== 'missing_model';
+    }).length || 0;
+    return configuredMissingCount + readinessIssueCount;
+  }, [engineCards, modelManager, scene?.runtime_readiness?.items]);
 
   const pageQualityMessage = getPageQualityNotice(page, t);
   const pageQualityGate = page?.quality_gate || null;
@@ -838,6 +956,18 @@ export const MangaEditor: React.FC = () => {
     return sceneSummary;
   };
 
+  const loadMangaModelManager = async (force = false) => {
+    if (modelManager && !force) return modelManager;
+    setModelManagerLoading(true);
+    try {
+      const manifest = await DataService.getMangaModelManager();
+      setModelManager(manifest);
+      return manifest;
+    } finally {
+      setModelManagerLoading(false);
+    }
+  };
+
   const refreshFontCatalog = async (projectId?: string) => {
     try {
       setFontCatalog(await DataService.listMangaFonts(projectId));
@@ -879,6 +1009,10 @@ export const MangaEditor: React.FC = () => {
   };
 
   useEffect(() => {
+    void loadMangaModelManager();
+  }, []);
+
+  useEffect(() => {
     if (!project?.project_id) return undefined;
     const refreshRuntimeOnFocus = () => {
       void hydrateProjectRuntimeState(project.project_id, true);
@@ -909,6 +1043,9 @@ export const MangaEditor: React.FC = () => {
     options?: { maxAttempts?: number; intervalMs?: number },
   ) => {
     setActiveJob(initialJob);
+    if (isMangaModelDownloadJob(initialJob)) {
+      setModelManagerOpen(true);
+    }
     if (!initialJob.job_id || ['completed', 'failed', 'cancelled'].includes(initialJob.status)) {
       return initialJob;
     }
@@ -918,8 +1055,13 @@ export const MangaEditor: React.FC = () => {
     const intervalMs = options?.intervalMs ?? 500;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await delay(intervalMs);
-      latest = await DataService.getMangaJob(projectId, initialJob.job_id);
+      latest = projectId
+        ? await DataService.getMangaJob(projectId, initialJob.job_id)
+        : await DataService.getGlobalMangaJob(initialJob.job_id);
       setActiveJob(latest);
+      if (isMangaModelDownloadJob(latest)) {
+        setModelManagerOpen(true);
+      }
       if (['completed', 'failed', 'cancelled'].includes(latest.status)) {
         break;
       }
@@ -1174,11 +1316,12 @@ export const MangaEditor: React.FC = () => {
   };
 
   const handleDownloadMangaModel = async (modelId: string) => {
-    if (!modelId || !project) return;
+    if (!modelId) return;
 
     await withBusyAction(`download model:${modelId}`, async () => {
-      const job = await DataService.startMangaModelDownload(modelId, project.project_id);
-      const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      const projectId = project?.project_id || '';
+      const job = await DataService.startMangaModelDownload(modelId, projectId);
+      const settled = await waitForJob(projectId, job, { maxAttempts: 7200, intervalMs: 500 });
       const result = settled.result || {};
       const modelLabel = String(result.display_name || result.model_id || modelId);
       showNotice(
@@ -1187,8 +1330,11 @@ export const MangaEditor: React.FC = () => {
           ? t('manga_notice_model_prepared', modelLabel)
           : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', modelLabel),
       );
-      await refreshScene(project.project_id);
-      await hydrateProjectRuntimeState(project.project_id, true);
+      await loadMangaModelManager(true);
+      if (projectId) {
+        await refreshScene(projectId);
+        await hydrateProjectRuntimeState(projectId, true);
+      }
       if (settled.status === 'completed' && runtimeValidation) {
         showNotice('info', t('manga_notice_model_ready_rerun_runtime'));
       }
@@ -1196,11 +1342,12 @@ export const MangaEditor: React.FC = () => {
   };
 
   const handleDownloadMangaModelPreset = async (presetId: string) => {
-    if (!presetId || !project) return;
+    if (!presetId) return;
 
     await withBusyAction(`download model preset:${presetId}`, async () => {
-      const job = await DataService.startMangaModelPresetDownload(presetId, project.project_id);
-      const settled = await waitForJob(project.project_id, job, { maxAttempts: 7200, intervalMs: 500 });
+      const projectId = project?.project_id || '';
+      const job = await DataService.startMangaModelPresetDownload(presetId, projectId);
+      const settled = await waitForJob(projectId, job, { maxAttempts: 7200, intervalMs: 500 });
       const result = settled.result || {};
       const preset = (result.preset || {}) as Record<string, any>;
       const presetLabel = String(preset.display_name || preset.preset_id || presetId);
@@ -1210,9 +1357,72 @@ export const MangaEditor: React.FC = () => {
           ? t('manga_notice_model_preset_prepared', presetLabel)
           : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', presetLabel),
       );
-      await refreshScene(project.project_id);
-      await hydrateProjectRuntimeState(project.project_id, true);
+      await loadMangaModelManager(true);
+      if (projectId) {
+        await refreshScene(projectId);
+        await hydrateProjectRuntimeState(projectId, true);
+      }
       if (settled.status === 'completed' && runtimeValidation) {
+        showNotice('info', t('manga_notice_model_ready_rerun_runtime'));
+      }
+    });
+  };
+
+  const handleDownloadAllMangaModels = async () => {
+    await withBusyAction('download all models', async () => {
+      const projectId = project?.project_id || '';
+      const job = await DataService.startMangaAllModelsDownload(projectId);
+      const settled = await waitForJob(projectId, job, { maxAttempts: 7200, intervalMs: 500 });
+      const result = settled.result || {};
+      const missingCount = Number(result.missing_count || 0);
+      showNotice(
+        settled.status === 'completed' && missingCount === 0 ? 'success' : 'warning',
+        settled.status === 'completed'
+          ? (
+              missingCount > 0
+                ? t('manga_notice_all_models_prepare_warning', missingCount)
+                : t('manga_notice_all_models_prepared')
+            )
+          : settled.error_message || settled.message || t('manga_notice_model_prepare_warning', t('manga_model_download_all')),
+      );
+      await loadMangaModelManager(true);
+      if (projectId) {
+        await refreshScene(projectId);
+        await hydrateProjectRuntimeState(projectId, true);
+      }
+      if (settled.status === 'completed' && runtimeValidation) {
+        showNotice('info', t('manga_notice_model_ready_rerun_runtime'));
+      }
+    });
+  };
+
+  const handleSelectMangaEngine = async (configKey: string, modelId: string) => {
+    if (!project || !configKey || !modelId) return;
+
+    await withBusyAction(`select manga engine:${configKey}`, async () => {
+      const updated = await DataService.updateMangaProjectConfig(project.project_id, { [configKey]: modelId });
+      setProject((current) => (
+        current
+          ? {
+              ...current,
+              task_config: {
+                ...(current.task_config || {}),
+                ...(updated.task_config || {}),
+              },
+            }
+          : current
+      ));
+      setScene((current) => (
+        current
+          ? {
+              ...current,
+              engines: updated.engines,
+              runtime_readiness: updated.runtime_readiness,
+            }
+          : current
+      ));
+      showNotice('success', t('manga_notice_engine_config_saved', modelId));
+      if (runtimeValidation) {
         showNotice('info', t('manga_notice_model_ready_rerun_runtime'));
       }
     });
@@ -1821,6 +2031,11 @@ export const MangaEditor: React.FC = () => {
         onUndo={() => { void handleUndo(); }}
         onRedo={() => { void handleRedo(); }}
         onSave={() => { void handleSaveProject(); }}
+        onOpenModelManager={() => {
+          setModelManagerOpen(true);
+          void loadMangaModelManager();
+        }}
+        modelManagerIssueCount={modelManagerIssueCount}
         onExportPdf={() => { void handleExport('pdf'); }}
         onExportCbz={() => { void handleExport('cbz'); }}
         onExportEpub={() => { void handleExport('epub'); }}
@@ -2053,6 +2268,23 @@ export const MangaEditor: React.FC = () => {
         </div>
       )}
 
+      <MangaModelManagerDialog
+        open={modelManagerOpen}
+        modelManager={modelManager}
+        loading={modelManagerLoading}
+        projectTaskConfig={project?.task_config || null}
+        busyAction={busyAction}
+        activeJobProgress={activeJob?.progress || 0}
+        downloadProgress={modelDownloadProgressState}
+        hasProject={Boolean(project)}
+        issueCount={modelManagerIssueCount}
+        onClose={() => setModelManagerOpen(false)}
+        onDownloadModel={(modelId) => { void handleDownloadMangaModel(modelId); }}
+        onDownloadModelPreset={(presetId) => { void handleDownloadMangaModelPreset(presetId); }}
+        onDownloadAllModels={() => { void handleDownloadAllMangaModels(); }}
+        onSelectMangaEngine={(configKey, modelId) => { void handleSelectMangaEngine(configKey, modelId); }}
+      />
+
       <div className="flex-1 min-h-0 flex bg-slate-950">
         <MangaPageStrip
           pages={scene?.pages || []}
@@ -2092,7 +2324,6 @@ export const MangaEditor: React.FC = () => {
             activeBlockDraft={activeBlockDraft}
             activeJob={activeJobSummary}
             engineCards={engineCards}
-            modelManager={modelManager}
             runtimeValidation={runtimeValidation}
             runtimeValidationHistory={runtimeValidationHistory}
             runtimeValidationDiff={runtimeValidationDiff}
@@ -2110,7 +2341,6 @@ export const MangaEditor: React.FC = () => {
             onRetryRuntimeValidationStage={(stage) => { void handleRetryRuntimeValidationStage(stage); }}
             onValidateRuntime={() => { void handleValidateRuntime(); }}
             onDownloadModel={(modelId) => { void handleDownloadMangaModel(modelId); }}
-            onDownloadModelPreset={(presetId) => { void handleDownloadMangaModelPreset(presetId); }}
             onFocusRuntimeBox={handleFocusRuntimeBox}
           />
           <MangaLayersPanel

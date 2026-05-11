@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { useI18n } from '../../contexts/I18nContext';
 import { MangaFontCatalogEntry, MangaPageDetail } from '../../types/manga';
@@ -42,10 +43,11 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
   onDeleteActiveBlock,
 }) => {
   const { t } = useI18n();
+  const [collapsed, setCollapsed] = useState(false);
   const blocks = page?.blocks || [];
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
+    <div className={`${collapsed ? 'shrink-0' : 'min-h-0 flex-1 overflow-y-auto'} border-t border-slate-900/80 px-3 py-3`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t('manga_blocks_title')}</div>
@@ -53,35 +55,48 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
             {dirtyBlockCount > 0 ? t('manga_dirty_block_count', dirtyBlockCount) : t('manga_editable_block_count', blocks.length)}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            onClick={onSaveActiveBlock}
-            disabled={!hasProject || !page || !activeBlockId || !activeBlockDirty || !!busyAction}
-            className="rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition-colors hover:border-amber-200 disabled:opacity-45"
+            onClick={() => setCollapsed((current) => !current)}
+            title={collapsed ? t('manga_blocks_expand') : t('manga_blocks_collapse')}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/70 text-slate-400 transition-colors hover:border-primary hover:text-slate-100"
           >
-            {t('manga_save_current_block')}
+            {collapsed ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           </button>
-          <button
-            type="button"
-            onClick={onSavePageChanges}
-            disabled={!hasProject || !page || !!busyAction}
-            className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-primary disabled:opacity-50"
-          >
-            {t('manga_action_save')}
-          </button>
-          <button
-            type="button"
-            onClick={onDeleteActiveBlock}
-            disabled={!hasProject || !page || !activeBlockId || !!busyAction}
-            className="rounded-lg border border-rose-300/25 bg-rose-300/10 px-3 py-2 text-xs font-semibold text-rose-100 transition-colors hover:border-rose-200 disabled:opacity-45"
-          >
-            {t('manga_action_delete')}
-          </button>
+          {!collapsed && (
+            <>
+              <button
+                type="button"
+                onClick={onSaveActiveBlock}
+                disabled={!hasProject || !page || !activeBlockId || !activeBlockDirty || !!busyAction}
+                className="rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition-colors hover:border-amber-200 disabled:opacity-45"
+              >
+                {t('manga_save_current_block')}
+              </button>
+              <button
+                type="button"
+                onClick={onSavePageChanges}
+                disabled={!hasProject || !page || !!busyAction}
+                className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-primary disabled:opacity-50"
+              >
+                {t('manga_action_save')}
+              </button>
+              <button
+                type="button"
+                onClick={onDeleteActiveBlock}
+                disabled={!hasProject || !page || !activeBlockId || !!busyAction}
+                className="rounded-lg border border-rose-300/25 bg-rose-300/10 px-3 py-2 text-xs font-semibold text-rose-100 transition-colors hover:border-rose-200 disabled:opacity-45"
+              >
+                {t('manga_action_delete')}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="mt-3 space-y-2">
+      {!collapsed && (
+        <div className="mt-3 space-y-2">
         {blocks.length === 0 && (
           <div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/40 px-4 py-6 text-sm text-slate-500">
             {t('manga_blocks_empty')}
@@ -214,7 +229,8 @@ export const MangaBlocksPanel: React.FC<MangaBlocksPanelProps> = ({
             </section>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

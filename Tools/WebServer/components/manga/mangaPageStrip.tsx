@@ -18,10 +18,11 @@ export interface MangaPageStripProps {
 const PAGE_CARD_HEIGHT = 266;
 const PAGE_GAP = 12;
 const PAGE_ROW_SIZE = PAGE_CARD_HEIGHT + PAGE_GAP;
-const OVERSCAN_ROWS = 8;
+const OVERSCAN_ROWS = 16;
 const THUMBNAIL_SPINNER_TIMEOUT_MS = 8000;
 const THUMBNAIL_NEIGHBOR_PRELOAD_RADIUS = 2;
 const THUMBNAIL_BACKGROUND_PRELOAD_DELAY_MS = 850;
+const USER_SCROLL_AUTO_FOCUS_SUPPRESS_MS = 650;
 
 interface LazyThumbnailProps {
   src: string;
@@ -65,7 +66,7 @@ const LazyThumbnail: React.FC<LazyThumbnailProps> = ({ src, alt, eager }) => {
       <img
         src={src}
         alt={alt}
-        loading="eager"
+        loading={eager ? 'eager' : 'lazy'}
         decoding={eager ? 'sync' : 'async'}
         onLoad={() => {
           setLoaded(true);
@@ -98,6 +99,7 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
   const lastScrollTopRef = useRef(0);
   const lastViewportHeightRef = useRef(0);
   const userScrollingUntilRef = useRef(0);
+  const lastAutoScrollPageIdRef = useRef('');
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
 
@@ -133,7 +135,7 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
       resizeObserver.observe(node);
     }
     const handleScroll = () => {
-      userScrollingUntilRef.current = performance.now() + 180;
+      userScrollingUntilRef.current = performance.now() + USER_SCROLL_AUTO_FOCUS_SUPPRESS_MS;
       scheduleUpdate();
     };
     node.addEventListener('scroll', handleScroll, { passive: true });
@@ -200,6 +202,8 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
     const node = scrollerRef.current;
     if (!node || selectedIndex < 0) return;
     if (performance.now() < userScrollingUntilRef.current) return;
+    if (lastAutoScrollPageIdRef.current === selectedPageId) return;
+    lastAutoScrollPageIdRef.current = selectedPageId;
     const itemTop = selectedIndex * PAGE_ROW_SIZE;
     const itemBottom = itemTop + PAGE_CARD_HEIGHT;
     if (itemTop < node.scrollTop) {
@@ -207,7 +211,7 @@ export const MangaPageStrip: React.FC<MangaPageStripProps> = ({
     } else if (itemBottom > node.scrollTop + node.clientHeight) {
       node.scrollTop = Math.max(0, itemBottom - node.clientHeight);
     }
-  }, [selectedIndex]);
+  }, [selectedIndex, selectedPageId]);
 
   const visibleRange = useMemo(() => {
     if (!pages.length) return { start: 0, end: 0 };

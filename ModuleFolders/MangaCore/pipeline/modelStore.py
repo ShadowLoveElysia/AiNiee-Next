@@ -4,8 +4,10 @@ import inspect
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from ModuleFolders.MangaCore.bridge.providerAdapter import (
     download_runtime_assets,
@@ -32,6 +34,14 @@ _DIRECT_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
     ),
 }
 _DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+MANGA_ENGINE_STAGE_CONFIG_KEYS: dict[str, str] = {
+    "detect": "manga_detect_engine",
+    "segment": "manga_segment_engine",
+    "ocr": "manga_ocr_engine",
+    "inpaint": "manga_inpaint_engine",
+}
+_RUNTIME_OPTIONAL_ENGINE_STAGES = {"segment"}
+DownloadProgressCallback = Callable[[dict[str, object]], None]
 
 
 def _now_iso() -> str:
@@ -49,7 +59,86 @@ def _ensure_huggingface_endpoint() -> str:
     return endpoint
 
 
-def _snapshot_download(repo_id: str, cache_dir: str) -> str:
+def _snapshot_progress_class(progress_callback: DownloadProgressCallback | None = None):
+    class SnapshotProgress:
+        _lock = threading.RLock()
+
+        def __init__(self, iterable=None, *args, **kwargs) -> None:
+            self.iterable = iterable
+            self.total = int(kwargs.get("total") or 0)
+            self.n = int(kwargs.get("initial") or 0)
+            self.description = str(kwargs.get("desc") or "Hugging Face snapshot")
+
+        def __enter__(self):
+            self._emit()
+            return self
+
+        def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+            return None
+
+        def __iter__(self):
+            if self.iterable is None:
+                return iter(())
+            for item in self.iterable:
+                yield item
+                self.update(1)
+
+        def update(self, n: int = 1, *args, **kwargs) -> None:
+            self.n += int(n or 0)
+            self._emit()
+
+        def close(self) -> None:
+            return None
+
+        def refresh(self, *args, **kwargs) -> None:
+            return None
+
+        def reset(self, total: int | None = None, *args, **kwargs) -> None:
+            if total is not None:
+                self.total = int(total or 0)
+            self.n = 0
+            self._emit()
+
+        def set_description(self, desc: str | None = None, *args, **kwargs) -> None:
+            if desc:
+                self.description = str(desc)
+                self._emit()
+
+        def _emit(self) -> None:
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(
+                    {
+                        "kind": "manga_model_download",
+                        "stage": "snapshot",
+                        "message": self.description,
+                        "bytes_downloaded": self.n,
+                        "bytes_total": self.total,
+                        "unit": "files",
+                    }
+                )
+            except Exception:
+                return
+
+        @classmethod
+        def get_lock(cls):
+            return cls._lock
+
+        @classmethod
+        def set_lock(cls, lock) -> None:
+            cls._lock = lock
+
+    return SnapshotProgress
+
+
+def _snapshot_download(
+    repo_id: str,
+    cache_dir: str,
+    *,
+    quiet: bool = False,
+    progress_callback: DownloadProgressCallback | None = None,
+) -> str:
     endpoint = _ensure_huggingface_endpoint()
     try:
         from huggingface_hub import snapshot_download
@@ -66,8 +155,15 @@ def _snapshot_download(repo_id: str, cache_dir: str) -> str:
         "local_files_only": False,
     }
     try:
-        if "endpoint" in inspect.signature(snapshot_download).parameters:
+        signature = inspect.signature(snapshot_download)
+        supports_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "endpoint" in signature.parameters or supports_kwargs:
             kwargs["endpoint"] = endpoint
+        if quiet and ("tqdm_class" in signature.parameters or supports_kwargs):
+            kwargs["tqdm_class"] = _snapshot_progress_class(progress_callback)
     except (TypeError, ValueError):
         pass
     return str(snapshot_download(**kwargs))
@@ -161,10 +257,69 @@ class MangaModelStore:
                 }
             )
             presets.append(preset_payload)
+        available_model_ids = [
+            str(status.get("model_id"))
+            for status in statuses
+            if status.get("model_id") and bool(status.get("available"))
+        ]
+        missing_model_ids = [
+            str(status.get("model_id"))
+            for status in statuses
+            if status.get("model_id") and not bool(status.get("available"))
+        ]
         return {
             "default_ocr_model_id": DEFAULT_OCR_MODEL_ID,
             "presets": presets,
             "models": statuses,
+            "engine_options": self._build_engine_options(statuses),
+            "model_ids": [str(status.get("model_id")) for status in statuses if status.get("model_id")],
+            "available_model_ids": available_model_ids,
+            "missing_model_ids": missing_model_ids,
+            "available": not missing_model_ids,
+            "missing_count": len(missing_model_ids),
+            "model_count": len(statuses),
+        }
+
+    def _build_engine_options(self, statuses: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+        options_by_stage: dict[str, list[dict[str, object]]] = {
+            stage: [] for stage in MANGA_ENGINE_STAGE_CONFIG_KEYS
+        }
+        for status in statuses:
+            stage = str(status.get("stage") or "")
+            config_key = MANGA_ENGINE_STAGE_CONFIG_KEYS.get(stage)
+            if not config_key:
+                continue
+
+            runtime_supported = bool(status.get("runtime_supported"))
+            runtime_selectable = runtime_supported or stage in _RUNTIME_OPTIONAL_ENGINE_STAGES
+            available = bool(status.get("available"))
+            disabled_reason = ""
+            if not available:
+                disabled_reason = "missing"
+            elif not runtime_selectable:
+                disabled_reason = "unsupported_runtime"
+
+            option = dict(status)
+            option.update(
+                {
+                    "config_key": config_key,
+                    "selectable": available and runtime_selectable,
+                    "runtime_selectable": runtime_selectable,
+                    "disabled_reason": disabled_reason,
+                }
+            )
+            options_by_stage[stage].append(option)
+
+        def sort_key(option: dict[str, object]) -> tuple[int, str, str]:
+            return (
+                0 if option.get("selectable") else 1,
+                str(option.get("hardware_tier") or ""),
+                str(option.get("model_id") or ""),
+            )
+
+        return {
+            stage: sorted(options, key=sort_key)
+            for stage, options in options_by_stage.items()
         }
 
     def register_downloaded_snapshot(
@@ -190,37 +345,135 @@ class MangaModelStore:
         )
         return self.get_status(model_id)
 
-    def download(self, model_id: str) -> dict[str, object]:
+    def download(
+        self,
+        model_id: str,
+        *,
+        quiet: bool = False,
+        progress_callback: DownloadProgressCallback | None = None,
+    ) -> dict[str, object]:
         model_id = normalize_model_id(model_id)
         package = get_model_package(model_id)
         runtime_status = get_runtime_asset_status(model_id, self.root_dir)
         if runtime_status.supported:
-            downloaded_runtime_status = download_runtime_assets(model_id, self.root_dir)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "kind": "manga_model_download",
+                        "stage": "model_started",
+                        "message": f"Preparing model package: {package.display_name}",
+                        "model_id": model_id,
+                        "display_name": package.display_name,
+                    }
+                )
+            downloaded_runtime_status = download_runtime_assets(
+                model_id,
+                self.root_dir,
+                quiet=quiet,
+                progress_callback=progress_callback,
+            )
             if downloaded_runtime_status is None or not downloaded_runtime_status.available:
                 raise RuntimeError(f"Failed to prepare runtime assets for manga model: {model_id}")
-            return self.register_downloaded_snapshot(
+            status = self.register_downloaded_snapshot(
                 model_id,
                 downloaded_runtime_status.storage_path,
                 revision=f"runtime:{downloaded_runtime_status.runtime_engine_id}",
             )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "kind": "manga_model_download",
+                        "stage": "model_completed",
+                        "message": f"Prepared model package: {package.display_name}",
+                        "model_id": model_id,
+                        "display_name": package.display_name,
+                    }
+                )
+            return status
 
         self.huggingface_cache_dir().mkdir(parents=True, exist_ok=True)
-        snapshot_path = _snapshot_download(package.repo_id, str(self.huggingface_cache_dir()))
-        return self.register_downloaded_snapshot(
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "kind": "manga_model_download",
+                    "stage": "snapshot",
+                    "message": f"Downloading model snapshot: {package.display_name}",
+                    "model_id": model_id,
+                    "display_name": package.display_name,
+                    "repo_id": package.repo_id,
+                }
+            )
+        snapshot_path = _snapshot_download(
+            package.repo_id,
+            str(self.huggingface_cache_dir()),
+            quiet=quiet,
+            progress_callback=progress_callback,
+        )
+        status = self.register_downloaded_snapshot(
             model_id,
             snapshot_path,
             revision="downloaded",
         )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "kind": "manga_model_download",
+                    "stage": "model_completed",
+                    "message": f"Prepared model package: {package.display_name}",
+                    "model_id": model_id,
+                    "display_name": package.display_name,
+                }
+            )
+        return status
 
-    def download_preset(self, preset_id: str) -> dict[str, object]:
+    def download_preset(
+        self,
+        preset_id: str,
+        *,
+        quiet: bool = False,
+        progress_callback: DownloadProgressCallback | None = None,
+    ) -> dict[str, object]:
         preset = get_model_preset(preset_id)
         statuses: list[dict[str, object]] = []
         for model_id in preset.model_ids:
-            statuses.append(self.download(model_id))
+            statuses.append(self.download(model_id, quiet=quiet, progress_callback=progress_callback))
         return {
             "preset": preset.to_dict(),
             "models": statuses,
             "config_overrides": dict(preset.config_overrides),
+        }
+
+    def download_all(
+        self,
+        *,
+        quiet: bool = False,
+        progress_callback: DownloadProgressCallback | None = None,
+    ) -> dict[str, object]:
+        statuses: list[dict[str, object]] = []
+        for package in list_model_packages():
+            status = self.get_status(package.model_id)
+            if not status.get("available"):
+                status = self.download(package.model_id, quiet=quiet, progress_callback=progress_callback)
+            statuses.append(status)
+        available_model_ids = [
+            str(status.get("model_id"))
+            for status in statuses
+            if status.get("model_id") and bool(status.get("available"))
+        ]
+        missing_model_ids = [
+            str(status.get("model_id"))
+            for status in statuses
+            if status.get("model_id") and not bool(status.get("available"))
+        ]
+        return {
+            "models": statuses,
+            "model_ids": [str(status.get("model_id")) for status in statuses if status.get("model_id")],
+            "available_model_ids": available_model_ids,
+            "missing_model_ids": missing_model_ids,
+            "available": not missing_model_ids,
+            "missing_count": len(missing_model_ids),
+            "model_count": len(statuses),
+            "config_overrides": {},
         }
 
     def _read_record(self, model_id: str) -> dict[str, object]:

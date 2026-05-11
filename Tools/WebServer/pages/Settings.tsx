@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Save, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Globe, Server, FileJson, CheckCircle, Loader2, Wifi, WifiOff, Edit2, X, Check, ChevronDown, Sparkles } from 'lucide-react';
+import { Save, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Globe, Server, FileJson, CheckCircle, Loader2, Wifi, WifiOff, Edit2, X, Check, ChevronDown, Sparkles, DownloadCloud } from 'lucide-react';
 import { AppConfig, PlatformConfig } from '../types';
+import { MangaModelEngineOption, MangaModelManagerManifest, MangaJob } from '../types/manga';
 import { DataService } from '../services/DataService';
 import { nativeConfirm } from '../services/nativeDialog';
 import { PROJECT_TYPES } from '../constants';
@@ -95,6 +96,10 @@ export const Settings: React.FC = () => {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [tempName, setTempName] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [mangaModelManager, setMangaModelManager] = useState<MangaModelManagerManifest | null>(null);
+  const [mangaModelLoading, setMangaModelLoading] = useState(false);
+  const [mangaModelJob, setMangaModelJob] = useState<MangaJob | null>(null);
+  const [mangaModelError, setMangaModelError] = useState('');
 
   // System Online Status Check
   const [isOnline, setIsOnline] = useState(true);
@@ -128,6 +133,7 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     loadProfiles();
     handleLoadTempFiles();
+    loadMangaModelManager();
   }, []);
 
   const handleToggleElysia = (e: React.MouseEvent) => {
@@ -324,6 +330,47 @@ export const Settings: React.FC = () => {
       try { await DataService.deleteProfile(name); await loadProfiles(); } catch (e: any) { alert(e.message); }
   };
 
+  const loadMangaModelManager = async () => {
+      setMangaModelLoading(true);
+      try {
+          setMangaModelManager(await DataService.getMangaModelManager());
+          setMangaModelError('');
+      } catch (e: any) {
+          setMangaModelError(e.message || 'Failed to load manga model manager');
+      } finally {
+          setMangaModelLoading(false);
+      }
+  };
+
+  const waitForGlobalMangaJob = async (initialJob: MangaJob) => {
+      setMangaModelJob(initialJob);
+      if (!initialJob.job_id || ['completed', 'failed', 'cancelled'].includes(initialJob.status)) {
+          return initialJob;
+      }
+      let latest = initialJob;
+      for (let attempt = 0; attempt < 7200; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          latest = await DataService.getGlobalMangaJob(initialJob.job_id);
+          setMangaModelJob(latest);
+          if (['completed', 'failed', 'cancelled'].includes(latest.status)) break;
+      }
+      return latest;
+  };
+
+  const handleDownloadAllMangaModels = async () => {
+      setMangaModelError('');
+      try {
+          const job = await DataService.startMangaAllModelsDownload();
+          const settled = await waitForGlobalMangaJob(job);
+          await loadMangaModelManager();
+          if (settled.status !== 'completed') {
+              setMangaModelError(settled.error_message || settled.message || t('manga_notice_model_prepare_warning', t('manga_model_download_all')));
+          }
+      } catch (e: any) {
+          setMangaModelError(e.message || t('manga_notice_model_prepare_warning', t('manga_model_download_all')));
+      }
+  };
+
   if (!config) {
       return <div className="p-12 text-center text-slate-500 animate-pulse">Loading Configuration...</div>;
   }
@@ -359,6 +406,32 @@ export const Settings: React.FC = () => {
     { value: 'cuda', label: t('manga_settings_device_cuda') },
     { value: 'mps', label: t('manga_settings_device_mps') },
   ];
+  const mangaEngineStageConfigKeys = {
+    detect: 'manga_detect_engine',
+    segment: 'manga_segment_engine',
+    ocr: 'manga_ocr_engine',
+    inpaint: 'manga_inpaint_engine',
+  } as const;
+  const getMangaEngineStageLabel = (stage: string) => {
+    if (stage === 'detect') return t('manga_engine_detect');
+    if (stage === 'segment') return t('manga_engine_segment');
+    if (stage === 'ocr') return t('manga_engine_ocr');
+    if (stage === 'inpaint') return t('manga_engine_inpaint');
+    return stage;
+  };
+  const getMangaModelOptionStatus = (option: MangaModelEngineOption) => {
+    if (option.selectable) return t('manga_ready');
+    if (option.disabled_reason === 'unsupported_runtime') return t('manga_model_unsupported_runtime');
+    return t('manga_model_not_downloaded');
+  };
+  const resolveMangaModelOptionValue = (value: string, options: MangaModelEngineOption[]) => {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) return '';
+    const direct = options.find((option) => option.model_id === rawValue);
+    if (direct) return direct.model_id;
+    const alias = options.find((option) => (option.aliases || []).includes(rawValue));
+    return alias?.model_id || rawValue;
+  };
   const DeviceSelect = ({ field, label }: { field: keyof AppConfig, label: string }) => (
     <div className="space-y-2">
       <label className="text-xs font-semibold text-slate-400 uppercase">{label}</label>
@@ -373,6 +446,39 @@ export const Settings: React.FC = () => {
       </select>
     </div>
   );
+  const MangaEngineSelect = ({ stage, field }: { stage: keyof typeof mangaEngineStageConfigKeys, field: keyof AppConfig }) => {
+    const options = (mangaModelManager?.engine_options?.[stage] || []) as MangaModelEngineOption[];
+    const fallback = stage === 'ocr'
+      ? mangaModelManager?.default_ocr_model_id || ''
+      : options[0]?.model_id || '';
+    return (
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-slate-400 uppercase">{getMangaEngineStageLabel(stage)}</label>
+        <select
+          value={resolveMangaModelOptionValue((config[field] as string) || fallback, options)}
+          onChange={(e) => handleChange(field, e.target.value)}
+          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:border-primary text-sm"
+          disabled={mangaModelLoading}
+        >
+          {options.length === 0 && <option value="">{t('manga_model_no_stage_options')}</option>}
+          {options.map(option => {
+            const disabled = !option.selectable;
+            const label = [
+              option.display_name || option.model_id,
+              option.hardware_tier,
+              option.quality_tier,
+              disabled ? getMangaModelOptionStatus(option) : '',
+            ].filter(Boolean).join(' · ');
+            return (
+              <option key={option.model_id} value={option.model_id} disabled={disabled}>
+                {label}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+    );
+  };
   const deviceState = [
     config.manga_runtime_device || 'auto',
     config.manga_detect_device || 'auto',
@@ -849,7 +955,43 @@ export const Settings: React.FC = () => {
             </div>
 
             <div className="p-4 border border-slate-700 rounded-lg bg-slate-900/30">
-              <h4 className="text-slate-200 font-medium text-sm mb-4">{t('manga_settings_visual_runtime')}</h4>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h4 className="text-slate-200 font-medium text-sm">{t('manga_settings_visual_runtime')}</h4>
+                  <p className="mt-1 text-xs text-slate-500">{t('manga_settings_visual_models_hint')}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void handleDownloadAllMangaModels(); }}
+                  disabled={Boolean(mangaModelJob?.status === 'running') || Boolean(mangaModelManager?.available)}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200 transition-colors hover:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {mangaModelJob?.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <DownloadCloud size={14} />}
+                  {mangaModelManager?.available ? t('manga_model_all_ready_short') : t('manga_model_download_all')}
+                </button>
+              </div>
+              {mangaModelJob?.status === 'running' && (
+                <div className="mb-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-cyan-200">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{mangaModelJob.message || t('manga_preparing')}</span>
+                    <span>{Math.max(0, Math.min(100, Number(mangaModelJob.progress || 0)))}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-950">
+                    <div className="h-full bg-cyan-300" style={{ width: `${Math.max(0, Math.min(100, Number(mangaModelJob.progress || 0)))}%` }} />
+                  </div>
+                </div>
+              )}
+              {mangaModelError && (
+                <div className="mb-4 rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-xs text-rose-200">
+                  {mangaModelError}
+                </div>
+              )}
+              <div className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <MangaEngineSelect stage="detect" field="manga_detect_engine" />
+                <MangaEngineSelect stage="segment" field="manga_segment_engine" />
+                <MangaEngineSelect stage="ocr" field="manga_ocr_engine" />
+                <MangaEngineSelect stage="inpaint" field="manga_inpaint_engine" />
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <DeviceSelect field="manga_runtime_device" label={t('manga_settings_runtime_device')} />
                 <DeviceSelect field="manga_detect_device" label={t('manga_settings_detect_device')} />

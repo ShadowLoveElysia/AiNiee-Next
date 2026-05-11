@@ -9,6 +9,8 @@ import re
 import shutil
 import sys
 import threading
+from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +33,8 @@ CHUNK_SIZE = 1024 * 1024
 PROGRESS_INTERVAL_BYTES = 8 * 1024 * 1024
 _RICH_CONSOLE: Any | None = None
 _RICH_UNAVAILABLE = False
+
+DownloadProgressCallback = Callable[[dict[str, object]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,12 +437,31 @@ def _print_download_summary(results: Iterable[DownloadResult], registered_count:
     console.print(Panel(body, title="Download Summary", border_style="green", expand=False))
 
 
+def _emit_progress(callback: DownloadProgressCallback | None, **payload: object) -> None:
+    if callback is None:
+        return
+    try:
+        callback({key: value for key, value in payload.items() if value is not None})
+    except Exception:
+        return
+
+
 class DownloadDisplay:
-    def __init__(self, root_dir: Path, model_ids: Iterable[str], assets: Iterable[DownloadAsset]) -> None:
+    def __init__(
+        self,
+        root_dir: Path,
+        model_ids: Iterable[str],
+        assets: Iterable[DownloadAsset],
+        *,
+        quiet: bool = False,
+        progress_callback: DownloadProgressCallback | None = None,
+    ) -> None:
         self.root_dir = root_dir
         self.model_ids = tuple(model_ids)
         self.assets = tuple(assets)
-        self.console = _get_rich_console()
+        self.quiet = quiet
+        self.progress_callback = progress_callback
+        self.console = None if quiet else _get_rich_console()
         self.live: Any | None = None
         self.progress: Any | None = None
         self.task_id: Any | None = None
@@ -446,7 +469,11 @@ class DownloadDisplay:
         self.current_asset: DownloadAsset | None = None
         self.current_url = ""
         self.status = "Waiting to start"
+        self.current_downloaded = 0
+        self.current_total = 0
+        self.current_unit = "bytes"
         self.enabled = self.console is not None
+        self.handles_events = self.enabled or self.quiet or self.progress_callback is not None
 
         if self.enabled:
             from rich.progress import (
@@ -471,6 +498,12 @@ class DownloadDisplay:
             )
 
     def __enter__(self) -> DownloadDisplay:
+        self._emit(
+            "started",
+            message="Preparing MangaCore model assets.",
+            item_index=0,
+            item_count=len(self.assets),
+        )
         if not self.enabled:
             return self
         from rich.live import Live
@@ -480,13 +513,23 @@ class DownloadDisplay:
         return self
 
     def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
-        if self.live is None:
-            return
         self._remove_task()
         self.current_index = len(self.assets)
         self.current_asset = None
         self.current_url = ""
-        self.status = "Completed"
+        failed = _exc_type is not None
+        self.status = "Failed" if failed else "Completed"
+        self.current_downloaded = 0
+        self.current_total = 0
+        self.current_unit = "bytes"
+        self._emit(
+            "failed" if failed else "completed",
+            message=str(_exc) if failed and _exc is not None else "MangaCore model assets are ready.",
+            item_index=len(self.assets),
+            item_count=len(self.assets),
+        )
+        if self.live is None:
+            return
         self.live.update(self._render())
         self.live.stop()
         if self.console is not None:
@@ -497,15 +540,24 @@ class DownloadDisplay:
         self.current_asset = asset
         self.current_url = ""
         self.status = "Preparing"
+        self.current_downloaded = 0
+        self.current_total = 0
+        self.current_unit = "bytes"
         self._remove_task()
+        self._emit("asset", message=f"Preparing asset: {asset.asset_id}")
         self._refresh()
 
     def start_download(self, url: str, total: int) -> None:
+        if self.current_asset is not None:
+            self.current_url = url
+            self.status = "Downloading"
+            self.current_downloaded = 0
+            self.current_total = max(0, int(total or 0))
+            self.current_unit = "bytes"
+            self._emit("downloading", message=f"Downloading asset: {self.current_asset.asset_id}")
         if not self.enabled or self.progress is None or self.current_asset is None:
             return
         self._remove_task()
-        self.current_url = url
-        self.status = "Downloading"
         self.task_id = self.progress.add_task(
             self.current_asset.asset_id,
             total=total if total else None,
@@ -513,11 +565,15 @@ class DownloadDisplay:
         self._refresh()
 
     def start_unit_progress(self, description: str, total: int) -> None:
+        self.current_url = ""
+        self.status = description
+        self.current_downloaded = 0
+        self.current_total = max(0, int(total or 0))
+        self.current_unit = "files"
+        self._emit("snapshot", message=description)
         if not self.enabled or self.progress is None:
             return
         self._remove_task()
-        self.current_url = ""
-        self.status = description
         self.task_id = self.progress.add_task(
             description,
             total=total if total else None,
@@ -525,19 +581,26 @@ class DownloadDisplay:
         self._refresh()
 
     def advance(self, completed_bytes: int) -> None:
+        increment = max(0, int(completed_bytes or 0))
+        self.current_downloaded += increment
         if self.progress is not None and self.task_id is not None:
-            self.progress.update(self.task_id, advance=completed_bytes)
+            self.progress.update(self.task_id, advance=increment)
+        self._emit("downloading" if self.current_url else "snapshot", message=self.status)
 
     def set_status(self, status: str, *, url: str = "") -> None:
         self.status = status
         if url:
             self.current_url = url
+        self._emit("status", message=status)
         self._refresh()
 
     def finish_current(self, status: str) -> None:
         self._remove_task()
         self.status = status
         self.current_url = ""
+        if self.current_total and self.current_downloaded < self.current_total:
+            self.current_downloaded = self.current_total
+        self._emit("asset_completed", message=status)
         self._refresh()
 
     def _remove_task(self) -> None:
@@ -598,6 +661,25 @@ class DownloadDisplay:
     def _refresh(self) -> None:
         if self.live is not None:
             self.live.update(self._render())
+
+    def _emit(self, stage: str, *, message: str = "", item_index: int | None = None, item_count: int | None = None) -> None:
+        asset = self.current_asset
+        _emit_progress(
+            self.progress_callback,
+            kind="manga_model_download",
+            stage=stage,
+            message=message or self.status,
+            root_dir=str(self.root_dir),
+            model_ids=list(self.model_ids),
+            asset_id=asset.asset_id if asset is not None else "",
+            total=item_count if item_count is not None else len(self.assets),
+            item_index=item_index if item_index is not None else (self.current_index + 1 if asset is not None else 0),
+            item_count=item_count if item_count is not None else len(self.assets),
+            url=self.current_url,
+            bytes_downloaded=self.current_downloaded,
+            bytes_total=self.current_total,
+            unit=self.current_unit,
+        )
 
 
 def _asset_filename(asset: DownloadAsset) -> str:
@@ -790,7 +872,7 @@ def _download_file(
     display: DownloadDisplay | None = None,
 ) -> bool:
     if _is_file_ready(destination, asset.sha256) and not force:
-        if display is not None and display.enabled:
+        if display is not None and display.handles_events:
             display.finish_current(f"Skipped: {destination}")
         else:
             _print(f"[SKIP] {asset.asset_id} -> {destination}", style="dim")
@@ -804,18 +886,18 @@ def _download_file(
         url = _resolve_download_url(raw_url)
         try:
             if index > 1:
-                if display is not None and display.enabled:
+                if display is not None and display.handles_events:
                     display.set_status(f"Retrying fallback URL {index}/{len(asset.urls)}", url=url)
                 else:
                     _print(f"[RETRY] {asset.asset_id}: fallback URL {index}/{len(asset.urls)}", style="yellow")
             _cleanup_partial(destination)
-            if display is None or not display.enabled:
+            if display is None or not display.handles_events:
                 _print(f"[GET] {asset.asset_id}: {url}", style="cyan")
 
             with session.get(url, stream=True, timeout=timeout) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length") or 0)
-                if display is not None and display.enabled:
+                if display is not None and display.handles_events:
                     display.start_download(url, total)
                     downloaded = _stream_response_display(response, partial_path, display)
                 else:
@@ -826,7 +908,7 @@ def _download_file(
                     raise IOError(f"incomplete download: expected {total} bytes, got {downloaded}")
             _verify_hash(partial_path, asset.sha256)
             shutil.move(str(partial_path), str(destination))
-            if display is not None and display.enabled:
+            if display is not None and display.handles_events:
                 display.finish_current(f"Ready: {destination}")
             else:
                 _print(f"[OK] {asset.asset_id} -> {destination}", style="green")
@@ -835,7 +917,7 @@ def _download_file(
             last_error = exc
             _cleanup_partial(destination)
             if index < len(asset.urls):
-                if display is not None and display.enabled:
+                if display is not None and display.handles_events:
                     display.set_status(f"Download failed, switching URL: {exc}")
                 else:
                     _print(f"[WARN] {asset.asset_id}: {exc}", style="yellow")
@@ -878,7 +960,7 @@ def _extract_archive(
 ) -> bool:
     targets = _archive_targets(root_dir, asset)
     if all(target.exists() for target in targets) and not force:
-        if display is not None and display.enabled:
+        if display is not None and display.handles_events:
             display.finish_current("Skipped: extracted files already exist")
         else:
             _print(f"[SKIP] {asset.asset_id}: extracted files already exist", style="dim")
@@ -890,7 +972,7 @@ def _extract_archive(
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
 
-    if display is not None and display.enabled:
+    if display is not None and display.handles_events:
         display.set_status(f"Extracting: {archive_path}")
     else:
         _print(f"[EXTRACT] {asset.asset_id}: {archive_path}", style="cyan")
@@ -912,7 +994,7 @@ def _extract_archive(
         if extract_dir.exists():
             shutil.rmtree(extract_dir)
 
-    if display is not None and display.enabled:
+    if display is not None and display.handles_events:
         display.finish_current("Extracted")
     else:
         _print(f"[OK] {asset.asset_id}: extracted", style="green")
@@ -951,7 +1033,7 @@ def _write_hf_snapshot_marker(root_dir: Path, asset: DownloadAsset, snapshot_pat
 
 
 def _snapshot_progress_class(display: DownloadDisplay | None):
-    if display is None or not display.enabled:
+    if display is None or not display.handles_events:
         return None
 
     class SnapshotProgress:
@@ -962,6 +1044,7 @@ def _snapshot_progress_class(display: DownloadDisplay | None):
             self.total = int(kwargs.get("total") or 0)
             self.n = int(kwargs.get("initial") or 0)
             self.description = str(kwargs.get("desc") or "HF snapshot files")
+            self.started = False
 
         def __enter__(self):
             self._start()
@@ -996,6 +1079,7 @@ def _snapshot_progress_class(display: DownloadDisplay | None):
             if total is not None:
                 self.total = int(total or 0)
             self.n = 0
+            self.started = False
             self._start()
 
         def set_description(self, desc: str | None = None, *args, **kwargs) -> None:
@@ -1004,8 +1088,9 @@ def _snapshot_progress_class(display: DownloadDisplay | None):
                 display.set_status(self.description)
 
         def _start(self) -> None:
-            if display.task_id is None:
+            if not self.started:
                 display.start_unit_progress(self.description, self.total)
+                self.started = True
 
         @classmethod
         def get_lock(cls):
@@ -1058,13 +1143,13 @@ def _download_hf_snapshot_asset(
     display: DownloadDisplay | None = None,
 ) -> DownloadResult:
     if _hf_snapshot_ready(asset, root_dir) and not force:
-        if display is not None and display.enabled:
+        if display is not None and display.handles_events:
             display.finish_current(f"Skipped: {root_dir / asset.hf_destination}")
         else:
             _print(f"[SKIP] {asset.asset_id} -> {root_dir / asset.hf_destination}", style="dim")
         return DownloadResult(asset_id=asset.asset_id, skipped=True, snapshot=True)
 
-    if display is not None and display.enabled:
+    if display is not None and display.handles_events:
         display.set_status(f"Downloading HF snapshot: {asset.hf_repo_id}")
     else:
         _print(f"[HF] {asset.asset_id}: {asset.hf_repo_id}", style="cyan")
@@ -1087,7 +1172,7 @@ def _download_hf_snapshot_asset(
         )
 
     _write_hf_snapshot_marker(root_dir, asset, snapshot_path)
-    if display is not None and display.enabled:
+    if display is not None and display.handles_events:
         display.finish_current(f"Ready: {destination}")
     else:
         _print(f"[OK] {asset.asset_id} -> {destination}", style="green")
@@ -1102,15 +1187,26 @@ def download_asset(
     session: requests.Session | None = None,
     timeout: tuple[int, int] = REQUEST_TIMEOUT,
     display: DownloadDisplay | None = None,
+    quiet: bool = False,
+    progress_callback: DownloadProgressCallback | None = None,
 ) -> DownloadResult:
     root = Path(root_dir)
     root.mkdir(parents=True, exist_ok=True)
+    local_display = display
+    owns_display = False
+    if local_display is None and (quiet or progress_callback is not None):
+        local_display = DownloadDisplay(root, (), (asset,), quiet=quiet, progress_callback=progress_callback)
+        local_display.start_asset(0, asset)
+        owns_display = True
 
     owns_session = session is None
     active_session = session or requests.Session()
+    succeeded = False
     try:
         if asset.is_hf_snapshot:
-            return _download_hf_snapshot_asset(asset, root, force=force, display=display)
+            result = _download_hf_snapshot_asset(asset, root, force=force, display=local_display)
+            succeeded = True
+            return result
 
         download_path = _asset_download_path(root, asset)
         if asset.is_archive:
@@ -1122,20 +1218,22 @@ def download_asset(
                     destination=download_path,
                     force=force,
                     timeout=timeout,
-                    display=display,
+                    display=local_display,
                 )
             else:
-                if display is not None and display.enabled:
-                    display.set_status(f"Skipped archive download: {download_path}")
+                if local_display is not None and local_display.handles_events:
+                    local_display.set_status(f"Skipped archive download: {download_path}")
                 else:
                     _print(f"[SKIP] {asset.asset_id} archive -> {download_path}", style="dim")
-            extracted = _extract_archive(asset, download_path, root, force=force, display=display)
-            return DownloadResult(
+            extracted = _extract_archive(asset, download_path, root, force=force, display=local_display)
+            result = DownloadResult(
                 asset_id=asset.asset_id,
                 downloaded=downloaded,
                 skipped=not downloaded and not extracted,
                 extracted=extracted,
             )
+            succeeded = True
+            return result
 
         downloaded = _download_file(
             session=active_session,
@@ -1143,14 +1241,18 @@ def download_asset(
             destination=download_path,
             force=force,
             timeout=timeout,
-            display=display,
+            display=local_display,
         )
-        return DownloadResult(
+        result = DownloadResult(
             asset_id=asset.asset_id,
             downloaded=downloaded,
             skipped=not downloaded,
         )
+        succeeded = True
+        return result
     finally:
+        if owns_display and local_display is not None:
+            local_display.finish_current("Completed" if succeeded else "Failed")
         if owns_session:
             active_session.close()
 
@@ -1166,7 +1268,7 @@ def _registry_path(root_dir: Path, model_id: str) -> Path:
     return root_dir / "registry" / f"{_safe_name(model_id)}.json"
 
 
-def _register_model(root_dir: Path, model_id: str, asset_ids: Iterable[str]) -> None:
+def _register_model(root_dir: Path, model_id: str, asset_ids: Iterable[str], *, quiet: bool = False) -> None:
     model_id = normalize_model_id(model_id)
     _ensure_project_on_path()
     from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package
@@ -1187,10 +1289,18 @@ def _register_model(root_dir: Path, model_id: str, asset_ids: Iterable[str]) -> 
     with open(registry_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
-    _print(f"[REGISTRY] {model_id} -> {registry_path}", style="green")
+    if not quiet:
+        _print(f"[REGISTRY] {model_id} -> {registry_path}", style="green")
 
 
-def register_downloaded_models(root_dir: str | Path, model_ids: Iterable[str], assets: Iterable[DownloadAsset]) -> None:
+def register_downloaded_models(
+    root_dir: str | Path,
+    model_ids: Iterable[str],
+    assets: Iterable[DownloadAsset],
+    *,
+    quiet: bool = False,
+    progress_callback: DownloadProgressCallback | None = None,
+) -> None:
     root = Path(root_dir)
     requested_model_ids = tuple(dict.fromkeys(normalize_model_id(str(model_id)) for model_id in model_ids))
     assets_by_model: dict[str, list[str]] = {str(model_id): [] for model_id in requested_model_ids}
@@ -1201,7 +1311,15 @@ def register_downloaded_models(root_dir: str | Path, model_ids: Iterable[str], a
 
     for model_id, asset_ids in assets_by_model.items():
         if asset_ids:
-            _register_model(root, model_id, asset_ids)
+            _emit_progress(
+                progress_callback,
+                kind="manga_model_download",
+                stage="registering",
+                message=f"Registering model package: {model_id}",
+                model_id=model_id,
+                asset_ids=list(asset_ids),
+            )
+            _register_model(root, model_id, asset_ids, quiet=quiet)
 
 
 def prepare_models(
@@ -1209,28 +1327,63 @@ def prepare_models(
     *,
     root_dir: str | Path | None = None,
     force: bool = False,
+    quiet: bool = False,
+    progress_callback: DownloadProgressCallback | None = None,
 ) -> None:
     project_root = _project_root()
     root = Path(root_dir).resolve() if root_dir is not None else _default_model_root(project_root)
     requested_model_ids = tuple(dict.fromkeys(normalize_model_id(str(model_id)) for model_id in model_ids))
     assets = resolve_assets_for_model_ids(requested_model_ids)
 
-    display = DownloadDisplay(root, requested_model_ids, assets)
-    if not display.enabled:
+    display = DownloadDisplay(root, requested_model_ids, assets, quiet=quiet, progress_callback=progress_callback)
+    if not display.handles_events:
         _print_download_panel(root, requested_model_ids, len(assets))
+    else:
+        _emit_progress(
+            progress_callback,
+            kind="manga_model_download",
+            stage="queued",
+            message="Queued MangaCore model asset preparation.",
+            root_dir=str(root),
+            model_ids=list(requested_model_ids),
+            item_index=0,
+            item_count=len(assets),
+        )
 
     results: list[DownloadResult] = []
-    with display, requests.Session() as session:
+    display_context = display if display.handles_events else nullcontext(display)
+    with display_context, requests.Session() as session:
         for index, asset in enumerate(assets):
-            if display.enabled:
+            if display.handles_events:
                 display.start_asset(index, asset)
             else:
                 _print(f"[{index + 1}/{len(assets)}] {asset.asset_id}", style="bold")
             results.append(download_asset(asset, root, force=force, session=session, display=display))
 
-    register_downloaded_models(root, requested_model_ids, assets)
-    _print_download_summary(results, registered_count=len(requested_model_ids))
-    _print("[MangaCore] Default comic runtime assets are ready.", style="green")
+    register_downloaded_models(
+        root,
+        requested_model_ids,
+        assets,
+        quiet=quiet,
+        progress_callback=progress_callback,
+    )
+    _emit_progress(
+        progress_callback,
+        kind="manga_model_download",
+        stage="summary",
+        message="MangaCore model asset preparation finished.",
+        root_dir=str(root),
+        model_ids=list(requested_model_ids),
+        item_index=len(assets),
+        item_count=len(assets),
+        downloaded=sum(1 for result in results if result.downloaded),
+        skipped=sum(1 for result in results if result.skipped),
+        extracted=sum(1 for result in results if result.extracted),
+        snapshots=sum(1 for result in results if result.snapshot),
+    )
+    if not quiet:
+        _print_download_summary(results, registered_count=len(requested_model_ids))
+        _print("[MangaCore] Default comic runtime assets are ready.", style="green")
 
 
 def main(argv: list[str] | None = None) -> int:

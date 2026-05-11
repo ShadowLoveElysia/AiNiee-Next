@@ -6,12 +6,14 @@ from time import monotonic
 from fastapi import APIRouter, HTTPException
 
 from ModuleFolders.MangaCore.api.schemas import (
+    ProjectConfigPatchRequest,
     ProjectCreateFromTaskRequest,
     ProjectOpenRequest,
     ProjectSaveRequest,
 )
 from ModuleFolders.MangaCore.io.persistence import MangaProjectPersistence
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderEngine
+from ModuleFolders.MangaCore.pipeline.modelCatalog import normalize_model_id
 from ModuleFolders.MangaCore.pipeline.modelStore import build_engine_status
 from ModuleFolders.MangaCore.pipeline.qualityGate import load_quality_gate, page_blocked_from_final, remove_final_page
 from ModuleFolders.MangaCore.pipeline.runtimeReadiness import build_manga_runtime_readiness
@@ -41,6 +43,22 @@ PROJECT_CONFIG_SUMMARY_KEYS = (
     "web_mode",
     "manga",
 )
+PROJECT_CONFIG_PATCH_KEYS = {
+    "manga_ocr_engine",
+    "manga_detect_engine",
+    "manga_segment_engine",
+    "manga_inpaint_engine",
+    "manga_runtime_device",
+    "manga_detect_device",
+    "manga_ocr_device",
+    "manga_inpaint_device",
+}
+PROJECT_CONFIG_MODEL_KEYS = {
+    "manga_ocr_engine",
+    "manga_detect_engine",
+    "manga_segment_engine",
+    "manga_inpaint_engine",
+}
 
 RUNTIME_STATUS_CACHE_TTL_SECONDS = 8.0
 _runtime_status_cache: dict[str, tuple[float, dict[str, object]]] = {}
@@ -241,3 +259,36 @@ def get_runtime_status(project_id: str, refresh: bool = False) -> dict[str, obje
     if refresh:
         _runtime_status_cache.pop(project_id, None)
     return _runtime_status_payload(session)
+
+
+@router.patch("/projects/{project_id}/config")
+def update_project_config(project_id: str, request: ProjectConfigPatchRequest) -> dict[str, object]:
+    session = _get_session_or_404(project_id)
+    updates = request.updates if isinstance(request.updates, dict) else {}
+    unknown_keys = sorted(str(key) for key in updates if str(key) not in PROJECT_CONFIG_PATCH_KEYS)
+    if unknown_keys:
+        raise HTTPException(status_code=400, detail=f"Unsupported Manga project config key(s): {', '.join(unknown_keys)}")
+
+    snapshot = dict(session.config_snapshot) if isinstance(session.config_snapshot, dict) else {}
+    applied: dict[str, object] = {}
+    for key, value in updates.items():
+        normalized_key = str(key)
+        if normalized_key in PROJECT_CONFIG_MODEL_KEYS:
+            normalized_value = normalize_model_id(str(value or "").strip())
+        else:
+            normalized_value = str(value or "").strip() or "auto"
+        if not normalized_value:
+            continue
+        snapshot[normalized_key] = normalized_value
+        applied[normalized_key] = normalized_value
+
+    session.config_snapshot = snapshot
+    _runtime_status_cache.pop(project_id, None)
+    MangaProjectPersistence.save_session(session)
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "updates": applied,
+        "task_config": _project_config_summary(session),
+        **_runtime_status_payload(session),
+    }

@@ -23,6 +23,10 @@ class ProjectSaveRequest(BaseModel):
     project_id: str
 
 
+class ProjectConfigPatchRequest(BaseModel):
+    updates: dict[str, Any] = Field(default_factory=dict)
+
+
 class PageTranslateRequest(BaseModel):
     save_after_run: bool = True
     refresh_render: bool = True
