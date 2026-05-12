@@ -129,6 +129,20 @@ class CLIMenu:
                 os.path.join(PROJECT_ROOT, "Resource", "Localization"),
             )
 
+    def apply_interface_language(self, lang):
+        global current_lang, i18n
+
+        if lang not in ("zh_CN", "ja", "en"):
+            lang = detect_system_language()
+
+        current_lang = lang
+        self.config["interface_language"] = current_lang
+        i18n = switch_runtime_language(PROJECT_ROOT, current_lang)
+        self._file_selector = None
+        self._update_manager = None
+        self._smart_diagnostic = None
+        self._sync_base_interface_language()
+
     @property
     def plugin_manager(self):
         if self._plugin_manager is None:
@@ -508,6 +522,9 @@ class CLIMenu:
                 else:
                     self.config[k] = v
 
+        if not self.config.get("interface_language"):
+            self.config["interface_language"] = current_lang
+
         # 4. Load independent Rules Profile
         rule_keys = [
             "prompt_dictionary_data", "exclusion_list_data", "characterization_data",
@@ -564,6 +581,8 @@ class CLIMenu:
             self.active_rules_profile_name = "default"
         
         self._migrate_and_load_profiles()
+        if self.config.get("interface_language") and self.config.get("interface_language") != current_lang:
+            self.apply_interface_language(self.config.get("interface_language"))
         if getattr(self, "_plugin_manager", None) is not None and "plugin_enables" in self.root_config:
             self._plugin_manager.update_plugins_enable(self.root_config["plugin_enables"])
 
@@ -889,8 +908,6 @@ class CLIMenu:
         return self.crash_handler.save_error_log(error_msg)
 
     def first_time_lang_setup(self):
-        global current_lang, i18n
-
         detected = detect_system_language()
         default_idx = {"zh_CN": 1, "ja": 2, "en": 3}.get(detected, 3)
         
@@ -905,14 +922,9 @@ class CLIMenu:
         
         c = IntPrompt.ask("\nSelect / 选择 / 選択", choices=["1", "2", "3"], default=default_idx, show_choices=False)
         
-        current_lang = {"1": "zh_CN", "2": "ja", "3": "en"}[str(c)]
-        self.config["interface_language"] = current_lang
+        selected_lang = {"1": "zh_CN", "2": "ja", "3": "en"}[str(c)]
+        self.apply_interface_language(selected_lang)
         self.save_config()
-        i18n = switch_runtime_language(PROJECT_ROOT, current_lang)
-        self._file_selector = None
-        self._update_manager = None
-        self._smart_diagnostic = None
-        self._sync_base_interface_language()
 
     def _scan_cache_files(self):
         """扫描系统中的缓存文件"""

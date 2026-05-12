@@ -46,14 +46,28 @@ def detect_system_language():
 
 
 def load_saved_interface_language(project_root):
-    config_path = os.path.join(project_root, "Resource", "config.json")
-    if not os.path.exists(config_path):
+    resource_dir = os.path.join(project_root, "Resource")
+    root_config_path = os.path.join(resource_dir, "config.json")
+    active_profile = "default"
+
+    if os.path.exists(root_config_path):
+        try:
+            with open(root_config_path, "r", encoding="utf-8") as file:
+                root_config = json.load(file)
+            if root_config.get("interface_language"):
+                return root_config.get("interface_language")
+            active_profile = root_config.get("active_profile", active_profile)
+        except Exception:
+            pass
+
+    profile_path = os.path.join(resource_dir, "profiles", f"{active_profile}.json")
+    if not os.path.exists(profile_path):
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as file:
+        with open(profile_path, "r", encoding="utf-8") as file:
             config = json.load(file)
-        return config.get("interface_language")
+        return config.get("interface_language") or None
     except Exception:
         return None
 
@@ -74,6 +88,6 @@ def switch_runtime_language(project_root, lang):
 def get_base_interface_language_name(lang):
     return {
         "zh_CN": "简中",
-        "ja": "日语",
+        "ja": "日本語",
         "en": "英语",
     }.get(lang, "英语")

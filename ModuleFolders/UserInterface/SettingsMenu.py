@@ -23,9 +23,8 @@ class SettingsMenu:
     def show(self):
         from ModuleFolders.Infrastructure.TaskConfig.SettingsRenderer import SettingsMenuBuilder
 
-        builder = SettingsMenuBuilder(self.host.config, self.i18n)
-
         while True:
+            builder = SettingsMenuBuilder(self.host.config, self.i18n)
             self.host.display_banner()
             console.print(Panel(f"[bold]{self.i18n.get('menu_settings')}[/bold]"))
 
@@ -59,6 +58,8 @@ class SettingsMenu:
             if new_value is not None:
                 self.host.config[key] = new_value
                 self.host.save_config()
+                if key == "interface_language":
+                    self.host.apply_interface_language(new_value)
                 if key == "enable_operation_logging":
                     if new_value:
                         self.host.operation_logger.enable()

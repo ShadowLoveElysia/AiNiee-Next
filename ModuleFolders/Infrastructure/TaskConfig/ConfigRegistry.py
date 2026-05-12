@@ -154,6 +154,18 @@ register_config(ConfigItem(
     category="language"
 ))
 
+# --- 界面语言配置 (USER) ---
+register_config(ConfigItem(
+    key="interface_language",
+    default="zh_CN",
+    level=ConfigLevel.USER,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_interface_language",
+    i18n_desc_key="setting_interface_language_desc",
+    choices=["zh_CN", "ja", "en"],
+    category="interface_language"
+))
+
 # --- 翻译核心配置 (USER) ---
 register_config(ConfigItem(
     key="lines_limit",
