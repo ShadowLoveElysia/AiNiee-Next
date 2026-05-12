@@ -10,6 +10,10 @@ from rich.prompt import IntPrompt
 console = Console()
 
 
+def _prompt_label(text):
+    return str(text).strip().rstrip(":：").strip()
+
+
 class SettingsMenu:
     """设置菜单。"""
 
@@ -36,7 +40,7 @@ class SettingsMenu:
 
             max_choice = len(builder.menu_items)
             choice = IntPrompt.ask(
-                f"\n{self.i18n.get('prompt_select')}",
+                f"\n{_prompt_label(self.i18n.get('prompt_select'))}",
                 choices=[str(i) for i in range(max_choice + 1)],
                 show_choices=False,
             )

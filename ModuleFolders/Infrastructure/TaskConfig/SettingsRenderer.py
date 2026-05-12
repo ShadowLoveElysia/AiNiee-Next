@@ -20,6 +20,10 @@ def format_bool_value(value: bool) -> str:
     return "[green]ON[/]" if value else "[red]OFF[/]"
 
 
+def prompt_label(text) -> str:
+    return str(text).strip().rstrip(":：").strip()
+
+
 def format_config_value(key: str, value, config: dict, i18n=None) -> str:
     """根据配置类型格式化显示值"""
     item = get_config_item(key)
@@ -282,7 +286,7 @@ class SettingsMenuBuilder:
             console.print(table)
             console.print(f"\n[dim]{self.i18n.get('prompt_toggle_or_back')}[/dim]")
 
-            choice = Prompt.ask(self.i18n.get('prompt_select'))
+            choice = Prompt.ask(prompt_label(self.i18n.get('prompt_select')))
             if choice.lower() in ('q', 'b', '0', ''):
                 break
 
@@ -314,7 +318,7 @@ class SettingsMenuBuilder:
 
         console.print(table)
 
-        choice_input = Prompt.ask(self.i18n.get('prompt_select'))
+        choice_input = Prompt.ask(prompt_label(self.i18n.get('prompt_select')))
         try:
             idx = int(choice_input) - 1
             if 0 <= idx < len(item.choices):

@@ -153,6 +153,7 @@
     "prompt_api_key": "API Key: ",
     "prompt_confirm_save": "Save changes? (y/n): ",
     "msg_saved": "Settings saved successfully.",
+    "label_advanced_setting": "Advanced setting (confirmation required)",
     "msg_invalid_option": "Invalid option, please try again.",
     "msg_task_started": "Task started...",
     "msg_task_completed": "Task completed!",

@@ -153,6 +153,7 @@
     "prompt_api_key": "API キー: ",
     "prompt_confirm_save": "変更を保存しますか? (y/n): ",
     "msg_saved": "設定を保存しました。",
+    "label_advanced_setting": "高度な設定 (変更には確認が必要)",
     "msg_invalid_option": "無効な選択です。もう一度試してください。",
     "msg_task_started": "タスクを開始しました...",
     "msg_task_completed": "タスクが完了しました!",
