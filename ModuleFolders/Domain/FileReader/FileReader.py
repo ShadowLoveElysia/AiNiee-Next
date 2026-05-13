@@ -4,6 +4,7 @@ from functools import partial
 from typing import Type
 
 from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
+from ModuleFolders.Infrastructure.Cache.CacheProject import ProjectType
 from ModuleFolders.Domain.FileReader.AutoTypeReader import AutoTypeReader
 from ModuleFolders.Domain.FileReader.BaseReader import BaseSourceReader, InputConfig, ReaderInitParams
 from ModuleFolders.Domain.FileReader.DirectoryReader import DirectoryReader
@@ -38,6 +39,29 @@ from PluginScripts.IOPlugins.CustomRegistry import CustomReader
 
 # 文件读取器(分发入口)
 class FileReader():
+    _PROJECT_TYPE_ALIASES = {
+        "auto": ProjectType.AUTO_TYPE,
+        "json": ProjectType.AUTO_TYPE,
+        "excel": ProjectType.CSV,
+        "xlsx": ProjectType.CSV,
+        "vntext": ProjectType.VNT,
+        "ainieecache": "Ainiee_cache",
+        "ainiee_cache": "Ainiee_cache",
+        "mobi": ProjectType.EPUB,
+        "azw3": ProjectType.EPUB,
+        "fb2": ProjectType.EPUB,
+        "kepub": ProjectType.EPUB,
+        "lit": ProjectType.EPUB,
+        "lrf": ProjectType.EPUB,
+        "pdb": ProjectType.EPUB,
+        "pmlz": ProjectType.EPUB,
+        "rb": ProjectType.EPUB,
+        "rtf": ProjectType.EPUB,
+        "tcr": ProjectType.EPUB,
+        "txtz": ProjectType.EPUB,
+        "htmlz": ProjectType.EPUB,
+    }
+
     def __init__(self):
         self.reader_factory_dict = {}  # 工厂地图
         self._register_system_reader()
@@ -92,8 +116,31 @@ class FileReader():
             return ReaderInitParams(input_config=input_config, reader_init_params_factory=reader_init_params_factory)
         return ReaderInitParams(input_config=input_config)
 
+    def _normalize_project_type(self, translation_project):
+        project_type = str(translation_project or "").strip()
+        if not project_type:
+            return AutoTypeReader.get_project_type()
+
+        normalized_key = project_type.casefold()
+        if normalized_key in self._PROJECT_TYPE_ALIASES:
+            return self._PROJECT_TYPE_ALIASES[normalized_key]
+
+        if project_type.casefold() == "ainiee_cache":
+            return "Ainiee_cache"
+
+        for supported_type in self.reader_factory_dict:
+            if supported_type.casefold() == normalized_key:
+                return supported_type
+
+        return project_type
+
+    def _supported_project_types_message(self):
+        support_project_types = [*self.get_support_project_types(), "Ainiee_cache"]
+        return ", ".join(support_project_types)
+
     # 根据文件类型读取文件，并返回缓存对象
     def read_files (self,translation_project,label_input_path, exclude_rule_str):
+        translation_project = self._normalize_project_type(translation_project)
         # 检查传入的项目类型是否已经被注册。
         if translation_project in self.reader_factory_dict:
             # 获取初始化参数
@@ -108,6 +155,11 @@ class FileReader():
             cache_list = reader.read_source_directory(source_directory)
         elif translation_project == "Ainiee_cache":
             cache_list = self.read_cache_files(folder_path=label_input_path)
+        else:
+            raise ValueError(
+                f"Unsupported translation project type: {translation_project}. "
+                f"Supported types: {self._supported_project_types_message()}"
+            )
         return cache_list
 
 

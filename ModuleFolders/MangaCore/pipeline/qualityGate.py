@@ -9,6 +9,7 @@ from ModuleFolders.MangaCore.pipeline.engines.detect import DetectResult
 from ModuleFolders.MangaCore.pipeline.engines.inpaint import InpaintResult
 from ModuleFolders.MangaCore.pipeline.engines.render import RenderResult
 from ModuleFolders.MangaCore.pipeline.engines.translate import TranslationBatchResult
+from ModuleFolders.MangaCore.pipeline.textQa import TextQaResult
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
 from ModuleFolders.MangaCore.project.textBlock import MangaTextBlock
@@ -256,6 +257,33 @@ def _evaluate_planner_contract(
     return issues, metrics, stage_modes
 
 
+def _evaluate_text_qa_contract(text_qa_result: TextQaResult | None) -> tuple[list[QualityIssue], dict[str, object], dict[str, object]]:
+    if text_qa_result is None:
+        return [], {"text_qa_issue_count": 0, "text_qa_blocking_count": 0, "text_qa_warning_count": 0}, {"issue_block_ids": []}
+
+    issues = [
+        _issue(
+            f"text_qa_{item.code}",
+            "text_qa",
+            f"manga_quality_issue_text_qa_{item.code}",
+            item.message,
+            item.block_id,
+            blocks_final=item.blocks_final,
+        )
+        for item in text_qa_result.issues
+    ]
+    metrics = {
+        "text_qa_issue_count": len(text_qa_result.issues),
+        "text_qa_blocking_count": text_qa_result.blocking_count,
+        "text_qa_warning_count": text_qa_result.warning_count,
+    }
+    stage_modes = {
+        "issue_block_ids": [issue.block_id for issue in text_qa_result.issues[:20]],
+        "issue_codes": [issue.code for issue in text_qa_result.issues[:20]],
+    }
+    return issues, metrics, stage_modes
+
+
 def describe_ocr_last_run(ocr_engine: object) -> dict[str, object]:
     if hasattr(ocr_engine, "describe_last_run"):
         try:
@@ -290,6 +318,7 @@ def evaluate_automatic_pipeline_quality(
     translated_blocks: int,
     translation_result: TranslationBatchResult | None,
     require_inpaint: bool,
+    text_qa_result: TextQaResult | None = None,
 ) -> PageQualityGate:
     issues: list[QualityIssue] = []
     text_blocks = list(text_blocks or [])
@@ -341,6 +370,9 @@ def evaluate_automatic_pipeline_quality(
         bubble_assignments=bubble_assignments,
     )
     issues.extend(planner_issues)
+
+    text_qa_issues, text_qa_metrics, text_qa_stage_modes = _evaluate_text_qa_contract(text_qa_result)
+    issues.extend(text_qa_issues)
 
     if translation_result is not None:
         if not translation_result.ok:
@@ -446,6 +478,7 @@ def evaluate_automatic_pipeline_quality(
         "inpaint_mask_pixels": inpaint_result.mask_pixels if inpaint_result is not None else 0,
         "layout_fit_failed_blocks": render_result.layout_fit_failed_blocks if render_result is not None else 0,
         **planner_metrics,
+        **text_qa_metrics,
     }
     stage_modes = {
         "detect": {
@@ -456,6 +489,7 @@ def evaluate_automatic_pipeline_quality(
         },
         "ocr": dict(ocr_last_run),
         "planner": planner_stage_modes,
+        "text_qa": text_qa_stage_modes,
         "inpaint": inpaint_result.to_dict() if inpaint_result is not None else {},
         "render": render_result.to_dict() if render_result is not None else {},
     }

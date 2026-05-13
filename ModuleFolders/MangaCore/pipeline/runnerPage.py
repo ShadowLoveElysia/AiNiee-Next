@@ -15,9 +15,11 @@ from ModuleFolders.MangaCore.pipeline.qualityGate import (
     remove_final_page,
     write_quality_gate,
 )
+from ModuleFolders.MangaCore.pipeline.textQa import TEXT_QA_ARTIFACT, TextQaResult, evaluate_text_qa
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
 from ModuleFolders.MangaCore.render.bubbleAssign import BubbleAssignment, TextSeed, assign_bubbles
+from ModuleFolders.MangaCore.render.bubbleIndex import BUBBLE_INDEX_ARTIFACT, build_bubble_index
 from ModuleFolders.MangaCore.render.painter import MangaRenderer
 from ModuleFolders.MangaCore.render.planner import plan_text_blocks
 
@@ -267,6 +269,7 @@ class MangaPageRunner:
             translation_result = TranslationBatchResult(ok=True)
             inpaint_result: InpaintResult | None = None
             quality_gate: PageQualityGate | None = None
+            text_qa_result: TextQaResult | None = None
             translated_blocks = 0
 
             if run_translation:
@@ -293,6 +296,7 @@ class MangaPageRunner:
                     target_lang=session.manifest.target_lang,
                 )
                 translated_blocks = self._apply_translation_result(page, translation_result)
+                text_qa_result = self._run_text_qa_stage(session, page)
                 MangaProjectPersistence.write_page_artifact(
                     session,
                     page,
@@ -321,6 +325,7 @@ class MangaPageRunner:
                         render_result=None,
                         text_blocks=blocks,
                         bubble_assignments=assignments,
+                        text_qa_result=text_qa_result,
                         block_count=len(blocks),
                         translated_blocks=translated_blocks,
                         translation_result=translation_result,
@@ -356,6 +361,7 @@ class MangaPageRunner:
                         render_result=render_result,
                         text_blocks=blocks,
                         bubble_assignments=assignments,
+                        text_qa_result=text_qa_result,
                         block_count=len(blocks),
                         translated_blocks=translated_blocks,
                         translation_result=translation_result,
@@ -514,6 +520,7 @@ class MangaPageRunner:
                 translation_result = TranslationBatchResult(ok=True)
                 translated_blocks = 0
                 inpaint_result: InpaintResult | None = None
+                text_qa_result: TextQaResult | None = None
                 if run_translation and blocks:
                     self._emit_progress(
                         input_path=str(session.config_snapshot.get("input_path", "")),
@@ -540,6 +547,7 @@ class MangaPageRunner:
                         target_lang=session.manifest.target_lang,
                     )
                     translated_blocks = self._apply_translation_result(page, translation_result)
+                    text_qa_result = self._run_text_qa_stage(session, page)
                     total_translated_blocks += translated_blocks
                     if not translation_result.ok:
                         translation_warnings += 1
@@ -586,6 +594,7 @@ class MangaPageRunner:
                             render_result=None,
                             text_blocks=blocks,
                             bubble_assignments=assignments,
+                            text_qa_result=text_qa_result,
                             block_count=len(blocks),
                             translated_blocks=translated_blocks,
                             translation_result=translation_result,
@@ -639,6 +648,7 @@ class MangaPageRunner:
                             render_result=render_result,
                             text_blocks=blocks,
                             bubble_assignments=assignments,
+                            text_qa_result=text_qa_result,
                             block_count=len(blocks),
                             translated_blocks=translated_blocks,
                             translation_result=translation_result,
@@ -867,6 +877,18 @@ class MangaPageRunner:
             "bubbleAssignments.json",
             [assignment.to_dict() for assignment in assignments],
         )
+        bubble_index = build_bubble_index(
+            seeds,
+            assignments,
+            page_width=page.width,
+            page_height=page.height,
+        )
+        MangaProjectPersistence.write_page_artifact(
+            session,
+            page,
+            BUBBLE_INDEX_ARTIFACT,
+            bubble_index.to_dict(),
+        )
 
     def _run_seed_stage(
         self,
@@ -942,6 +964,20 @@ class MangaPageRunner:
     ) -> RenderResult:
         result = self.render_engine.run_page(session, page, write_final=write_final)
         MangaProjectPersistence.write_page_artifact(session, page, "renderResults.json", result.to_dict())
+        return result
+
+    def _run_text_qa_stage(
+        self,
+        session: MangaProjectSession,
+        page: MangaPage,
+    ) -> TextQaResult:
+        result = evaluate_text_qa(
+            page.text_blocks,
+            source_lang=session.manifest.source_lang,
+            target_lang=session.manifest.target_lang,
+            mutate_blocks=True,
+        )
+        MangaProjectPersistence.write_page_artifact(session, page, TEXT_QA_ARTIFACT, result.to_dict())
         return result
 
     @staticmethod

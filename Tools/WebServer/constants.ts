@@ -2339,16 +2339,22 @@ export const PLATFORMS = [
 
 export const PROJECT_TYPES = [
   'AutoType',
-  'MTool',
-  'RenPy', 
-  'TPP',
+  'Mtool',
+  'Renpy',
+  'Tpp',
+  'Vnt',
   'Txt',
   'Epub',
   'Docx',
   'Srt',
+  'Vtt',
+  'Lrc',
   'Ass',
+  'Csv',
+  'Pptx',
   'Po',
-  'I18next'
+  'I18next',
+  'Paratranz'
 ];
 
 export const MOCK_LOGS = [

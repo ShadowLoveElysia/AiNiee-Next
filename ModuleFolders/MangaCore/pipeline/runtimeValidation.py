@@ -16,6 +16,7 @@ from ModuleFolders.MangaCore.pipeline.engines.ocr import OcrEngine
 from ModuleFolders.MangaCore.project.page import MangaPage
 from ModuleFolders.MangaCore.project.session import MangaProjectSession
 from ModuleFolders.MangaCore.render.bubbleAssign import assign_bubbles
+from ModuleFolders.MangaCore.render.bubbleIndex import BUBBLE_INDEX_ARTIFACT, build_bubble_index
 
 
 @dataclass(slots=True)
@@ -202,7 +203,7 @@ class MangaRuntimeValidator:
         stages.append(_attach_artifact_urls(session, detect_stage))
 
         _check_cancelled(should_cancel)
-        ocr_stage, seeds_path, seed_count = self._run_ocr(
+        ocr_stage, seeds_path, seed_count, bubble_index_path = self._run_ocr(
             session=session,
             page=page,
             source_path=source_path,
@@ -232,6 +233,7 @@ class MangaRuntimeValidator:
                 "seed_count": seed_count,
                 "detect_regions_path": detect_regions_path,
                 "ocr_seeds_path": seeds_path,
+                "bubble_index_path": bubble_index_path,
                 "segment_mask_path": _relative_to_project(session, segment_path),
                 "bubble_mask_path": _relative_to_project(session, bubble_path),
             },
@@ -281,7 +283,7 @@ class MangaRuntimeValidator:
             )
         elif stage == "ocr":
             regions = self._detect_regions_from_latest_report(latest)
-            ocr_stage, seeds_path, seed_count = self._run_ocr(
+            ocr_stage, seeds_path, seed_count, bubble_index_path = self._run_ocr(
                 session=session,
                 page=page,
                 source_path=source_path,
@@ -289,7 +291,13 @@ class MangaRuntimeValidator:
                 output_dir=output_dir,
             )
             stages_by_id[stage] = _attach_artifact_urls(session, ocr_stage)
-            summary_overrides.update({"seed_count": seed_count, "ocr_seeds_path": seeds_path})
+            summary_overrides.update(
+                {
+                    "seed_count": seed_count,
+                    "ocr_seeds_path": seeds_path,
+                    "bubble_index_path": bubble_index_path,
+                }
+            )
         else:
             segment_path = self._resolve_latest_segment_mask(session, page, latest_summary)
             inpaint_stage = self._run_inpaint(
@@ -531,9 +539,10 @@ class MangaRuntimeValidator:
         source_path: Path,
         regions: object,
         output_dir: Path,
-    ) -> tuple[RuntimeValidationStage, str, int]:
+    ) -> tuple[RuntimeValidationStage, str, int, str]:
         started_at = perf_counter()
         seeds_path = output_dir / "ocrSeeds.json"
+        bubble_index_path = output_dir / BUBBLE_INDEX_ARTIFACT
         try:
             region_list = regions if isinstance(regions, list) else []
             try:
@@ -541,6 +550,12 @@ class MangaRuntimeValidator:
             except TypeError:
                 seeds = self.ocr_engine.run(source_path)
             assignments = assign_bubbles(seeds, page.width, page.height, source_path=source_path)
+            bubble_index = build_bubble_index(
+                seeds,
+                assignments,
+                page_width=page.width,
+                page_height=page.height,
+            )
             seed_payload = [seed.to_dict() for seed in seeds]
             MangaProjectPersistence.write_page_artifact(
                 session,
@@ -553,6 +568,12 @@ class MangaRuntimeValidator:
                 page,
                 f"runtimeValidation/{output_dir.name}/bubbleAssignments.json",
                 [assignment.to_dict() for assignment in assignments],
+            )
+            MangaProjectPersistence.write_page_artifact(
+                session,
+                page,
+                f"runtimeValidation/{output_dir.name}/{BUBBLE_INDEX_ARTIFACT}",
+                bubble_index.to_dict(),
             )
             if hasattr(self.ocr_engine, "describe_last_run"):
                 last_run = self.ocr_engine.describe_last_run()
@@ -581,8 +602,11 @@ class MangaRuntimeValidator:
                     metrics={
                         "seed_count": len(seeds),
                         "assignment_count": len(assignments),
+                        "bubble_count": len(bubble_index.bubbles),
+                        "unassigned_seed_count": len(bubble_index.unassigned_seed_ids),
                         "seeds": seed_payload,
                         "assignments": assignment_payload,
+                        "bubble_index": bubble_index.to_dict(),
                     },
                     artifacts={
                         "ocr_seeds": _relative_to_project(session, seeds_path),
@@ -590,10 +614,12 @@ class MangaRuntimeValidator:
                             session,
                             output_dir / "bubbleAssignments.json",
                         ),
+                        "bubble_index": _relative_to_project(session, bubble_index_path),
                     },
                 ),
                 _relative_to_project(session, seeds_path),
                 len(seeds),
+                _relative_to_project(session, bubble_index_path),
             )
         except Exception as exc:
             return (
@@ -609,6 +635,7 @@ class MangaRuntimeValidator:
                 ),
                 "",
                 0,
+                "",
             )
 
     def _run_inpaint(
