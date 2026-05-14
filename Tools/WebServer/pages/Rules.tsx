@@ -59,6 +59,8 @@ export const Rules: React.FC = () => {
     const [aiInputPath, setAiInputPath] = useState('');
     const [aiPercent, setAiPercent] = useState(30);
     const [aiLines, setAiLines] = useState<number | undefined>(undefined);
+    const [aiAnalysisMode, setAiAnalysisMode] = useState<'full' | 'split'>('full');
+    const [aiPromptFile, setAiPromptFile] = useState('');
     const [aiStatus, setAiStatus] = useState<any>({ status: 'idle', progress: 0, total: 0, message: '', results: [] });
     const [aiMinFreq, setAiMinFreq] = useState(2);
     const [aiFilename, setAiFilename] = useState('auto_glossary');
@@ -365,7 +367,8 @@ export const Rules: React.FC = () => {
         if (!aiInputPath) { alert('请输入文件路径'); return; }
         try {
             await DataService.startGlossaryAnalysis(
-                aiInputPath, aiPercent, aiLines,
+                aiInputPath, aiPercent, aiAnalysisMode === 'split' ? aiLines : undefined,
+                aiAnalysisMode, aiPromptFile || undefined,
                 aiUseTempConfig, aiTempPlatform, aiTempApiKey, aiTempApiUrl, aiTempModel, aiTempThreads
             );
             pollAnalysisStatus();
@@ -443,6 +446,7 @@ export const Rules: React.FC = () => {
                 return {
                     src: r.src,
                     type: r.type || (existing ? (existing.info || '专有名词') : '专有名词'),
+                    analysis_info: r.info || 'null',
                     options: existing ? [{ dst: existing.dst, info: existing.info || '术语表' }] : [],
                     selected_index: 0,
                     saved: !!existing
@@ -469,7 +473,8 @@ export const Rules: React.FC = () => {
                     api_key: aiTempApiKey,
                     api_url: aiTempApiUrl,
                     model: aiTempModel
-                } : undefined
+                } : undefined,
+                item.analysis_info
             );
             return res;
         } catch (e: any) {
@@ -483,10 +488,11 @@ export const Rules: React.FC = () => {
         const selected = item.options[item.selected_index];
         if (!selected) return;
         try {
+            const analysisInfo = `${item.type || '专有名词'} | ${item.analysis_info || 'null'}`;
             await DataService.addGlossaryItem({
                 src: item.src,
                 dst: selected.dst,
-                info: selected.info
+                info: analysisInfo
             });
             // Update glossary list in state if needed
             const g = await DataService.getGlossary();
@@ -499,7 +505,7 @@ export const Rules: React.FC = () => {
     const handleTermSaveAll = async (termsToSave: TermItem[]) => {
         const items = termsToSave.map(t => {
             const sel = t.options[t.selected_index];
-            return { src: t.src, dst: sel?.dst || '', info: sel?.info || '' };
+            return { src: t.src, dst: sel?.dst || '', info: `${t.type || '专有名词'} | ${t.analysis_info || 'null'}` };
         }).filter(i => i.dst);
         
         if (items.length === 0) {
@@ -868,6 +874,29 @@ export const Rules: React.FC = () => {
 
                                         {/* Input Controls */}
                                         <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/40 border-pink-200/50' : 'bg-slate-900/50 border-slate-800'}`}>
+                                            <div className="mb-4">
+                                                <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_mode')}</label>
+                                                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setAiAnalysisMode('full')}
+                                                        className={`text-left px-3 py-2 rounded border transition-all ${aiAnalysisMode === 'full' ? 'font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                                        style={aiAnalysisMode === 'full' ? { backgroundColor: `${themeColor}20`, color: themeColor, borderColor: `${themeColor}60` } : { borderColor: 'rgb(51 65 85)' }}
+                                                    >
+                                                        <div className="text-sm">{t('ai_glossary_mode_full')}</div>
+                                                        <div className="text-xs opacity-75 mt-1">{t('ai_glossary_mode_full_desc')}</div>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setAiAnalysisMode('split')}
+                                                        className={`text-left px-3 py-2 rounded border transition-all ${aiAnalysisMode === 'split' ? 'font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                                        style={aiAnalysisMode === 'split' ? { backgroundColor: `${themeColor}20`, color: themeColor, borderColor: `${themeColor}60` } : { borderColor: 'rgb(51 65 85)' }}
+                                                    >
+                                                        <div className="text-sm">{t('ai_glossary_mode_split')}</div>
+                                                        <div className="text-xs opacity-75 mt-1">{t('ai_glossary_mode_split_desc')}</div>
+                                                    </button>
+                                                </div>
+                                            </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
                                                     <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_input_path')}</label>
@@ -884,9 +913,17 @@ export const Rules: React.FC = () => {
                                                     <div>
                                                         <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_lines')}</label>
                                                         <input type="number" value={aiLines || ''} onChange={(e) => setAiLines(e.target.value ? Number(e.target.value) : undefined)}
-                                                            className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all" placeholder="可选" />
+                                                            disabled={aiAnalysisMode !== 'split'}
+                                                            className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all disabled:opacity-50" placeholder={aiAnalysisMode === 'split' ? '可选' : t('ai_glossary_lines_split_only')} />
                                                     </div>
                                                 </div>
+                                            </div>
+                                            <div className="mt-4">
+                                                <label className={`text-sm font-medium ${isLightCityTheme ? 'text-pink-700' : 'text-slate-300'}`}>{t('ai_glossary_prompt_file')}</label>
+                                                <input type="text" value={aiPromptFile} onChange={(e) => setAiPromptFile(e.target.value)}
+                                                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none transition-all"
+                                                    placeholder={t('ai_glossary_prompt_file_placeholder')} />
+                                                <p className="mt-1 text-xs text-slate-500">{t('ai_glossary_prompt_file_hint')}</p>
                                             </div>
 
                                             {/* API Config Selection */}
@@ -1008,6 +1045,7 @@ export const Rules: React.FC = () => {
                                                             <tr className="text-slate-400 text-left">
                                                                 <th className="p-2">{t('ai_glossary_term')}</th>
                                                                 <th className="p-2">{t('ai_glossary_type')}</th>
+                                                                <th className="p-2">{t('ai_glossary_info')}</th>
                                                                 <th className="p-2 text-right">{t('ai_glossary_count')}</th>
                                                             </tr>
                                                         </thead>
@@ -1016,6 +1054,7 @@ export const Rules: React.FC = () => {
                                                                 <tr key={i} className="border-t border-slate-800 hover:bg-slate-800/50">
                                                                     <td className="p-2 text-cyan-300">{r.src}</td>
                                                                     <td className="p-2 text-slate-400">{r.type}</td>
+                                                                    <td className="p-2 text-slate-400">{r.info || 'null'}</td>
                                                                     <td className="p-2 text-right text-yellow-400">{r.count}</td>
                                                                 </tr>
                                                             ))}

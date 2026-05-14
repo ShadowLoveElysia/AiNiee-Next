@@ -228,11 +228,11 @@ export const DataService = {
         if (!res.ok) throw new Error('Failed to batch add terms');
     },
 
-    async retryTermTranslation(src: string, type: string, avoid: string[], tempConfig?: any): Promise<{ dst: string, info: string }> {
+    async retryTermTranslation(src: string, type: string, avoid: string[], tempConfig?: any, analysisInfo?: string): Promise<{ dst: string, info: string }> {
         const res = await fetch(`${API_BASE}/term/retry`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ src, type, avoid, temp_config: tempConfig })
+            body: JSON.stringify({ src, type, avoid, temp_config: tempConfig, analysis_info: analysisInfo })
         });
         if (!res.ok) throw new Error('Failed to retry translation');
         return await res.json();
@@ -1308,6 +1308,8 @@ export const DataService = {
         inputPath: string,
         percent: number,
         lines?: number,
+        analysisMode?: string,
+        promptFile?: string,
         useTempConfig?: boolean,
         tempPlatform?: string,
         tempApiKey?: string,
@@ -1322,6 +1324,8 @@ export const DataService = {
                 input_path: inputPath,
                 analysis_percent: percent,
                 analysis_lines: lines,
+                analysis_mode: analysisMode,
+                prompt_file: promptFile,
                 use_temp_config: useTempConfig,
                 temp_platform: tempPlatform,
                 temp_api_key: tempApiKey,

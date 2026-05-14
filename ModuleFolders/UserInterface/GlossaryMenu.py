@@ -185,17 +185,43 @@ class GlossaryMenu:
             Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
             return
 
+        # 选择分析模式
+        console.print(f"\n[cyan]{self.i18n.get('prompt_select_glossary_analysis_mode') or '请选择术语提取模式:'}[/cyan]")
+        table = Table(show_header=False, box=None)
+        table.add_row(
+            "[cyan]1.[/]",
+            self.i18n.get('option_glossary_analysis_full') or "全本/按比例提取（推荐）"
+        )
+        table.add_row(
+            "",
+            f"[dim]{self.i18n.get('option_glossary_analysis_full_desc') or '适用于上下文窗口大的模型（如1M），会把所选范围一次性发送给LLM，整体分析更准确。'}[/dim]"
+        )
+        table.add_row(
+            "[cyan]2.[/]",
+            self.i18n.get('option_glossary_analysis_split') or "拆分提取（不推荐）"
+        )
+        table.add_row(
+            "",
+            f"[dim]{self.i18n.get('option_glossary_analysis_split_desc') or '适用于上下文偏小的模型（如128K），按行数拆分成多个请求，可能丢失全局上下文。'}[/dim]"
+        )
+        console.print(table)
+
+        mode_choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["1", "2"], default=1, show_choices=False)
+        analysis_mode = "split" if mode_choice == 2 else "full"
+
         # 选择分析范围
         console.print(f"\n[cyan]{self.i18n.get('prompt_select_analysis_range') or '请选择分析范围:'}[/cyan]")
         table = Table(show_header=False, box=None)
         table.add_row("[cyan]1.[/]", self.i18n.get('option_full_book') or "整本书 (100%)")
         table.add_row("[cyan]2.[/]", self.i18n.get('option_half_book') or "一半 (50%)")
         table.add_row("[cyan]3.[/]", self.i18n.get('option_custom_percent') or "自定义比例")
-        table.add_row("[cyan]4.[/]", self.i18n.get('option_custom_lines') or "自定义行数")
+        if analysis_mode == "split":
+            table.add_row("[cyan]4.[/]", self.i18n.get('option_custom_lines') or "自定义行数")
         console.print(table)
         console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
 
-        range_choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3", "4"], show_choices=False)
+        range_choices = ["0", "1", "2", "3", "4"] if analysis_mode == "split" else ["0", "1", "2", "3"]
+        range_choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=range_choices, show_choices=False)
 
         if range_choice == 0:
             return
@@ -217,6 +243,10 @@ class GlossaryMenu:
                 default=100
             )
             analysis_lines = max(1, analysis_lines)
+
+        prompt_file = self._select_glossary_analysis_prompt()
+        if prompt_file is None:
+            return
 
         # 选择API配置
         console.print(f"\n[cyan]{self.i18n.get('prompt_select_api_config') or '请选择API配置:'}[/cyan]")
@@ -242,7 +272,9 @@ class GlossaryMenu:
                 selected_path,
                 analysis_percent,
                 analysis_lines,
-                temp_platform_config
+                temp_platform_config,
+                analysis_mode=analysis_mode,
+                prompt_file=prompt_file
             )
 
             if analysis_result is None:
@@ -503,19 +535,69 @@ class GlossaryMenu:
 
         Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
 
+    def _select_glossary_analysis_prompt(self):
+        """选择术语分析提示词。返回 None 表示取消。"""
+        console.print(f"\n[cyan]{self.i18n.get('prompt_select_glossary_analysis_prompt') or '请选择术语分析提示词:'}[/cyan]")
+        table = Table(show_header=False, box=None)
+        table.add_row("[cyan]1.[/]", self.i18n.get('option_glossary_prompt_default') or "使用默认提示词")
+        table.add_row("[cyan]2.[/]", self.i18n.get('option_glossary_prompt_system') or "从系统提示词目录选择")
+        table.add_row("[cyan]3.[/]", self.i18n.get('option_glossary_prompt_custom_path') or "输入自定义提示词文件路径")
+        console.print(table)
+        console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
+
+        choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3"], default=1, show_choices=False)
+        if choice == 0:
+            return None
+        if choice == 1:
+            return ""
+        if choice == 2:
+            prompt_dir = os.path.join(self.cli.PROJECT_ROOT, "Resource", "Prompt", "System")
+            files = []
+            if os.path.exists(prompt_dir):
+                files = sorted(f for f in os.listdir(prompt_dir) if f.endswith(".txt"))
+
+            if not files:
+                console.print(f"[yellow]{self.i18n.get('err_no_prompt_files') or '错误: 没有可用的提示词文件'}[/yellow]")
+                return ""
+
+            file_table = Table(show_header=False, box=None)
+            for idx, filename in enumerate(files, 1):
+                file_table.add_row(f"[cyan]{idx}.[/]", filename)
+            console.print(file_table)
+            console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
+
+            selected = IntPrompt.ask(
+                self.i18n.get('prompt_select'),
+                choices=[str(i) for i in range(0, len(files) + 1)],
+                show_choices=False
+            )
+            if selected == 0:
+                return None
+            return os.path.join(prompt_dir, files[selected - 1])
+
+        custom_path = Prompt.ask(self.i18n.get('prompt_glossary_prompt_path') or "请输入提示词文件路径").strip().strip('"').strip("'")
+        if not custom_path:
+            return None
+        if not os.path.exists(custom_path):
+            console.print(f"[red]{self.i18n.get('err_not_file') or '错误: 路径不存在'}[/red]")
+            Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+            return None
+        return custom_path
+
     def _display_term_frequency(self, term_freq):
         """显示词频统计表"""
         table = Table(title=self.i18n.get('label_term_frequency') or "词频统计", show_lines=True)
         table.add_column(self.i18n.get('label_term') or "专有名词", style="cyan")
         table.add_column(self.i18n.get('label_type') or "类型", style="green")
+        table.add_column(self.i18n.get('label_info') or "说明", style="magenta")
         table.add_column(self.i18n.get('label_frequency') or "出现次数", style="yellow", justify="right")
 
         # 只显示前20个
         for i, (term, data) in enumerate(term_freq.items()):
             if i >= 20:
-                table.add_row("...", "...", f"(还有 {len(term_freq) - 20} 项)")
+                table.add_row("...", "...", "...", f"(还有 {len(term_freq) - 20} 项)")
                 break
-            table.add_row(term, data['type'], str(data['count']))
+            table.add_row(term, data['type'], data.get('info', 'null'), str(data['count']))
 
         console.print(table)
 

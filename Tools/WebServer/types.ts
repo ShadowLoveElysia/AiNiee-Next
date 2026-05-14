@@ -184,6 +184,7 @@ export interface TermOption {
 export interface TermItem {
   src: string;           // 原文术语
   type: string;          // 类型（人名/地名/专有名词等）
+  analysis_info?: string; // AI分析说明
   options: TermOption[]; // 翻译选项列表
   selected_index: number; // 当前选中的选项索引
   saved: boolean;        // 是否已保存

@@ -96,6 +96,7 @@ class TermSelector:
         table.add_column("#", width=4)
         table.add_column(i18n.get("label_term"), width=15)
         table.add_column(i18n.get("label_type"), width=10)
+        table.add_column(i18n.get("label_info"), width=24)
 
         max_opts = max(len(r.get("options", [])) for r in self.results) if self.results else 3
         for i in range(max_opts):
@@ -115,7 +116,12 @@ class TermSelector:
             else:
                 style = None
 
-            row = [f"{prefix}{idx+1}", item["src"], item.get("type", "")]
+            row = [
+                f"{prefix}{idx+1}",
+                item["src"],
+                item.get("type", ""),
+                str(item.get("analysis_info") or "null")[:24],
+            ]
             options = item.get("options", [])
             selected_idx = item.get("selected_index", 0)
 
@@ -139,20 +145,24 @@ class TermSelector:
         options = item.get("options", [])
         selected_idx = item.get("selected_index", 0)
 
+        text = Text()
+        text.append(f"\n{i18n.get('current')}: ", style="cyan")
+        text.append(f"#{self.current_row + 1} ", style="yellow")
+        text.append(item["src"], style="white")
+        if item.get("analysis_info"):
+            text.append(f"\n{i18n.get('label_info')}: ", style="cyan")
+            text.append(item.get("analysis_info", "null"), style="dim")
+
         if options and selected_idx < len(options):
             opt = options[selected_idx]
             dst = opt["dst"] if isinstance(opt, dict) else opt
             info = opt.get("info", "") if isinstance(opt, dict) else ""
 
-            text = Text()
-            text.append(f"\n{i18n.get('current')}: ", style="cyan")
-            text.append(f"#{self.current_row + 1} ", style="yellow")
-            text.append(item["src"], style="white")
             text.append(" -> ", style="dim")
             text.append(dst, style="green bold")
             if info:
                 text.append(f" ({info})", style="dim")
-            console.print(text)
+        console.print(text)
 
     def _display_help(self):
         """显示操作提示"""
@@ -251,7 +261,7 @@ class TermSelector:
             term_data = {
                 "src": item["src"],
                 "dst": dst,
-                "info": info
+                "info": self._build_saved_info(item, info)
             }
 
             # 调用保存回调
@@ -274,6 +284,13 @@ class TermSelector:
                 results.append({
                     "src": item["src"],
                     "dst": dst,
-                    "info": info
+                    "info": self._build_saved_info(item, info)
                 })
         return results
+
+    def _build_saved_info(self, item: dict, fallback: str = "") -> str:
+        analysis_info = item.get("analysis_info")
+        if analysis_info is not None and str(analysis_info).strip():
+            term_type = item.get("type") or "专有名词"
+            return f"{term_type} | {str(analysis_info).strip()}"
+        return fallback

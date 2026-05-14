@@ -180,6 +180,7 @@ export const TermSelector: React.FC<TermSelectorProps> = ({
                             <th className="p-4 w-12 border-b border-slate-800">#</th>
                             <th className="p-4 w-48 border-b border-slate-800">{t('term_selector_header_term')}</th>
                             <th className="p-4 w-32 border-b border-slate-800">{t('term_selector_header_type')}</th>
+                            <th className="p-4 w-72 border-b border-slate-800">{t('ai_glossary_info')}</th>
                             <th className="p-4 border-b border-slate-800">{t('term_selector_header_options')}</th>
                             <th className="p-4 w-32 border-b border-slate-800 text-center">{t('term_selector_header_action')}</th>
                         </tr>
@@ -224,6 +225,21 @@ export const TermSelector: React.FC<TermSelectorProps> = ({
                                             });
                                         }}
                                         className="bg-transparent border-none outline-none focus:bg-slate-950/80 px-2 py-1 rounded w-full text-slate-400 text-xs border-b border-transparent focus:border-primary/30 transition-all"
+                                    />
+                                </td>
+                                <td className="p-4 align-top">
+                                    <textarea
+                                        value={item.analysis_info || 'null'}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                            const newVal = e.target.value;
+                                            setTerms(prev => {
+                                                const next = [...prev];
+                                                next[idx] = { ...next[idx], analysis_info: newVal };
+                                                return next;
+                                            });
+                                        }}
+                                        className="bg-transparent border-none outline-none focus:bg-slate-950/80 px-2 py-1 rounded w-full min-h-[42px] resize-y text-slate-400 text-xs border-b border-transparent focus:border-primary/30 transition-all"
                                     />
                                 </td>
                                 <td className="p-4">
