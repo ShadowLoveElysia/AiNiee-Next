@@ -9,6 +9,23 @@ from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from .default_config import DEFAULT_CONFIG
 
+RULE_CHILD_SWITCH_KEYS = (
+    "exclusion_list_switch",
+    "characterization_switch",
+    "world_building_switch",
+    "writing_style_switch",
+    "translation_example_switch",
+)
+
+RULE_RUNTIME_DATA_KEYS = (
+    "prompt_dictionary_data",
+    "exclusion_list_data",
+    "characterization_data",
+    "world_building_content",
+    "writing_style_content",
+    "translation_example_data",
+)
+
 # 接口请求器
 class TaskConfig(Base):
 
@@ -217,6 +234,24 @@ class TaskConfig(Base):
         if not hasattr(self, 'actual_thread_counts') or self.actual_thread_counts <= 0:
             self.actual_thread_counts = 3
 
+    def disable_rule_runtime_payload(self) -> None:
+        """
+        Apply the glossary/rules master switch to this in-memory runtime config.
+
+        This intentionally does not write back to profile files. It only makes
+        prompt construction, text preprocessing, and proofread requests ignore
+        all rules when the master glossary switch is off.
+        """
+        if bool(getattr(self, "prompt_dictionary_switch", False)):
+            return
+
+        self.prompt_dictionary_data = []
+        for switch_key in RULE_CHILD_SWITCH_KEYS:
+            setattr(self, switch_key, False)
+        for data_key in RULE_RUNTIME_DATA_KEYS:
+            empty_value = "" if data_key in ("world_building_content", "writing_style_content") else []
+            setattr(self, data_key, empty_value)
+
     # API_URL 自动处理方法
     def process_api_url(self, raw_url: str, target_platform: str, auto_complete: bool) -> str:
         if not raw_url:
@@ -256,6 +291,7 @@ class TaskConfig(Base):
 
     # 准备翻译
     def prepare_for_translation(self,mode) -> None:
+        self.disable_rule_runtime_payload()
 
         # 获取目标平台
 

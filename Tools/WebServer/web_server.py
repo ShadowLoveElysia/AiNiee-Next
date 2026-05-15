@@ -1068,6 +1068,7 @@ class GlossaryAnalysisRequest(BaseModel):
     analysis_lines: Optional[int] = None
     analysis_mode: str = "full"
     prompt_file: Optional[str] = None
+    translate_during_analysis: bool = False
     use_temp_config: bool = False
     temp_platform: Optional[str] = None
     temp_api_key: Optional[str] = None
@@ -1119,6 +1120,7 @@ async def start_glossary_analysis(request: GlossaryAnalysisRequest):
         "estimated_tokens": 0,
         "analysis_mode": request.analysis_mode,
         "structured_analysis": {},
+        "translate_during_analysis": request.translate_during_analysis,
         "lang": lang,
     }
 
@@ -1128,6 +1130,7 @@ async def start_glossary_analysis(request: GlossaryAnalysisRequest):
         target=_run_glossary_analysis,
         args=(request.input_path, request.analysis_percent, request.analysis_lines,
               request.analysis_mode, request.prompt_file,
+              request.translate_during_analysis,
               request.use_temp_config, request.temp_platform, request.temp_api_key,
               request.temp_api_url, request.temp_model, request.temp_threads)
     )
@@ -1176,6 +1179,7 @@ def _count_glossary_term_occurrences(text: str, term: str) -> int:
 
 def _run_glossary_analysis(input_path: str, analysis_percent: int, analysis_lines: Optional[int],
                            analysis_mode: str = "full", prompt_file: str = None,
+                           translate_during_analysis: bool = False,
                            use_temp: bool = False, temp_platform: str = None, temp_key: str = None,
                            temp_url: str = None, temp_model: str = None, temp_threads: int = None):
     global _analysis_state
@@ -1266,6 +1270,15 @@ def _run_glossary_analysis(input_path: str, analysis_percent: int, analysis_line
         else:
             platform_config = task_config.get_platform_configuration("translationReq")
             _add_analysis_log_i18n("glossary_log_using_current_config", "使用当前配置: {}", platform_config.get('target_platform', 'unknown'))
+
+        target_language = getattr(task_config, "target_language", config.get("target_language", "Chinese"))
+        if translate_during_analysis:
+            system_prompt = _append_glossary_analysis_translation_instruction(system_prompt, target_language)
+            _analysis_state["translate_during_analysis"] = True
+            _add_analysis_log_i18n(
+                "msg_glossary_analysis_translate_enabled",
+                "已启用分析阶段直译：LLM 将同时输出译名和注释。"
+            )
 
         all_terms = []
         structured_analysis = _empty_glossary_analysis_payload()
@@ -1467,11 +1480,14 @@ def _normalize_term_items(items) -> list:
         if not src:
             continue
         category = _normalize_glossary_text(item.get("category"))
+        term_type = _normalize_glossary_text(item.get("type") or category, "专有名词")
+        raw_info = _normalize_glossary_info(item)
         terms.append({
             "src": src,
-            "type": _normalize_glossary_text(item.get("type") or category, "专有名词"),
+            "dst": _normalize_glossary_text(item.get("dst") or item.get("target") or item.get("translation") or item.get("translated_name")),
+            "type": term_type,
             "category": category,
-            "info": _normalize_glossary_info(item),
+            "info": _clean_glossary_analysis_info(raw_info, term_type, category),
         })
     return terms
 
@@ -1512,7 +1528,7 @@ def _normalize_character_items(items) -> list:
         if not original_name:
             continue
         additional_parts = []
-        for key in ("identity", "role", "relationship", "relationships", "info", "description", "desc"):
+        for key in ("identity", "role", "relationship", "relationships", "info", "description", "desc", "note", "annotation"):
             value = _normalize_glossary_text(item.get(key))
             if value:
                 additional_parts.append(value)
@@ -1674,6 +1690,43 @@ def _normalize_glossary_info(item: dict) -> str:
             return text if text else "null"
     return "null"
 
+def _append_glossary_analysis_translation_instruction(system_prompt: str, target_language: str) -> str:
+    instruction = f"""
+
+Additional output requirement:
+- Translate extracted terms into "{target_language}" during analysis. Put the translation in the glossary item field "dst".
+- Keep "src" as the original text. Do not put category/type labels into "info".
+- "type" is only the category, such as character, place, organization, skill, world setting, item, or term.
+- "info" must be a short note/annotation in "{target_language}" that explains the term's role, context, or usage.
+- For character profiles, fill "translated_name" and write gender, personality, speech_style, and additional_info in "{target_language}" when known.
+- For world_building_content, writing_style_content, and translation_example_data.dst, output "{target_language}" content.
+- For exclusion_list_data.markers, keep the original text that must not be translated; write its "info" in "{target_language}".
+"""
+    return f"{system_prompt.rstrip()}\n{instruction.strip()}\n"
+
+def _clean_glossary_analysis_info(info, term_type: str = "", category: str = "") -> str:
+    info = _normalize_glossary_text(info, "null")
+    if info.lower() in ("", "null", "none"):
+        return "null"
+
+    labels = {
+        _normalize_glossary_text(term_type).lower(),
+        _normalize_glossary_text(category).lower(),
+        "专有名词", "人名", "人物", "角色", "地名", "地点", "组织", "势力",
+        "技能", "能力", "物品", "道具", "世界观", "设定", "术语",
+        "character", "person", "place", "location", "organization", "faction",
+        "skill", "ability", "item", "world", "setting", "term",
+    }
+    labels = {label for label in labels if label}
+    for splitter in ("|", "｜", ":", "："):
+        if splitter not in info:
+            continue
+        left, right = info.split(splitter, 1)
+        if left.strip().lower() in labels:
+            cleaned = right.strip()
+            return cleaned if cleaned else "null"
+    return info
+
 def _format_glossary_info(term_type, info) -> str:
     term_type = _normalize_glossary_text(term_type, "专有名词")
     info = _normalize_glossary_text(info, "null")
@@ -1690,10 +1743,18 @@ def _calculate_term_frequency(terms: list, source_text: str = "") -> dict:
         count = max(1, _count_glossary_term_occurrences(source_text, src) if source_text else 1)
         if src in freq:
             freq[src]['count'] = max(freq[src]['count'], count)
+            if not freq[src].get('dst') and term.get('dst'):
+                freq[src]['dst'] = term.get('dst')
             if freq[src].get('info') in ("", "null") and term.get('info') not in ("", None, "null"):
                 freq[src]['info'] = term.get('info')
         else:
-            freq[src] = {'count': count, 'type': term.get('type', '专有名词'), 'info': term.get('info', 'null')}
+            freq[src] = {
+                'count': count,
+                'type': term.get('type', '专有名词'),
+                'category': term.get('category', ''),
+                'dst': term.get('dst', ''),
+                'info': term.get('info', 'null')
+            }
     return dict(sorted(freq.items(), key=lambda x: x[1]['count'], reverse=True))
 
 def _has_non_glossary_analysis(payload: dict) -> bool:
@@ -1753,7 +1814,14 @@ async def save_analysis_results(request: SaveAnalysisRequest):
         raise HTTPException(status_code=400, detail="No terms or structured rules after filtering")
 
     # Convert to glossary format
-    glossary_data = [{"src": r["src"], "dst": "", "info": _format_glossary_info(r.get("type"), r.get("info"))} for r in filtered]
+    glossary_data = [
+        {
+            "src": r["src"],
+            "dst": _normalize_glossary_text(r.get("dst")),
+            "info": _clean_glossary_analysis_info(r.get("info"), r.get("type"), r.get("category")),
+        }
+        for r in filtered
+    ]
 
     # 新建一个 rules profile 文件
     new_profile_name = _sanitize_rules_profile_name(request.filename)

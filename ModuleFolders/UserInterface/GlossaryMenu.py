@@ -27,6 +27,14 @@ FEATURE_REQUIRED_KEYS = {
     "translation_example_data": {"src", "dst"}
 }
 
+RULE_CHILD_SWITCH_KEYS = (
+    "exclusion_list_switch",
+    "characterization_switch",
+    "world_building_switch",
+    "writing_style_switch",
+    "translation_example_switch",
+)
+
 def open_in_editor(file_path):
     """在系统默认编辑器中打开文件"""
     import platform
@@ -91,6 +99,35 @@ class GlossaryMenu:
     def display_banner(self):
         self.cli.display_banner()
 
+    def _switch_status(self, enabled, disabled=False):
+        label = self.i18n.get("banner_on") if enabled else self.i18n.get("banner_off")
+        if disabled:
+            return f"[dim]{label} ({self.i18n.get('label_disabled')})[/dim]"
+        color = "green" if enabled else "red"
+        return f"[{color}]{label}[/{color}]"
+
+    def _rules_master_enabled(self):
+        return bool(self.config.get("prompt_dictionary_switch", False))
+
+    def _saved_rule_switch(self, switch_key):
+        return bool(self.config.get(switch_key, False))
+
+    def _child_index(self, index):
+        return f"[cyan]{index}.[/]" if self._rules_master_enabled() else f"[dim cyan]{index}.[/]"
+
+    def _child_label(self, text):
+        return text if self._rules_master_enabled() else f"[dim]{text}[/dim]"
+
+    def _toggle_rules_master_switch(self):
+        next_enabled = not self._rules_master_enabled()
+        self.config["prompt_dictionary_switch"] = next_enabled
+        self.save_config()
+
+        message_key = "msg_glossary_master_enabled" if next_enabled else "msg_glossary_master_disabled"
+        color = "green" if next_enabled else "yellow"
+        console.print(f"[{color}]{self.i18n.get(message_key)}[/{color}]")
+        time.sleep(1)
+
     def prompt_menu(self):
         """术语/规则主菜单"""
         while True:
@@ -106,12 +143,13 @@ class GlossaryMenu:
             trans_sel = self.config.get("translation_prompt_selection", {}).get("last_selected_id", "common")
             polish_sel = self.config.get("polishing_prompt_selection", {}).get("last_selected_id", "common")
 
-            dict_sw = self.config.get("prompt_dictionary_switch", False)
-            excl_sw = self.config.get("exclusion_list_switch", False)
-            char_sw = self.config.get("characterization_switch", False)
-            world_sw = self.config.get("world_building_switch", False)
-            style_sw = self.config.get("writing_style_switch", False)
-            examp_sw = self.config.get("translation_example_switch", False)
+            master_enabled = self._rules_master_enabled()
+            dict_sw = self._saved_rule_switch("prompt_dictionary_switch")
+            excl_sw = self._saved_rule_switch("exclusion_list_switch")
+            char_sw = self._saved_rule_switch("characterization_switch")
+            world_sw = self._saved_rule_switch("world_building_switch")
+            style_sw = self._saved_rule_switch("writing_style_switch")
+            examp_sw = self._saved_rule_switch("translation_example_switch")
 
             dict_len = len(self.config.get("prompt_dictionary_data", []))
             excl_len = len(self.config.get("exclusion_list_data", []))
@@ -121,15 +159,51 @@ class GlossaryMenu:
             table = Table(show_header=False, box=None)
             table.add_row("[cyan]1.[/]", f"{self.i18n.get('menu_select_trans_prompt')} ([green]{trans_sel}[/green])")
             table.add_row("[cyan]2.[/]", f"{self.i18n.get('menu_select_polish_prompt')} ([green]{polish_sel}[/green])")
-            table.add_row("[cyan]3.[/]", f"{self.i18n.get('menu_dict_settings')} ([green]{'ON' if dict_sw else 'OFF'}[/green] | {dict_len} items)")
-            table.add_row("[cyan]4.[/]", f"{self.i18n.get('menu_exclusion_settings')} ([green]{'ON' if excl_sw else 'OFF'}[/green] | {excl_len} items)")
+            table.add_row(
+                "[cyan]3.[/]",
+                (
+                    f"{self.i18n.get('banner_glossary_profile')} ({self._switch_status(dict_sw)} | {dict_len} items) "
+                    f"[dim][G] {self.i18n.get('menu_toggle_glossary_master')}[/dim]"
+                )
+            )
+            table.add_row(
+                self._child_index(4),
+                self._child_label(
+                    f"{self.i18n.get('menu_exclusion_settings')} "
+                    f"({self._switch_status(excl_sw, disabled=not master_enabled)} | {excl_len} items)"
+                ),
+            )
 
             table.add_section()
             online_suffix = f" [dim]({self.i18n.get('label_online_only')})[/dim]"
-            table.add_row("[cyan]5.[/]", f"{self.i18n.get('feature_characterization_switch')} ([green]{'ON' if char_sw else 'OFF'}[/green] | {char_len} items){online_suffix}")
-            table.add_row("[cyan]6.[/]", f"{self.i18n.get('feature_world_building_switch')} ([green]{'ON' if world_sw else 'OFF'}[/green]){online_suffix}")
-            table.add_row("[cyan]7.[/]", f"{self.i18n.get('feature_writing_style_switch')} ([green]{'ON' if style_sw else 'OFF'}[/green]){online_suffix}")
-            table.add_row("[cyan]8.[/]", f"{self.i18n.get('feature_translation_example_switch')} ([green]{'ON' if examp_sw else 'OFF'}[/green] | {examp_len} items){online_suffix}")
+            table.add_row(
+                self._child_index(5),
+                self._child_label(
+                    f"{self.i18n.get('feature_characterization_switch')} "
+                    f"({self._switch_status(char_sw, disabled=not master_enabled)} | {char_len} items){online_suffix}"
+                ),
+            )
+            table.add_row(
+                self._child_index(6),
+                self._child_label(
+                    f"{self.i18n.get('feature_world_building_switch')} "
+                    f"({self._switch_status(world_sw, disabled=not master_enabled)}){online_suffix}"
+                ),
+            )
+            table.add_row(
+                self._child_index(7),
+                self._child_label(
+                    f"{self.i18n.get('feature_writing_style_switch')} "
+                    f"({self._switch_status(style_sw, disabled=not master_enabled)}){online_suffix}"
+                ),
+            )
+            table.add_row(
+                self._child_index(8),
+                self._child_label(
+                    f"{self.i18n.get('feature_translation_example_switch')} "
+                    f"({self._switch_status(examp_sw, disabled=not master_enabled)} | {examp_len} items){online_suffix}"
+                ),
+            )
 
             table.add_section()
             table.add_row("[cyan]9.[/]", f"{self.i18n.get('menu_switch_profile_short')} ([yellow]{self.active_rules_profile_name}[/yellow])")
@@ -140,34 +214,43 @@ class GlossaryMenu:
             console.print(table)
             console.print(f"\n[dim]0. {self.i18n.get('menu_exit')}[/dim]")
 
-            choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=[str(i) for i in range(13)], show_choices=False)
+            choice = Prompt.ask(
+                self.i18n.get('prompt_select'),
+                choices=[str(i) for i in range(13)] + ["G", "g"],
+                show_choices=False,
+            ).upper()
             console.print("\n")
 
-            if choice == 0:
+            if choice == "0":
                 break
-            elif choice == 1:
+            elif choice == "G":
+                self._toggle_rules_master_switch()
+            elif choice == "1":
                 self.select_prompt_template("Translate", "translation_prompt_selection")
-            elif choice == 2:
+            elif choice == "2":
                 self.select_prompt_template("Polishing", "polishing_prompt_selection")
-            elif choice == 3:
+            elif choice == "3":
                 self.manage_text_rule("prompt_dictionary_switch", "prompt_dictionary_data", self.i18n.get("menu_dict_settings"))
-            elif choice == 4:
+            elif choice in {"4", "5", "6", "7", "8"} and not self._rules_master_enabled():
+                console.print(f"[yellow]{self.i18n.get('msg_glossary_master_required')}[/yellow]")
+                time.sleep(1)
+            elif choice == "4":
                 self.manage_text_rule("exclusion_list_switch", "exclusion_list_data", self.i18n.get("menu_exclusion_settings"))
-            elif choice == 5:
+            elif choice == "5":
                 self.manage_feature_content("characterization_switch", "characterization_data", self.i18n.get("feature_characterization_switch"), is_list=True)
-            elif choice == 6:
+            elif choice == "6":
                 self.manage_feature_content("world_building_switch", "world_building_content", self.i18n.get("feature_world_building_switch"), is_list=False)
-            elif choice == 7:
+            elif choice == "7":
                 self.manage_feature_content("writing_style_switch", "writing_style_content", self.i18n.get("feature_writing_style_switch"), is_list=False)
-            elif choice == 8:
+            elif choice == "8":
                 self.manage_feature_content("translation_example_switch", "translation_example_data", self.i18n.get("feature_translation_example_switch"), is_list=True)
-            elif choice == 9:
+            elif choice == "9":
                 self.rules_profiles_menu()
-            elif choice == 10:
+            elif choice == "10":
                 self.select_prompt_template("System", None)
-            elif choice == 11:
+            elif choice == "11":
                 self.run_glossary_analysis_task()
-            elif choice == 12:
+            elif choice == "12":
                 self.run_prompt_test()
 
     def run_glossary_analysis_task(self):
@@ -255,6 +338,11 @@ class GlossaryMenu:
         if prompt_file is None:
             return
 
+        translate_during_analysis = Confirm.ask(
+            self.i18n.get('confirm_glossary_analysis_translate_direct') or "是否让 LLM 在分析时直接输出译名和中文注释?",
+            default=True,
+        )
+
         # 选择API配置
         console.print(f"\n[cyan]{self.i18n.get('prompt_select_api_config') or '请选择API配置:'}[/cyan]")
         table = Table(show_header=False, box=None)
@@ -281,7 +369,8 @@ class GlossaryMenu:
                 analysis_lines,
                 temp_platform_config,
                 analysis_mode=analysis_mode,
-                prompt_file=prompt_file
+                prompt_file=prompt_file,
+                translate_during_analysis=translate_during_analysis,
             )
 
             if analysis_result is None:
@@ -596,6 +685,7 @@ class GlossaryMenu:
         """显示词频统计表"""
         table = Table(title=self.i18n.get('label_term_frequency') or "词频统计", show_lines=True)
         table.add_column(self.i18n.get('label_term') or "专有名词", style="cyan")
+        table.add_column(self.i18n.get('label_translation') or "译名", style="blue")
         table.add_column(self.i18n.get('label_type') or "类型", style="green")
         table.add_column(self.i18n.get('label_info') or "说明", style="magenta")
         table.add_column(self.i18n.get('label_frequency') or "出现次数", style="yellow", justify="right")
@@ -603,9 +693,9 @@ class GlossaryMenu:
         # 只显示前20个
         for i, (term, data) in enumerate(term_freq.items()):
             if i >= 20:
-                table.add_row("...", "...", "...", f"(还有 {len(term_freq) - 20} 项)")
+                table.add_row("...", "...", "...", "...", f"(还有 {len(term_freq) - 20} 项)")
                 break
-            table.add_row(term, data['type'], data.get('info', 'null'), str(data['count']))
+            table.add_row(term, data.get('dst', ''), data['type'], data.get('info', 'null'), str(data['count']))
 
         console.print(table)
 
@@ -828,7 +918,9 @@ class GlossaryMenu:
     def manage_text_rule(self, switch_key, data_key, title):
         """管理文本规则（术语表/排除列表）"""
         while True:
-            sw = self.config.get(switch_key, False)
+            is_master = switch_key == "prompt_dictionary_switch"
+            disabled_by_master = not is_master and not self._rules_master_enabled()
+            sw = self._saved_rule_switch(switch_key)
             data = self.config.get(data_key, [])
 
             panel_title = f"[bold]{title}[/bold]"
@@ -837,18 +929,26 @@ class GlossaryMenu:
 
             console.print(Panel(panel_title))
             table = Table(show_header=False, box=None)
-            table.add_row("[cyan]1.[/]", f"{self.i18n.get('menu_toggle_switch')} (Current: [green]{'ON' if sw else 'OFF'}[/green])")
+            table.add_row(
+                "[cyan]1.[/]",
+                f"{self.i18n.get('menu_toggle_switch')} (Current: {self._switch_status(sw, disabled=disabled_by_master)})",
+            )
             table.add_row("[cyan]2.[/]", f"{self.i18n.get('menu_dict_import' if 'dict' in switch_key else 'menu_exclusion_import')} (Current items: {len(data)})")
             table.add_row("[cyan]3.[/]", f"{self.i18n.get('menu_edit_in_editor')}")
             table.add_row("[cyan]4.[/]", f"{self.i18n.get('menu_clear_data')}")
             console.print(table)
+            if disabled_by_master:
+                console.print(f"[dim]{self.i18n.get('msg_glossary_master_disabled_hint')}[/dim]")
             console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
 
             c = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3", "4"], show_choices=False)
 
             if c == 0: break
             elif c == 1:
-                self.config[switch_key] = not sw
+                if switch_key == "prompt_dictionary_switch":
+                    self.config[switch_key] = not self._rules_master_enabled()
+                else:
+                    self.config[switch_key] = not bool(self.config.get(switch_key, False))
             elif c == 2:
                 path = Prompt.ask(self.i18n.get('prompt_json_path')).strip().strip('"').strip("'")
                 if os.path.exists(path):
@@ -939,7 +1039,8 @@ class GlossaryMenu:
     def manage_feature_content(self, switch_key, data_key, title, is_list=False):
         """管理特性内容（角色设定/世界观/写作风格/翻译示例）"""
         while True:
-            sw = self.config.get(switch_key, False)
+            disabled_by_master = not self._rules_master_enabled()
+            sw = self._saved_rule_switch(switch_key)
             data = self.config.get(data_key, [] if is_list else "")
 
             # 定义模板
@@ -953,7 +1054,10 @@ class GlossaryMenu:
 
             console.print(Panel(f"[bold]{title}[/bold]"))
             table = Table(show_header=False, box=None)
-            table.add_row("[cyan]1.[/]", f"{self.i18n.get('menu_toggle_switch')} (Current: [green]{'ON' if sw else 'OFF'}[/green])")
+            table.add_row(
+                "[cyan]1.[/]",
+                f"{self.i18n.get('menu_toggle_switch')} (Current: {self._switch_status(sw, disabled=disabled_by_master)})",
+            )
 
             info_text = f"Items: {len(data)}" if is_list else f"Length: {len(data)} chars"
             if not is_list and len(data) > 50: info_text += f" ({data[:47]}...)"
@@ -961,13 +1065,15 @@ class GlossaryMenu:
             table.add_row("[cyan]2.[/]", f"{self.i18n.get('menu_edit_content')} ({info_text})")
             table.add_row("[cyan]3.[/]", f"{self.i18n.get('menu_clear_data')}")
             console.print(table)
+            if disabled_by_master:
+                console.print(f"[dim]{self.i18n.get('msg_glossary_master_disabled_hint')}[/dim]")
             console.print(f"\n[dim]0. {self.i18n.get('menu_back')}[/dim]")
 
             c = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["0", "1", "2", "3"], show_choices=False)
 
             if c == 0: break
             elif c == 1:
-                self.config[switch_key] = not sw
+                self.config[switch_key] = not bool(self.config.get(switch_key, False))
             elif c == 2:
                 if is_list:
                     temp_dir = os.path.join(self.cli.PROJECT_ROOT, "output", "temp_edit")

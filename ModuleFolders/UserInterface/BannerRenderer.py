@@ -1,7 +1,15 @@
 import os
 
 import rapidjson as json
+from rich.markup import escape
 from rich.panel import Panel
+
+
+def _i18n_text(i18n, key, fallback):
+    value = i18n.get(key)
+    if not value or value == key:
+        return fallback
+    return value
 
 
 def _load_version_string(project_root):
@@ -17,6 +25,76 @@ def _load_version_string(project_root):
     except Exception:
         pass
     return version_text
+
+
+def _selection_id(selection):
+    if isinstance(selection, dict):
+        selection = selection.get("last_selected_id")
+    return str(selection or "").strip()
+
+
+def _is_unselected_prompt_id(prompt_id):
+    return prompt_id.lower() in {"", "common", "command", "none", "null"}
+
+
+def _colored_selection(i18n, selection):
+    selected_id = _selection_id(selection)
+    if _is_unselected_prompt_id(selected_id):
+        not_selected = _i18n_text(i18n, "label_not_selected", "Not selected")
+        return f"[red]{escape(not_selected)}[/red]"
+    return f"[green]{escape(selected_id)}[/green]"
+
+
+def _active_rules_profile_name(cli):
+    for source in (
+        getattr(cli, "active_rules_profile_name", None),
+        cli.config.get("active_rules_profile", None),
+        cli.root_config.get("active_rules_profile", None),
+    ):
+        profile_name = str(source or "").strip()
+        if profile_name:
+            return profile_name
+    return ""
+
+
+def _colored_rules_profile(i18n, profile_name):
+    if str(profile_name or "").strip().lower() in {"", "none", "null"}:
+        not_selected = _i18n_text(i18n, "label_not_selected", "Not selected")
+        return f"[red]{escape(not_selected)}[/red]"
+    return f"[green]{escape(profile_name)}[/green]"
+
+
+def _data_count(value):
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value)
+    if isinstance(value, str):
+        return 1 if value.strip() else 0
+    return 1 if value else 0
+
+
+def _configured_count(i18n, count):
+    count_template = _i18n_text(i18n, "banner_configured_count", "configured {} entries")
+    try:
+        return count_template.format(count)
+    except Exception:
+        return f"{count_template} {count}"
+
+
+def _colored_feature_status(i18n, enabled, count):
+    if not enabled:
+        not_enabled = _i18n_text(i18n, "banner_not_enabled", "Not enabled")
+        return f"[red]{escape(not_enabled)}[/red]"
+
+    enabled_text = _i18n_text(i18n, "banner_on", "ON")
+    count_text = _configured_count(i18n, count)
+    return f"[green]{escape(enabled_text)}[/green] [dim]({escape(count_text)})[/dim]"
+
+
+def _dim_disabled_feature_status(i18n, saved_enabled, count):
+    saved_label = _i18n_text(i18n, "banner_on", "ON") if saved_enabled else _i18n_text(i18n, "banner_off", "OFF")
+    disabled_label = _i18n_text(i18n, "label_disabled", "Disabled")
+    count_text = _configured_count(i18n, count)
+    return f"[dim]{escape(saved_label)} ({escape(disabled_label)}; {escape(count_text)})[/dim]"
 
 
 def build_status_banner(cli, project_root):
@@ -104,16 +182,57 @@ def build_status_banner(cli, project_root):
         f"[bold]{i18n.get('banner_batch_merge')}:[/bold] {batch_merge_status}{think_status} |"
     )
 
-    trans_prompt = cli.config.get("translation_prompt_selection", {}).get("last_selected_id", "common")
-    polish_prompt = cli.config.get("polishing_prompt_selection", {}).get("last_selected_id", "common")
-    if trans_prompt == "command":
-        trans_prompt = i18n.get("label_none") or "None"
-    if polish_prompt == "command":
-        polish_prompt = i18n.get("label_none") or "None"
+    trans_prompt = _colored_selection(i18n, cli.config.get("translation_prompt_selection", {}))
+    polish_prompt = _colored_selection(i18n, cli.config.get("polishing_prompt_selection", {}))
+    rules_profile = _colored_rules_profile(i18n, _active_rules_profile_name(cli))
+    rules_enabled = bool(cli.config.get("prompt_dictionary_switch", False))
+    rules_master_status = (
+        f"[green]{escape(_i18n_text(i18n, 'banner_on', 'ON'))}[/green]"
+        if rules_enabled
+        else f"[red]{escape(_i18n_text(i18n, 'banner_off', 'OFF'))}[/red]"
+    )
+    glossary_count = _data_count(cli.config.get("prompt_dictionary_data", []))
+    glossary_summary_template = _i18n_text(
+        i18n,
+        "banner_glossary_summary",
+        "Current glossary has {} entries configured; check the glossary menu for details",
+    )
+    try:
+        glossary_summary = glossary_summary_template.format(glossary_count)
+    except Exception:
+        glossary_summary = f"{glossary_summary_template} {glossary_count}"
+
+    rule_status_parts = [
+        (
+            f"{_i18n_text(i18n, 'banner_glossary_profile', 'Glossary Master Switch')}:"
+            f"{rules_master_status}"
+        )
+    ]
+
+    character_count = _data_count(cli.config.get("characterization_data", []))
+    world_count = _data_count(cli.config.get("world_building_content", ""))
+    character_saved = bool(cli.config.get("characterization_switch", False))
+    world_saved = bool(cli.config.get("world_building_switch", False))
+    rule_status = " | ".join(rule_status_parts)
+    settings_line_3_suffix = ""
+    if rules_enabled:
+        selected_glossary_status = (
+            f"{rules_profile} [dim]({escape(glossary_summary)})[/dim]"
+        )
+        character_status = _colored_feature_status(i18n, character_saved, character_count)
+        world_status = _colored_feature_status(i18n, world_saved, world_count)
+        settings_line_3_suffix = (
+            f"\n| [bold]{_i18n_text(i18n, 'banner_selected_glossary', 'Selected Glossary')}:[/bold] {selected_glossary_status} | "
+            f"[bold]{_i18n_text(i18n, 'banner_character_profile', 'Characters')}:[/bold] {character_status} | "
+            f"[bold]{_i18n_text(i18n, 'banner_world_building', 'World')}:[/bold] {world_status} |"
+        )
+
     settings_line_3 = (
         f"| [bold]{i18n.get('banner_prompts') or 'Prompts'}:[/bold] "
-        f"{i18n.get('banner_trans') or 'Trans'}:[green]{trans_prompt}[/green] | "
-        f"{i18n.get('banner_polish') or 'Polish'}:[green]{polish_prompt}[/green] |"
+        f"{i18n.get('banner_trans') or 'Trans'}:{trans_prompt} | "
+        f"{i18n.get('banner_polish') or 'Polish'}:{polish_prompt} | "
+        f"{rule_status} |"
+        f"{settings_line_3_suffix}"
     )
 
     op_log_on = cli.operation_logger.is_enabled()

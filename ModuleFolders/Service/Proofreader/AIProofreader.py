@@ -37,6 +37,9 @@ class AIProofreader:
         self.prompt_template = self._load_prompt()
         self.confidence_threshold = config.get("proofread_confidence_threshold", 0.7)
 
+    def _rules_enabled(self) -> bool:
+        return bool(self.config.get("prompt_dictionary_switch", False))
+
     def _load_prompt(self) -> str:
         """加载校对提示词，根据用户配置自动选择语言"""
         # Mapping from language code to prompt suffix
@@ -166,6 +169,12 @@ class AIProofreader:
         """构建用户消息，包含所有规则设定"""
         message_parts = []
 
+        if not self._rules_enabled():
+            glossary = []
+            world_building = ""
+            writing_style = ""
+            characterization = []
+
         if world_building:
             message_parts.append(f"## 世界观设定\n{world_building}")
         
@@ -254,8 +263,9 @@ class AIProofreader:
 
         # 构建规则前缀
         rule_parts = []
-        if world_building: rule_parts.append(f"世界观: {world_building}")
-        if writing_style: rule_parts.append(f"风格: {writing_style}")
+        rules_enabled = self._rules_enabled()
+        if rules_enabled and world_building: rule_parts.append(f"世界观: {world_building}")
+        if rules_enabled and writing_style: rule_parts.append(f"风格: {writing_style}")
         rules_text = "\n".join(rule_parts)
 
         lines_text = []
@@ -276,7 +286,7 @@ class AIProofreader:
 ## 待校对列表
 {block_content}
 """
-        if glossary:
+        if rules_enabled and glossary:
             glossary_str = "\n".join([f"- {i.get('src')} -> {i.get('dst')}" for i in glossary])
             user_message += f"\n\n## 术语表\n{glossary_str}"
 

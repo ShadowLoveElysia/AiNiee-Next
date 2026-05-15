@@ -220,6 +220,9 @@ class TranslationChecker(Base):
 
     # --- 规则检查主流程 ---
     def _check_rules(self, target_type: str, rules_config: dict) -> List[Dict]:
+        if not self.config.get("prompt_dictionary_switch", False):
+            return []
+
         if not any(rules_config.values()):
             return []
 
@@ -374,6 +377,8 @@ class TranslationChecker(Base):
             except: pass
 
         if include_exclusion:
+            if not self.config.get("prompt_dictionary_switch", False):
+                return patterns
             ex_data = self.config.get("exclusion_list_data", [])
             for item in ex_data:
                 if item.get("regex"): patterns.append(item["regex"])

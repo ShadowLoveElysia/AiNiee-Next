@@ -81,6 +81,7 @@ class GlossaryAnalyzer:
         temp_config=None,
         analysis_mode="full",
         prompt_file=None,
+        translate_during_analysis=False,
     ):
         """
         执行术语表分析的核心逻辑
@@ -92,6 +93,7 @@ class GlossaryAnalyzer:
             temp_config: 临时API配置（可选）
             analysis_mode: full=全本/按比例单次提取，split=按行拆分提取
             prompt_file: 自定义术语分析提示词路径（可选）
+            translate_during_analysis: 分析时让 LLM 同时输出目标语言译名和注释
 
         Returns:
             tuple: (filtered_terms, glossary_data) 或 None（如果失败）
@@ -173,6 +175,13 @@ class GlossaryAnalyzer:
         else:
             platform_config = task_config.get_platform_configuration("translationReq")
             console.print(f"[cyan]{self.i18n.get('msg_using_current_config') or '使用当前配置'}: {platform_config.get('target_platform')}[/cyan]")
+
+        target_language = getattr(task_config, "target_language", self.config.get("target_language", "Chinese"))
+        if translate_during_analysis:
+            system_prompt = self._append_analysis_translation_instruction(system_prompt, target_language)
+            console.print(
+                f"[cyan]{self._tr('msg_glossary_analysis_translate_enabled', '已启用分析阶段直译：LLM 将同时输出译名和注释。')}[/cyan]"
+            )
 
         all_terms = []
         structured_analysis = self._empty_analysis_payload()
@@ -310,6 +319,7 @@ class GlossaryAnalyzer:
             'estimated_tokens': estimated_tokens,
             'prompt_file': prompt_path,
             'structured_analysis': structured_analysis,
+            'translate_during_analysis': translate_during_analysis,
         }
 
     def filter_and_save(self, analysis_result, min_freq):
@@ -879,13 +889,17 @@ Only output the JSON array, no other text."""
                     merged_glossary.append({
                         "src": src,
                         "dst": selected.get("dst", ""),
-                        "info": selected.get("info") or self._format_glossary_info(meta.get("type"), meta.get("info"))
+                        "info": self._clean_analysis_info(
+                            selected.get("info") or meta.get("info"),
+                            meta.get("type"),
+                            meta.get("category"),
+                        )
                     })
                 else:
                     merged_glossary.append({
                         "src": src,
                         "dst": "",
-                        "info": self._format_glossary_info(meta.get("type"), meta.get("info"))
+                        "info": self._clean_analysis_info(meta.get("info"), meta.get("type"), meta.get("category"))
                     })
 
             save_path = self._build_output_glossary_path(base_glossary_path, "_独立术语表_翻译结果")
@@ -1059,11 +1073,16 @@ Translation|Note"""
                 continue
             category = self._normalize_glossary_text(item.get("category"))
             term_type = self._normalize_glossary_text(item.get("type") or category, "专有名词")
+            dst = self._normalize_glossary_text(
+                item.get("dst") or item.get("target") or item.get("translation") or item.get("translated_name")
+            )
+            raw_info = self._normalize_glossary_info(item)
             terms.append({
                 "src": src,
+                "dst": dst,
                 "type": term_type,
                 "category": category,
-                "info": self._normalize_glossary_info(item),
+                "info": self._clean_analysis_info(raw_info, term_type, category),
             })
         return terms
 
@@ -1114,7 +1133,7 @@ Translation|Note"""
             if not original_name:
                 continue
             additional_parts = []
-            for key in ("identity", "role", "relationship", "relationships", "info", "description", "desc"):
+            for key in ("identity", "role", "relationship", "relationships", "info", "description", "desc", "note", "annotation"):
                 value = self._normalize_glossary_text(item.get(key))
                 if value:
                     additional_parts.append(value)
@@ -1308,6 +1327,43 @@ Translation|Note"""
             return f"{term_type} | null"
         return f"{term_type} | {info}"
 
+    def _append_analysis_translation_instruction(self, system_prompt, target_language):
+        instruction = f"""
+
+Additional output requirement:
+- Translate extracted terms into "{target_language}" during analysis. Put the translation in the glossary item field "dst".
+- Keep "src" as the original text. Do not put category/type labels into "info".
+- "type" is only the category, such as character, place, organization, skill, world setting, item, or term.
+- "info" must be a short note/annotation in "{target_language}" that explains the term's role, context, or usage.
+- For character profiles, fill "translated_name" and write gender, personality, speech_style, and additional_info in "{target_language}" when known.
+- For world_building_content, writing_style_content, and translation_example_data.dst, output "{target_language}" content.
+- For exclusion_list_data.markers, keep the original text that must not be translated; write its "info" in "{target_language}".
+"""
+        return f"{system_prompt.rstrip()}\n{instruction.strip()}\n"
+
+    def _clean_analysis_info(self, info, term_type="", category=""):
+        info = self._normalize_glossary_text(info, "null")
+        if info.lower() in ("", "null", "none"):
+            return "null"
+
+        labels = {
+            self._normalize_glossary_text(term_type).lower(),
+            self._normalize_glossary_text(category).lower(),
+            "专有名词", "人名", "人物", "角色", "地名", "地点", "组织", "势力",
+            "技能", "能力", "物品", "道具", "世界观", "设定", "术语",
+            "character", "person", "place", "location", "organization", "faction",
+            "skill", "ability", "item", "world", "setting", "term",
+        }
+        labels = {label for label in labels if label}
+        for splitter in ("|", "｜", ":", "："):
+            if splitter not in info:
+                continue
+            left, right = info.split(splitter, 1)
+            if left.strip().lower() in labels:
+                cleaned = right.strip()
+                return cleaned if cleaned else "null"
+        return info
+
     def _resolve_prompt_file(self, prompt_file=None):
         if prompt_file and os.path.exists(prompt_file):
             return prompt_file
@@ -1362,12 +1418,16 @@ Translation|Note"""
 
             if src in freq:
                 freq[src]['count'] = max(freq[src]['count'], count)
+                if not freq[src].get('dst') and term.get('dst'):
+                    freq[src]['dst'] = term.get('dst')
                 if freq[src].get('info') in ("", "null") and term.get('info') not in ("", None, "null"):
                     freq[src]['info'] = term.get('info')
             else:
                 freq[src] = {
                     'count': count,
                     'type': term.get('type', '专有名词'),
+                    'category': term.get('category', ''),
+                    'dst': term.get('dst', ''),
                     'info': term.get('info', 'null')
                 }
 
@@ -1386,8 +1446,8 @@ Translation|Note"""
         for term, data in filtered_terms.items():
             glossary.append({
                 "src": term,
-                "dst": "",
-                "info": self._format_glossary_info(data.get('type'), data.get('info'))
+                "dst": self._normalize_glossary_text(data.get('dst')),
+                "info": self._clean_analysis_info(data.get('info'), data.get('type'), data.get('category'))
             })
         return glossary
 
