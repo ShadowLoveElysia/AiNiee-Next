@@ -15,6 +15,14 @@ from ModuleFolders.Infrastructure.TaskConfig.ConfigRegistry import (
 )
 
 
+MANGA_ENGINE_CONFIG_STAGES = {
+    "manga_detect_engine": "detect",
+    "manga_segment_engine": "segment",
+    "manga_ocr_engine": "ocr",
+    "manga_inpaint_engine": "inpaint",
+}
+
+
 def format_bool_value(value: bool) -> str:
     """格式化布尔值显示"""
     return "[green]ON[/]" if value else "[red]OFF[/]"
@@ -49,6 +57,9 @@ def format_config_value(key: str, value, config: dict, i18n=None) -> str:
         count = len(value) if isinstance(value, list) else 0
         return f"[dim]{count} {i18n.get('label_items')}[/dim]" if i18n else f"[dim]{count} items[/dim]"
     elif item.config_type == ConfigType.CHOICE:
+        if key in MANGA_ENGINE_CONFIG_STAGES:
+            display = _format_manga_engine_value(key, value, item.default)
+            return str(display) if display else ""
         # 选项类型需要翻译
         if i18n and value:
             translated = i18n.get(f"choice_{value}")
@@ -89,6 +100,23 @@ def is_dependency_met(key: str, config: dict) -> bool:
     # 检查依赖的配置项是否启用
     dep_value = config.get(item.depends_on, False)
     return bool(dep_value)
+
+
+def _format_manga_engine_value(key: str, value, default: str) -> str:
+    """Format MangaCore engine ids with catalog display names when available."""
+    raw_value = str(value or default or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        from ModuleFolders.MangaCore.pipeline.modelCatalog import get_model_package, normalize_model_id
+
+        model_id = normalize_model_id(raw_value)
+        package = get_model_package(model_id)
+    except Exception:
+        return raw_value
+    if package.display_name and package.display_name != package.model_id:
+        return f"{package.display_name} ({package.model_id})"
+    return package.model_id
 
 
 class SettingsMenuBuilder:
@@ -249,6 +277,8 @@ class SettingsMenuBuilder:
             # 字典类型：显示子菜单让用户切换各项
             return self._handle_dict_input(key, current, console)
         elif item.config_type == ConfigType.CHOICE:
+            if key in MANGA_ENGINE_CONFIG_STAGES:
+                return self._handle_manga_engine_choice_input(key, item, current, console)
             # 选择类型：显示选项列表
             return self._handle_choice_input(key, item, current, console)
         else:
@@ -301,6 +331,78 @@ class SettingsMenuBuilder:
 
         return result
 
+    def _handle_manga_engine_choice_input(self, key: str, item, current, console):
+        """处理 MangaCore 引擎选择，未下载/未接入 Runtime 的模型灰显且不可选。"""
+        stage = MANGA_ENGINE_CONFIG_STAGES.get(key)
+        if not stage:
+            return None
+
+        try:
+            from ModuleFolders.MangaCore.pipeline.modelCatalog import normalize_model_id
+            from ModuleFolders.MangaCore.pipeline.modelStore import MangaModelStore
+
+            manifest = MangaModelStore().build_manager_manifest()
+        except Exception as exc:
+            console.print(f"[yellow]{self._t('error_config_load', 'Failed to load configuration')}: {exc}[/yellow]")
+            return None
+
+        options = list((manifest.get("engine_options") or {}).get(stage) or [])
+        if not options:
+            console.print(f"[yellow]{self._t('manga_model_no_stage_options', 'No model options are registered for this stage.')}[/yellow]")
+            return None
+
+        current_model_id = normalize_model_id(str(current or item.default or ""))
+        selectable_indices = {}
+
+        table = Table(show_header=True, show_lines=False, expand=True)
+        table.add_column("ID", style="cyan", width=4, no_wrap=True)
+        table.add_column(self._t("manga_package", "Package"), overflow="fold", ratio=2)
+        table.add_column(self._t("manga_model_hardware", "Hardware"), ratio=1)
+        table.add_column(self._t("manga_model_effect", "Effect"), ratio=1)
+        table.add_column(self._t("manga_model_status", "Status"), ratio=1)
+        table.add_column(self._t("label_value", "Value"), overflow="fold", ratio=2)
+
+        for index, option in enumerate(options, 1):
+            model_id = normalize_model_id(str(option.get("model_id") or ""))
+            selectable = bool(option.get("selectable"))
+            if selectable:
+                selectable_indices[index] = model_id
+
+            marker = "[green]●[/green]" if model_id == current_model_id else ""
+            id_cell = str(index) if selectable else f"[dim]{index}[/dim]"
+            status = self._manga_engine_option_status(option)
+            style = "" if selectable else "dim"
+            table.add_row(
+                id_cell,
+                str(option.get("display_name") or model_id),
+                str(option.get("hardware_tier") or ""),
+                str(option.get("quality_tier") or ""),
+                status,
+                marker or model_id,
+                style=style,
+            )
+        table.add_row("[red]0[/red]", self._t("menu_exit", "Exit"), "", "", "", "")
+
+        console.print(table)
+        console.print(f"[dim]{self._t('manga_model_available_only_hint', 'Only downloaded and runtime-supported model packages can be selected. Missing packages remain visible but disabled.')}[/dim]")
+
+        if not selectable_indices:
+            console.print(f"[yellow]{self._t('manga_model_no_selectable_options', 'No downloaded selectable model is available for this stage yet.')}[/yellow]")
+            return None
+
+        choice_input = Prompt.ask(
+            prompt_label(self.i18n.get("prompt_select")),
+            choices=["0", *(str(index) for index in selectable_indices)],
+            default="0",
+            show_choices=False,
+        )
+        if choice_input == "0":
+            return None
+        try:
+            return selectable_indices[int(choice_input)]
+        except (ValueError, KeyError):
+            return None
+
     def _handle_choice_input(self, key: str, item, current, console):
         """处理选择类型的输入，显示选项列表"""
         if not item.choices:
@@ -327,3 +429,17 @@ class SettingsMenuBuilder:
             pass
 
         return None
+
+    def _manga_engine_option_status(self, option: dict[str, object]) -> str:
+        if option.get("selectable"):
+            return self._t("manga_model_selectable", "Selectable")
+        reason = str(option.get("disabled_reason") or "")
+        if reason == "missing":
+            return self._t("manga_model_not_downloaded", "Not downloaded")
+        if reason == "unsupported_runtime":
+            return self._t("manga_model_unsupported_runtime", "Runtime unsupported")
+        return self._t("manga_missing", "Missing")
+
+    def _t(self, key: str, fallback: str) -> str:
+        value = self.i18n.get(key) if self.i18n else key
+        return fallback if value == key else value

@@ -535,6 +535,7 @@ class CLIMenu:
             active_profile_name=self.active_profile_name,
             active_rules_profile_name=self.active_rules_profile_name,
             write_root=save_root,
+            prefer_sdk_request_mode="sdk_request_mode" in self.config,
         )
         self.active_profile_name = self.root_config.get("active_profile", self.active_profile_name)
         self.active_rules_profile_name = self.root_config.get("active_rules_profile", self.active_rules_profile_name)

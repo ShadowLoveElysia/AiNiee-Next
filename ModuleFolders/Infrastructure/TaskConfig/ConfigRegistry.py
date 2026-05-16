@@ -682,11 +682,22 @@ register_config(ConfigItem(
 ))
 
 # --- API请求模式 (USER) ---
-# 启用后使用 OpenAI SDK 发起请求，关闭则使用原生 HTTPX
+register_config(ConfigItem(
+    key="sdk_request_mode",
+    default="httpx",
+    level=ConfigLevel.USER,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_sdk_request_mode",
+    i18n_desc_key="setting_sdk_request_mode_desc",
+    choices=["httpx", "openai", "anthropic"],
+    category="api"
+))
+
+# --- 兼容旧配置：由 sdk_request_mode 取代，不再显示 ---
 register_config(ConfigItem(
     key="use_openai_sdk",
     default=False,
-    level=ConfigLevel.USER,
+    level=ConfigLevel.SYSTEM,
     config_type=ConfigType.BOOL,
     i18n_key="setting_use_openai_sdk",
     i18n_desc_key="setting_use_openai_sdk_desc",
@@ -934,6 +945,23 @@ register_config(ConfigItem(
 ))
 
 # --- MangaCore Runtime 配置 (ADVANCED) ---
+_manga_engine_defaults = {
+    "manga_detect_engine": "comic-text-bubble-detector",
+    "manga_segment_engine": "comic-text-detector",
+    "manga_ocr_engine": "mit48px-ocr",
+    "manga_inpaint_engine": "aot-inpainting",
+}
+
+for _manga_engine_key, _manga_engine_default in _manga_engine_defaults.items():
+    register_config(ConfigItem(
+        key=_manga_engine_key,
+        default=_manga_engine_default,
+        level=ConfigLevel.ADVANCED,
+        config_type=ConfigType.CHOICE,
+        i18n_key=f"setting_{_manga_engine_key}",
+        category="manga"
+    ))
+
 for _manga_device_key in (
     "manga_runtime_device",
     "manga_detect_device",
@@ -1115,7 +1143,7 @@ def validate_config_value(key: str, value: Any) -> tuple[bool, str]:
         if not isinstance(value, bool):
             return False, f"配置 {key} 必须是布尔值"
 
-    elif item.config_type == ConfigType.CHOICE:
+    elif item.config_type == ConfigType.CHOICE and item.choices:
         if value not in item.choices:
             return False, f"配置 {key} 必须是 {item.choices} 之一"
 

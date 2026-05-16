@@ -198,6 +198,7 @@ class TranslateEngine:
             "auto_complete": auto_complete,
             "enable_stream_api": getattr(task_config, "enable_stream_api", True),
             "enable_prompt_caching": getattr(task_config, "enable_prompt_caching", False),
+            "sdk_request_mode": getattr(task_config, "sdk_request_mode", "httpx"),
             "use_openai_sdk": getattr(task_config, "use_openai_sdk", False),
         }
         return task_config, platform_config

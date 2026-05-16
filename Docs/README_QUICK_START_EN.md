@@ -131,15 +131,15 @@ If verification fails:
 - Check whether the DeepSeek account has enough balance.
 - Check whether the selected model name is valid.
 - Check whether the API URL is correct.
-- If you see a compatibility error, try enabling the OpenAI SDK request mode in API settings.
+- If you see a compatibility error, switch SDK Request Mode in API settings.
 
-For DeepSeek, if the default HTTPX request mode fails with a 404-like error, go to API settings and enable:
+For DeepSeek, if the default HTTPX request mode fails with a 404-like error, go to API settings and choose:
 
 ```text
-Use OpenAI SDK request
+SDK Request Mode
 ```
 
-Then verify the API again.
+This option cycles `HTTPX -> OpenAI SDK -> Anthropic SDK -> HTTPX`. For DeepSeek, switch it to `OpenAI SDK`, then verify the API again. `Anthropic SDK` means the Anthropic protocol; it is not limited to Claude models.
 
 ## 7. Configure Project Settings
 

@@ -179,6 +179,9 @@ class CommandModeRunner:
             console.print("[red]Error: --manga currently only supports the translate task.[/red]")
             return 2
 
+        if getattr(args, "manga_runtime_check", False):
+            return self._run_manga_runtime_check(args)
+
         if args.profile:
             self.host.root_config["active_profile"] = args.profile
             self.host.save_config(save_root=True)
@@ -201,9 +204,6 @@ class CommandModeRunner:
         if args.task == "queue":
             self._run_queue(args)
             return 0
-
-        if getattr(args, "manga_runtime_check", False):
-            return self._run_manga_runtime_check(args)
 
         if args.task in task_map:
             if not args.input_path:

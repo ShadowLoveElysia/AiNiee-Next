@@ -128,7 +128,7 @@ If verification fails, check:
 - whether the account has balance,
 - whether the model name is valid,
 - whether the API URL is correct,
-- whether OpenAI SDK request mode should be enabled for DeepSeek.
+- whether SDK Request Mode should be switched to OpenAI SDK for DeepSeek.
 
 After verification succeeds, continue with the quick start guide:
 

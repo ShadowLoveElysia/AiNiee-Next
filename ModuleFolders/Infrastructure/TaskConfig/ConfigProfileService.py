@@ -4,6 +4,7 @@ import threading
 
 import rapidjson as json
 
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.default_config import DEFAULT_CONFIG
 
 
@@ -212,7 +213,9 @@ def normalize_rules_payload(payload: dict, *, infer_missing_switches: bool = Tru
     return normalized
 
 
-def split_effective_config(config: dict) -> tuple[dict, dict, dict]:
+def split_effective_config(config: dict, *, prefer_sdk_request_mode: bool = False) -> tuple[dict, dict, dict]:
+    sync_sdk_request_mode_config(config, prefer_sdk_request_mode=prefer_sdk_request_mode)
+
     settings = {}
     rules = {}
     root_updates = {}
@@ -298,6 +301,10 @@ def load_effective_config(
         effective["active_rules_profile"] = rules_profile_name
         if interface_language and not effective.get("interface_language"):
             effective["interface_language"] = interface_language
+        sync_sdk_request_mode_config(
+            effective,
+            prefer_sdk_request_mode=isinstance(profile_config, dict) and "sdk_request_mode" in profile_config,
+        )
         return effective
 
 
@@ -308,6 +315,7 @@ def save_effective_config(
     active_profile_name: str | None = None,
     active_rules_profile_name: str | None = None,
     write_root: bool = True,
+    prefer_sdk_request_mode: bool = False,
 ) -> dict:
     with _CONFIG_LOCK:
         root_config = copy.deepcopy(root_config) if isinstance(root_config, dict) else load_root_config()
@@ -317,7 +325,10 @@ def save_effective_config(
             allow_none=True,
         )
 
-        settings_updates, rules_updates, root_updates = split_effective_config(config)
+        settings_updates, rules_updates, root_updates = split_effective_config(
+            config,
+            prefer_sdk_request_mode=prefer_sdk_request_mode,
+        )
         profile_path, profile_name = resolve_profile_path(PROFILES_PATH, profile_name)
         current_profile = load_json_file(profile_path, {}) if os.path.exists(profile_path) else {}
         for key in RULE_PROFILE_KEYS:
@@ -350,7 +361,9 @@ def save_effective_config(
 def save_setting_value(key: str, value) -> None:
     config = load_effective_config(create_missing=True)
     config[key] = value
-    save_effective_config(config)
+    if key in ("sdk_request_mode", "use_openai_sdk"):
+        sync_sdk_request_mode_config(config, prefer_sdk_request_mode=key == "sdk_request_mode")
+    save_effective_config(config, prefer_sdk_request_mode=key == "sdk_request_mode")
 
 
 def save_rule_value(key: str, value) -> None:

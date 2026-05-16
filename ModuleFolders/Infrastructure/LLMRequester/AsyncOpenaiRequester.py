@@ -24,6 +24,7 @@ from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClass
 from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint, FeatureSupport
 from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
 from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import is_openai_sdk_mode
 
 
 class AsyncOpenaiRequester(Base):
@@ -62,7 +63,7 @@ class AsyncOpenaiRequester(Base):
     def _apply_deepseek_compatibility(self, request_body: dict, platform_config: dict) -> None:
         think_switch = bool(platform_config.get("think_switch"))
         think_depth = platform_config.get("think_depth")
-        use_sdk = bool(platform_config.get("use_openai_sdk", False))
+        use_sdk = is_openai_sdk_mode(platform_config)
 
         thinking = {
             "type": "enabled" if think_switch else "disabled",
@@ -275,7 +276,7 @@ class AsyncOpenaiRequester(Base):
             think_switch = platform_config.get("think_switch")
             think_depth = platform_config.get("think_depth")
             enable_stream = platform_config.get("enable_stream_api", True)
-            use_sdk = platform_config.get("use_openai_sdk", False)
+            use_sdk = is_openai_sdk_mode(platform_config)
             is_deepseek = self._is_deepseek_request(platform_config, model_name)
 
             # 插入系统消息

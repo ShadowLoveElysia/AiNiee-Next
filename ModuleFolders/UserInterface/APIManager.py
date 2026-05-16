@@ -11,6 +11,13 @@ from rich.panel import Panel
 from rich.prompt import Prompt, IntPrompt
 from rich.table import Table
 
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import (
+    is_openai_sdk_mode,
+    next_sdk_request_mode,
+    normalize_sdk_request_mode,
+    sdk_request_mode_label,
+)
+
 console = Console()
 
 
@@ -89,8 +96,8 @@ class APIManager:
             self.display_banner()
             current_p = self.config.get("target_platform", "None")
             current_m = self.config.get("model", "None")
-            use_sdk = self.config.get("use_openai_sdk", False)
-            mode_label = "OpenAI SDK" if use_sdk else "HTTPX"
+            sdk_mode = normalize_sdk_request_mode(self.config)
+            mode_label = sdk_request_mode_label(sdk_mode)
             console.print(Panel(
                 f"[bold]{self.i18n.get('menu_api_settings')}[/bold] "
                 f"[dim](Current: {current_p} - {current_m})[/dim]"
@@ -102,10 +109,11 @@ class APIManager:
                 table.add_row(f"[{color}]{i+1}.[/]", self.i18n.get(f"menu_api_{m}"))
 
             # 请求模式切换
-            sdk_status = "[green]OpenAI SDK[/]" if use_sdk else "[yellow]HTTPX[/]"
+            sdk_status_style = "yellow" if sdk_mode == "httpx" else "green"
+            sdk_status = f"[{sdk_status_style}]{mode_label}[/]"
             table.add_row(
                 "[bold blue]5.[/]",
-                f"{self.i18n.get('setting_use_openai_sdk')}: {sdk_status}"
+                f"{self.i18n.get('setting_sdk_request_mode')}: {sdk_status}"
             )
             # 编辑器打开
             table.add_row("[magenta]6.[/]", self.i18n.get("menu_edit_in_editor"))
@@ -127,12 +135,11 @@ class APIManager:
             elif choice == 4:
                 self.manual_edit_api_menu()
             elif choice == 5:
-                # 切换请求模式（互斥）
-                new_sdk = not use_sdk
-                self.config["use_openai_sdk"] = new_sdk
+                new_mode = next_sdk_request_mode(sdk_mode)
+                self.config["sdk_request_mode"] = new_mode
+                self.config["use_openai_sdk"] = new_mode == "openai"
                 self.save_config()
-                new_label = "OpenAI SDK" if new_sdk else "HTTPX"
-                console.print(f"[green]{self.i18n.get('setting_use_openai_sdk')} -> {new_label}[/green]")
+                console.print(f"[green]{self.i18n.get('setting_sdk_request_mode')} -> {sdk_request_mode_label(new_mode)}[/green]")
                 time.sleep(0.5)
             elif choice == 6:
                 profile_path = os.path.join(self.profiles_dir, f"{self.active_profile_name}.json")
@@ -319,93 +326,105 @@ class APIManager:
                         response = client.post(api_url, json=payload, headers=headers)
                         response.raise_for_status()
                         content = response.json()["choices"][0]["message"]["content"]
-                elif self.config.get("use_openai_sdk", False):
-                    # ===== OpenAI SDK 验证模式 =====
-                    from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
-
-                    api_key = task_config.get_next_apikey()
-                    model_name = task_config.model
-                    plat_conf = task_config.get_platform_configuration("translationReq")
-
-                    sdk_config = {
-                        "api_url": task_config.base_url,
-                        "api_key": api_key,
-                        "auto_complete": plat_conf.get("auto_complete", False),
-                    }
-                    client = LLMClientFactory().get_openai_client(sdk_config)
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[{"role": "user", "content": self.i18n.get("msg_test_msg")}],
-                        max_tokens=100,
-                        timeout=20,
-                    )
-                    content = response.choices[0].message.content or ""
                 else:
-                    # ===== 原生 HTTPX 验证模式 =====
-                    import httpx
-                    api_url = task_config.base_url.rstrip('/')
-
                     plat_conf = task_config.get_platform_configuration("translationReq")
-                    api_format = plat_conf.get("api_format", "OpenAI")
-                    auto_complete = plat_conf.get("auto_complete", False)
+                    if plat_conf.get("api_format") == "Anthropic":
+                        # ===== Anthropic 协议验证模式 =====
+                        from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
 
-                    if api_format == "OpenAI" and auto_complete and not any(api_url.endswith(s) for s in ["/chat/completions", "/completions"]):
-                        api_url = f"{api_url}/chat/completions"
+                        skip, response_think, response_content, prompt_tokens, completion_tokens = AnthropicRequester().request_anthropic(
+                            [{"role": "user", "content": self.i18n.get("msg_test_msg")}],
+                            "",
+                            plat_conf,
+                        )
+                        if skip:
+                            raise Exception(response_content)
+                        content = response_content
+                    elif is_openai_sdk_mode(self.config):
+                        # ===== OpenAI SDK 验证模式 =====
+                        from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 
-                    api_key = task_config.get_next_apikey()
-                    model_name = task_config.model
+                        api_key = task_config.get_next_apikey()
+                        model_name = task_config.model
 
-                    payload = {
-                        "model": model_name,
-                        "messages": [{"role": "user", "content": self.i18n.get("msg_test_msg")}],
-                        "max_tokens": 100,
-                        "stream": False
-                    }
+                        sdk_config = {
+                            "api_url": task_config.base_url,
+                            "api_key": api_key,
+                            "auto_complete": plat_conf.get("auto_complete", False),
+                        }
+                        client = LLMClientFactory().get_openai_client(sdk_config)
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            messages=[{"role": "user", "content": self.i18n.get("msg_test_msg")}],
+                            max_tokens=100,
+                            timeout=20,
+                        )
+                        content = response.choices[0].message.content or ""
+                    else:
+                        # ===== 原生 HTTPX 验证模式 =====
+                        import httpx
+                        api_url = task_config.base_url.rstrip('/')
 
-                    from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import create_httpx_client
-                    with create_httpx_client(timeout=20) as client:
-                        auth_headers = {
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Accept": "application/json"
+                        api_format = plat_conf.get("api_format", "OpenAI")
+                        auto_complete = plat_conf.get("auto_complete", False)
+
+                        if api_format == "OpenAI" and auto_complete and not any(api_url.endswith(s) for s in ["/chat/completions", "/completions"]):
+                            api_url = f"{api_url}/chat/completions"
+
+                        api_key = task_config.get_next_apikey()
+                        model_name = task_config.model
+
+                        payload = {
+                            "model": model_name,
+                            "messages": [{"role": "user", "content": self.i18n.get("msg_test_msg")}],
+                            "max_tokens": 100,
+                            "stream": False
                         }
 
-                        response = client.post(api_url, json=payload, headers=auth_headers)
+                        from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import create_httpx_client
+                        with create_httpx_client(timeout=20) as client:
+                            auth_headers = {
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Accept": "application/json"
+                            }
 
-                        if response.status_code != 200:
-                            server_type = response.headers.get('Server', 'Unknown')
-                            error_body = response.text[:500]
-                            debug_info = f"\n  - [Status] {response.status_code}\n  - [Server] {server_type}\n  - [Body] {error_body}"
-                            raise Exception(f"HTTP {response.status_code} Error.{debug_info}")
+                            response = client.post(api_url, json=payload, headers=auth_headers)
 
-                        raw_content = response.text.strip()
+                            if response.status_code != 200:
+                                server_type = response.headers.get('Server', 'Unknown')
+                                error_body = response.text[:500]
+                                debug_info = f"\n  - [Status] {response.status_code}\n  - [Server] {server_type}\n  - [Body] {error_body}"
+                                raise Exception(f"HTTP {response.status_code} Error.{debug_info}")
 
-                        if raw_content.startswith("data:"):
-                            full_content = ""
-                            for line in raw_content.split("\n"):
-                                if line.startswith("data:"):
-                                    json_str = line.replace("data:", "").strip()
-                                    if json_str == "[DONE]":
-                                        break
-                                    try:
-                                        res_json = json.loads(json_str)
-                                        if "choices" in res_json:
-                                            choice = res_json["choices"][0]
-                                            chunk_text = choice.get("message", {}).get("content", "") or choice.get("delta", {}).get("content", "")
-                                            full_content += chunk_text
-                                    except:
-                                        continue
-                            content = full_content
-                        else:
-                            try:
-                                res_json = response.json()
-                                if "choices" in res_json:
-                                    content = res_json["choices"][0]["message"].get("content", "")
-                                else:
-                                    content = str(res_json)
-                            except Exception:
-                                raise Exception(f"Response is not valid JSON. Status: {response.status_code}, Body: {raw_content[:500]}")
+                            raw_content = response.text.strip()
+
+                            if raw_content.startswith("data:"):
+                                full_content = ""
+                                for line in raw_content.split("\n"):
+                                    if line.startswith("data:"):
+                                        json_str = line.replace("data:", "").strip()
+                                        if json_str == "[DONE]":
+                                            break
+                                        try:
+                                            res_json = json.loads(json_str)
+                                            if "choices" in res_json:
+                                                choice = res_json["choices"][0]
+                                                chunk_text = choice.get("message", {}).get("content", "") or choice.get("delta", {}).get("content", "")
+                                                full_content += chunk_text
+                                        except:
+                                            continue
+                                content = full_content
+                            else:
+                                try:
+                                    res_json = response.json()
+                                    if "choices" in res_json:
+                                        content = res_json["choices"][0]["message"].get("content", "")
+                                    else:
+                                        content = str(res_json)
+                                except Exception:
+                                    raise Exception(f"Response is not valid JSON. Status: {response.status_code}, Body: {raw_content[:500]}")
 
                 console.print(f"[green]✓ {self.i18n.get('msg_api_ok')}[/green]")
                 console.print(f"[cyan]Response:[/cyan] {content}")

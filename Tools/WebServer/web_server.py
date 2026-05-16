@@ -32,6 +32,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_status
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from Tools.MCPServer.security import (
     MCP_AUTH_HEADER,
     MCP_SECRET_PLACEHOLDER,
@@ -821,7 +822,9 @@ async def save_config(config: AppConfig, request: Request):
             _ensure_no_mcp_secret_placeholder(config_dict, "Config payload")
 
         current_config.update(config_dict)
-        save_effective_config(current_config)
+        prefer_sdk_request_mode = "sdk_request_mode" in config_dict
+        sync_sdk_request_mode_config(current_config, prefer_sdk_request_mode=prefer_sdk_request_mode)
+        save_effective_config(current_config, prefer_sdk_request_mode=prefer_sdk_request_mode)
         _config_cache.clear()
         return {"message": "Config saved successfully."}
     except Exception as e:

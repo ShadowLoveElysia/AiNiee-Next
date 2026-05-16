@@ -3,7 +3,7 @@
 
 支持平台：
 - OpenAI 及兼容 API
-- Anthropic Claude
+- Anthropic protocol
 - Google Gemini
 - Amazon Bedrock
 - Cohere
@@ -20,6 +20,7 @@ from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.AsyncOpenaiRequester import AsyncOpenaiRequester
 from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
 from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import is_anthropic_sdk_mode
 
 
 class AsyncLLMRequester(Base):
@@ -166,6 +167,19 @@ class AsyncLLMRequester(Base):
     ) -> Tuple[bool, str, str, int, int]:
         """异步 Anthropic 请求"""
         try:
+            if is_anthropic_sdk_mode(platform_config):
+                from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
+
+                loop = asyncio.get_event_loop()
+                requester = AnthropicRequester()
+                return await loop.run_in_executor(
+                    None,
+                    requester.request_anthropic,
+                    messages,
+                    system_prompt,
+                    platform_config,
+                )
+
             model_name = platform_config.get("model_name")
             api_url = platform_config.get("api_url", "https://api.anthropic.com").rstrip('/')
             api_key = platform_config.get("api_key")

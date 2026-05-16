@@ -6,6 +6,7 @@ import urllib
 import rapidjson as json
 
 from ModuleFolders.Base.Base import Base
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from .default_config import DEFAULT_CONFIG
 
@@ -139,7 +140,12 @@ class TaskConfig(Base):
         self.thinking_budget = -1
         self.structured_output_mode = 0
         self.enable_stream_api = True  # 流式API开关，默认启用
-        self.use_openai_sdk = False    # 请求模式：True=OpenAI SDK, False=原生HTTPX
+        self.sdk_request_mode = "httpx" # 请求模式：httpx/openai/anthropic
+        self.use_openai_sdk = False     # 兼容旧配置：True 视为 OpenAI SDK
+        self.manga_detect_engine = "comic-text-bubble-detector"
+        self.manga_segment_engine = "comic-text-detector"
+        self.manga_ocr_engine = "mit48px-ocr"
+        self.manga_inpaint_engine = "aot-inpainting"
         self.manga_runtime_device = "auto"
         self.manga_detect_device = "auto"
         self.manga_ocr_device = "auto"
@@ -164,6 +170,9 @@ class TaskConfig(Base):
 
     # 从字典加载配置 (用于从外部传入配置)
     def load_config_from_dict(self, config_dict: dict) -> None:
+        explicit_sdk_request_mode = "sdk_request_mode" in config_dict
+        sync_sdk_request_mode_config(config_dict, prefer_sdk_request_mode=explicit_sdk_request_mode)
+
         for key, value in config_dict.items():
             if key == "response_check_switch":
                 if isinstance(value, dict):
@@ -202,6 +211,16 @@ class TaskConfig(Base):
                 continue
 
             setattr(self, key, value)
+
+        synced = sync_sdk_request_mode_config(
+            {
+                "sdk_request_mode": getattr(self, "sdk_request_mode", "httpx"),
+                "use_openai_sdk": getattr(self, "use_openai_sdk", False),
+            },
+            prefer_sdk_request_mode=explicit_sdk_request_mode,
+        )
+        self.sdk_request_mode = synced["sdk_request_mode"]
+        self.use_openai_sdk = synced["use_openai_sdk"]
 
     def get_next_apikey(self) -> str:
         """
@@ -464,6 +483,7 @@ class TaskConfig(Base):
         auto_complete = self.platforms.get(target_platform).get("auto_complete", False)
         enable_stream_api = getattr(self, "enable_stream_api", True)
         enable_prompt_caching = getattr(self, "enable_prompt_caching", False)
+        sdk_request_mode = getattr(self, "sdk_request_mode", "httpx")
         use_openai_sdk = getattr(self, "use_openai_sdk", False)
 
         params = {
@@ -488,6 +508,7 @@ class TaskConfig(Base):
             "auto_complete": auto_complete,
             "enable_stream_api": enable_stream_api,
             "enable_prompt_caching": enable_prompt_caching,
+            "sdk_request_mode": sdk_request_mode,
             "use_openai_sdk": use_openai_sdk
         }
 

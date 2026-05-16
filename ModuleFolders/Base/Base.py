@@ -8,6 +8,7 @@ import rapidjson as json
 from rich import print as rich_print
 from rich.console import RenderableType
 from ModuleFolders.Base.EventManager import EventManager
+from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     load_effective_config,
     save_effective_config,
@@ -279,7 +280,9 @@ class Base():
             # 更新配置数据
             for k, v in new.items():
                 old[k] = v
-            save_effective_config(old)
+            prefer_sdk_request_mode = "sdk_request_mode" in new
+            sync_sdk_request_mode_config(old, prefer_sdk_request_mode=prefer_sdk_request_mode)
+            save_effective_config(old, prefer_sdk_request_mode=prefer_sdk_request_mode)
 
         return old
 
