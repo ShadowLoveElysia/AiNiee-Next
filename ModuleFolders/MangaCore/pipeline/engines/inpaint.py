@@ -37,9 +37,65 @@ def _load_mask(path: str | Path | None, size: tuple[int, int]) -> Image.Image:
 
 
 def _pil_fallback_inpaint(source: Image.Image, mask: Image.Image) -> Image.Image:
-    softened = source.filter(ImageFilter.MedianFilter(size=7)).filter(ImageFilter.MedianFilter(size=7))
-    blurred_mask = mask.filter(ImageFilter.GaussianBlur(radius=1.5))
-    return Image.composite(softened, source, blurred_mask)
+    source = source.convert("RGB")
+    mask = mask.convert("L")
+    mask_array = np.array(mask, dtype=np.uint8) > 0
+    if not np.any(mask_array):
+        return source.copy()
+
+    source_array = np.array(source, dtype=np.uint8)
+    result_array = source_array.copy()
+    height, width = mask_array.shape
+    visited = np.zeros(mask_array.shape, dtype=bool)
+    unmasked_samples = source_array[~mask_array]
+    if len(unmasked_samples):
+        global_fill = np.median(unmasked_samples, axis=0).astype(np.uint8)
+    else:
+        global_fill = np.median(source_array.reshape(-1, 3), axis=0).astype(np.uint8)
+
+    for start_y, start_x in np.argwhere(mask_array):
+        if visited[start_y, start_x]:
+            continue
+
+        stack = [(int(start_y), int(start_x))]
+        visited[start_y, start_x] = True
+        min_x = max_x = int(start_x)
+        min_y = max_y = int(start_y)
+
+        while stack:
+            y, x = stack.pop()
+            min_x = min(min_x, x)
+            max_x = max(max_x, x)
+            min_y = min(min_y, y)
+            max_y = max(max_y, y)
+            for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if (
+                    0 <= next_y < height
+                    and 0 <= next_x < width
+                    and mask_array[next_y, next_x]
+                    and not visited[next_y, next_x]
+                ):
+                    visited[next_y, next_x] = True
+                    stack.append((next_y, next_x))
+
+        component_width = max_x - min_x + 1
+        component_height = max_y - min_y + 1
+        sample_padding = max(8, min(max(component_width, component_height), 64))
+        sample_x0 = max(0, min_x - sample_padding)
+        sample_y0 = max(0, min_y - sample_padding)
+        sample_x1 = min(width, max_x + sample_padding + 1)
+        sample_y1 = min(height, max_y + sample_padding + 1)
+        sample_mask = ~mask_array[sample_y0:sample_y1, sample_x0:sample_x1]
+        samples = source_array[sample_y0:sample_y1, sample_x0:sample_x1][sample_mask]
+        fill_color = np.median(samples, axis=0).astype(np.uint8) if len(samples) else global_fill
+
+        component_mask = mask_array[min_y : max_y + 1, min_x : max_x + 1]
+        component_region = result_array[min_y : max_y + 1, min_x : max_x + 1]
+        component_region[component_mask] = fill_color
+
+    filled = Image.fromarray(result_array, mode="RGB")
+    feathered_mask = mask.filter(ImageFilter.GaussianBlur(radius=1.25))
+    return Image.composite(filled, source, feathered_mask)
 
 
 @dataclass(slots=True)

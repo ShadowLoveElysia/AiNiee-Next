@@ -774,8 +774,8 @@ class CLIMenu:
         while True:
             self.display_banner()
             table = Table(show_header=False, box=None)
-            menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "effective_config_preview", "recent_project_manager", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "manga_runtime_manager"]
-            colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "bright_blue", "bright_cyan", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "cyan"]
+            menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "manga_runtime_manager"]
+            colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "cyan"]
             
             for i, (m, c) in enumerate(zip(menus, colors)): 
                 label = i18n.get(f"menu_{m}")
@@ -791,10 +791,6 @@ class CLIMenu:
                     label = "漫画翻译 (MangaCore)"
                 if m == "manga_runtime_manager" and label == f"menu_{m}":
                     label = "MangaCore Runtime 管理"
-                if m == "effective_config_preview" and label == f"menu_{m}":
-                    label = "有效配置预览"
-                if m == "recent_project_manager" and label == f"menu_{m}":
-                    label = i18n.get("menu_recent_projects")
                 table.add_row(f"[{c}]{i+1}.[/]", label)
                 
             table.add_row("[red]0.[/]", i18n.get("menu_exit")); console.print(table)
@@ -802,7 +798,7 @@ class CLIMenu:
             console.print("\n")
 
             # 记录用户操作
-            menu_names = ["退出", "开始翻译", "漫画翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "有效配置预览", "最近项目管理", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器", "漫画Runtime管理"]
+            menu_names = ["退出", "开始翻译", "漫画翻译", "开始润色", "翻译&润色", "仅导出", "编辑器", "项目设置", "API设置", "提示词", "插件设置", "任务队列", "配置管理", "帮助QA", "更新", "更新Web", "Web服务器", "MCP服务器", "漫画Runtime管理"]
             if choice < len(menu_names):
                 self.operation_logger.log(f"主菜单 -> {menu_names[choice]}", "MENU")
 
@@ -817,8 +813,6 @@ class CLIMenu:
                 self.settings_menu,
                 self.api_manager.api_settings_menu,
                 self.glossary_menu.prompt_menu,
-                self.config_experience.show_effective_config,
-                self.recent_projects_menu.show,
                 self.plugin_settings_menu,
                 self.task_queue_menu,
                 self.profiles_menu,
@@ -964,8 +958,8 @@ class CLIMenu:
             console.clear()
             
             menu_text = f"1. {i18n.get('mode_single_file')}\n2. {i18n.get('mode_batch_folder')}"
-            menu_text += f"\nM. {i18n.get('menu_recent_project_manager') if i18n.get('menu_recent_project_manager') != 'menu_recent_project_manager' else i18n.get('menu_recent_projects')}"
-            choices = ["0", "1", "2", "M", "m"]
+            menu_text += f"\nE. {i18n.get('menu_recent_project_manager') if i18n.get('menu_recent_project_manager') != 'menu_recent_project_manager' else i18n.get('menu_recent_projects')}"
+            choices = ["0", "1", "2", "E", "e"]
             next_option_idx = 3
             
             if can_resume:
@@ -996,7 +990,7 @@ class CLIMenu:
             prompt_text = i18n.get('prompt_select').strip().rstrip(':').rstrip('：')
             choice_raw = Prompt.ask(f"\n{prompt_text}", choices=choices, show_choices=False)
             console.print("\n")
-            if str(choice_raw).upper() == "M":
+            if str(choice_raw).upper() == "E":
                 self.recent_projects_menu.show()
                 return False
             choice = int(choice_raw)
