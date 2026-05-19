@@ -51,13 +51,14 @@ class EpubReader(BaseSourceReader):
                 items.extend(ncx_items)
             else:
                 # XHTML 处理逻辑
-                xhtml_items = self._read_xhtml_content(item_id, content)
+                xhtml_items = self._read_xhtml_content(item_id, content, filename)
                 items.extend(xhtml_items)
         return CacheFile(items=items)
 
-    def _read_xhtml_content(self, item_id, html_content):
+    def _read_xhtml_content(self, item_id, html_content, filename=None):
         """从 XHTML 文件中提取文本内容"""
         items = []
+        conservative_mode = getattr(self.file_accessor, "last_reading_mode", "legacy") == "conservative"
         for tag_type, pattern, forbidden_tags in self.TAG_PATTERNS_LIST:
             # 使用 finditer 查找所有匹配项，可以迭代处理
             for match in re.finditer(pattern, html_content, re.DOTALL):
@@ -73,9 +74,11 @@ class EpubReader(BaseSourceReader):
 
                 # 提取纯文本，并处理嵌套标签
                 soup = BeautifulSoup(html_text_C, 'html.parser')
-                text_content = soup.get_text(strip=True)
+                text_content = self._extract_text_content(soup, conservative_mode)
 
                 if not text_content:  # 检查一下是否提取到空文本内容
+                    continue
+                if conservative_mode and self._is_noise_text(text_content):
                     continue
 
                 if forbidden_tags:
@@ -89,8 +92,27 @@ class EpubReader(BaseSourceReader):
                     "tag_type": tag_type_refined,
                     "item_id": item_id,
                 }
+                if filename:
+                    extra["doc_path"] = filename
+                if conservative_mode:
+                    extra["epub_reading_mode"] = "conservative"
                 items.append(CacheItem(source_text=text_content, extra=extra))
         return items
+
+    def _extract_text_content(self, soup, conservative_mode):
+        if conservative_mode:
+            soup = BeautifulSoup(str(soup), 'html.parser')
+            for tag in soup.find_all(['rt', 'rp']):
+                tag.decompose()
+        return soup.get_text(strip=True)
+
+    def _is_noise_text(self, text_content):
+        compact_text = re.sub(r"\s+", "", text_content)
+        if not compact_text:
+            return True
+        if compact_text in {"次ページへ", "次のページへ", "次頁へ", "下一页", "下一頁"}:
+            return True
+        return re.fullmatch(r"(?:page)?[0-9０-９]+", compact_text, flags=re.IGNORECASE) is not None
 
     def _read_ncx_content(self, item_id, ncx_content):
         """从 NCX 文件（toc.ncx）中提取 text 标签的文本

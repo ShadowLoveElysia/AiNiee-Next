@@ -360,7 +360,7 @@ def checkDependencies():
     kalpasNatsort = globals().get('natsort')
 
 def getLatestCalibrePortableUrl(languageCode):
-    return "https://download.calibre-ebook.com/8.9.0/calibre-portable-installer-8.9.0.exe"
+    return "https://download.calibre-ebook.com/9.8.0/calibre-portable-installer-9.8.0.exe"
 
 def getCalibreToolPath(toolName):
     config = loadSakuraConfig()
@@ -1032,6 +1032,8 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
     if input_files: epubFiles = input_files
     else: epubFiles = kalpasNatsort.natsorted([os.path.join(sourceDirectory, f) for f in os.listdir(sourceDirectory) if f.lower().endswith('.epub')])
     if not epubFiles: return False
+    dirtyConfidenceTrigger = 70
+    dirtyScoreConfidenceMax = 7
     griseoEpubBook = griseoEpub.EpubBook()
     griseoEpubBook.set_identifier(f'id_{os.path.basename(outputFilePath)}')
     griseoEpubBook.set_title(bookTitle)
@@ -1054,6 +1056,7 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
     except: griseoEpubBook.add_author('Smart Merger')
     spineList = ['nav']
     masterToc = []
+    mergedDocumentCount = 0
     defaultCss = griseoEpub.EpubItem(uid="master_style", file_name="style/master.css", media_type="text/css", content="img { max-width: 100%; }")
     griseoEpubBook.add_item(defaultCss)
 
@@ -1124,7 +1127,33 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                 return pathMapping[candidate]
         return None
 
-    def suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping):
+    def suResolveLocalSourcePath(linkUrl, currentSourcePath):
+        if not linkUrl:
+            return None
+
+        parsedUrl = urllib.parse.urlsplit(linkUrl)
+        if parsedUrl.scheme or parsedUrl.netloc or linkUrl.startswith(('#', 'data:', 'mailto:', 'tel:', 'javascript:')):
+            return None
+
+        sourceLinkPath = parsedUrl.path or ''
+        if not sourceLinkPath:
+            return None
+
+        currentSourceDir = posixpath.dirname(suNormalizeSourcePath(currentSourcePath))
+        try:
+            return suNormalizeSourcePath(posixpath.join(currentSourceDir, sourceLinkPath))
+        except Exception:
+            return None
+
+    def suBuildRelativeTargetUrl(targetPath, currentTargetPath):
+        currentTargetDir = posixpath.dirname(currentTargetPath) or '.'
+        try:
+            newRelativePath = posixpath.relpath(targetPath, currentTargetDir)
+        except Exception:
+            newRelativePath = targetPath
+        return urllib.parse.quote(newRelativePath, safe='/-._~')
+
+    def suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks=False):
         if not linkUrl:
             return linkUrl
 
@@ -1136,36 +1165,38 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
         if not sourceLinkPath:
             return linkUrl
 
-        currentSourceDir = posixpath.dirname(suNormalizeSourcePath(currentSourcePath))
-        try:
-            resolvedSourcePath = suNormalizeSourcePath(posixpath.join(currentSourceDir, sourceLinkPath))
-        except Exception:
+        resolvedSourcePath = suResolveLocalSourcePath(linkUrl, currentSourcePath)
+        if not resolvedSourcePath:
             return linkUrl
 
         remappedTargetPath = suLookupMappedPath(pathMapping, resolvedSourcePath)
         if not remappedTargetPath:
-            return linkUrl
+            return None if dropMissingLocalLinks else linkUrl
 
-        currentTargetDir = posixpath.dirname(currentTargetPath) or '.'
-        try:
-            newRelativePath = posixpath.relpath(remappedTargetPath, currentTargetDir)
-        except Exception:
-            newRelativePath = remappedTargetPath
-
-        encodedPath = urllib.parse.quote(newRelativePath, safe='/-._~')
+        encodedPath = suBuildRelativeTargetUrl(remappedTargetPath, currentTargetPath)
         return urllib.parse.urlunsplit(('', '', encodedPath, parsedUrl.query, parsedUrl.fragment))
 
-    def suRewriteHtmlLinks(contentString, currentSourcePath, currentTargetPath, pathMapping):
+    def suRewriteHtmlLinks(contentString, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks=False):
         def suReplaceAttr(match):
             attrName = match.group(1)
             quoteChar = match.group(2)
             linkUrl = match.group(3)
-            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks)
+            if remappedUrl is None:
+                return ''
             return f'{attrName}={quoteChar}{remappedUrl}{quoteChar}'
 
         return re.sub(r'((?:xlink:)?href|src|poster)=([\'"])(.*?)\2', suReplaceAttr, contentString, flags=re.IGNORECASE)
 
-    def suRewriteCssLinks(contentBytes, currentSourcePath, currentTargetPath, pathMapping):
+    def suExtractHtmlLinkedPaths(contentString, currentSourcePath):
+        linkedPaths = set()
+        for match in re.finditer(r'((?:xlink:)?href|src|poster)=([\'"])(.*?)\2', contentString, flags=re.IGNORECASE | re.DOTALL):
+            resolvedPath = suResolveLocalSourcePath(match.group(3), currentSourcePath)
+            if resolvedPath:
+                linkedPaths.add(resolvedPath)
+        return linkedPaths
+
+    def suRewriteCssLinks(contentBytes, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks=False):
         try:
             cssText = contentBytes.decode('utf-8')
         except UnicodeDecodeError:
@@ -1182,7 +1213,9 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
 
         def suReplaceCssUrl(match):
             quoteChar, linkUrl = suNormalizeCssValue(match.group(1))
-            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks)
+            if remappedUrl is None:
+                return "url()"
             if remappedUrl == linkUrl:
                 return match.group(0)
             if quoteChar:
@@ -1193,7 +1226,9 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
             prefix = match.group(1)
             quoteChar = match.group(2)
             linkUrl = match.group(3)
-            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping)
+            remappedUrl = suRemapLocalUrl(linkUrl, currentSourcePath, currentTargetPath, pathMapping, dropMissingLocalLinks)
+            if remappedUrl is None:
+                return ""
             if remappedUrl == linkUrl:
                 return match.group(0)
             return f"{prefix}{quoteChar}{remappedUrl}{quoteChar}"
@@ -1201,6 +1236,178 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
         cssText = re.sub(r'url\(\s*([^)]+?)\s*\)', suReplaceCssUrl, cssText, flags=re.IGNORECASE)
         cssText = re.sub(r'(@import\s+)([\'"])(.*?)\2', suReplaceCssImport, cssText, flags=re.IGNORECASE)
         return cssText.encode('utf-8')
+
+    def suExtractCssLinkedPaths(contentBytes, currentSourcePath):
+        try:
+            cssText = contentBytes.decode('utf-8')
+        except UnicodeDecodeError:
+            cssText = contentBytes.decode('utf-8', errors='ignore')
+
+        linkedPaths = set()
+        for match in re.finditer(r'url\(\s*([^)]+?)\s*\)', cssText, flags=re.IGNORECASE):
+            rawValue = match.group(1).strip()
+            if len(rawValue) >= 2 and rawValue[0] == rawValue[-1] and rawValue[0] in ('"', "'"):
+                rawValue = rawValue[1:-1]
+            resolvedPath = suResolveLocalSourcePath(rawValue, currentSourcePath)
+            if resolvedPath:
+                linkedPaths.add(resolvedPath)
+        for match in re.finditer(r'@import\s+([\'"])(.*?)\1', cssText, flags=re.IGNORECASE):
+            resolvedPath = suResolveLocalSourcePath(match.group(2), currentSourcePath)
+            if resolvedPath:
+                linkedPaths.add(resolvedPath)
+        return linkedPaths
+
+    def suIsCssItem(item):
+        itemNameLower = suNormalizeSourcePath(item.get_name()).lower()
+        return item.media_type == 'text/css' or itemNameLower.endswith('.css')
+
+    def suGetItemText(item):
+        try:
+            return item.get_content().decode('utf-8', errors='ignore')
+        except Exception:
+            return ''
+
+    def suStripHtmlText(contentString):
+        text = re.sub(r'<(?:script|style)\b[^>]*>.*?</(?:script|style)>', '', contentString, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'&(?:nbsp|#160);', '', text, flags=re.IGNORECASE)
+        return re.sub(r'\s+', '', text)
+
+    def suIsNoiseDocument(item):
+        compactText = suStripHtmlText(suGetItemText(item))
+        if not compactText:
+            return True
+        if compactText.lower() in {'nextpage', 'next'}:
+            return True
+        if compactText in {'次ページへ', '次のページへ', '次頁へ', '下一页', '下一頁'}:
+            return True
+        return re.fullmatch(r'(?:page)?[0-9０-９]+', compactText, flags=re.IGNORECASE) is not None
+
+    def suIterSpineEntries(sourceEpubBook):
+        for spineEntry in getattr(sourceEpubBook, 'spine', []) or []:
+            if isinstance(spineEntry, (list, tuple)):
+                if not spineEntry:
+                    continue
+                itemId = spineEntry[0]
+                linear = spineEntry[1] if len(spineEntry) > 1 else 'yes'
+            else:
+                itemId = spineEntry
+                linear = 'yes'
+            yield itemId, linear
+
+    def suDirtyConfidence(dirtyScore):
+        return min(100, round((dirtyScore / dirtyScoreConfidenceMax) * 100))
+
+    def suShouldUseConservativeMerge(sourceItemById, sourceItemByPath, spineDocumentIds):
+        spineIdSet = set(spineDocumentIds)
+        documentItems = [
+            item for item in sourceItemById.values()
+            if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT and not suIsNavigationDocument(item)
+        ]
+        cssItems = [item for item in sourceItemById.values() if suIsCssItem(item)]
+        nonSpineDocumentCount = len([item for item in documentItems if item.get_id() not in spineIdSet])
+        navigationDocumentCount = len([
+            item for item in sourceItemById.values()
+            if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT and suIsNavigationDocument(item)
+        ])
+        ncxCount = len([
+            item for item in sourceItemById.values()
+            if item.media_type == 'application/x-dtbncx+xml' or str(item.get_name() or '').lower().endswith('.ncx')
+        ])
+        brokenLinkCount = 0
+        shortNoisePageCount = 0
+        pageAnchorCount = 0
+        mechanicalClassCount = 0
+
+        for item in documentItems[:200]:
+            contentString = suGetItemText(item)
+            pageAnchorCount += len(re.findall(r'\b(?:id|name)=["\']page[_-]?\d+', contentString, flags=re.IGNORECASE))
+            mechanicalClassCount += len(re.findall(r'\bclass=["\'](?:class_s[0-9A-Za-z_-]*|kfx[0-9A-Za-z_-]*)', contentString))
+            if suIsNoiseDocument(item):
+                shortNoisePageCount += 1
+            for linkedPath in suExtractHtmlLinkedPaths(contentString, item.get_name()):
+                if linkedPath not in sourceItemByPath:
+                    brokenLinkCount += 1
+
+        for item in cssItems[:50]:
+            try:
+                linkedPaths = suExtractCssLinkedPaths(item.get_content(), item.get_name())
+            except Exception:
+                linkedPaths = set()
+            for linkedPath in linkedPaths:
+                if linkedPath not in sourceItemByPath:
+                    brokenLinkCount += 1
+
+        dirtyScore = 0
+        if brokenLinkCount:
+            dirtyScore += 3
+        if nonSpineDocumentCount:
+            dirtyScore += 2
+        if shortNoisePageCount >= 2:
+            dirtyScore += 2
+        if navigationDocumentCount >= 2 and ncxCount:
+            dirtyScore += 1
+        if pageAnchorCount >= 20 and mechanicalClassCount >= 50:
+            dirtyScore += 1
+        if len(documentItems) >= 40 and mechanicalClassCount >= 50:
+            dirtyScore += 1
+
+        return suDirtyConfidence(dirtyScore) >= dirtyConfidenceTrigger
+
+    def suCollectConservativeItems(sourceItemById, sourceItemByPath, spineDocumentIds):
+        spineIdSet = set(spineDocumentIds)
+        copiedItemIds = set()
+        pendingItems = []
+
+        def suQueueItem(sourceItem):
+            if not sourceItem or suIsNavigationDocument(sourceItem):
+                return
+            sourceItemId = sourceItem.get_id()
+            if sourceItem.get_type() == mobiusEbookLib.ITEM_DOCUMENT and sourceItemId not in spineIdSet:
+                return
+            if sourceItemId in copiedItemIds:
+                return
+            copiedItemIds.add(sourceItemId)
+            pendingItems.append(sourceItem)
+
+        for itemId in spineDocumentIds:
+            suQueueItem(sourceItemById.get(itemId))
+
+        if spineDocumentIds:
+            for sourceItem in sourceItemById.values():
+                if suIsCssItem(sourceItem):
+                    suQueueItem(sourceItem)
+
+        while pendingItems:
+            sourceItem = pendingItems.pop()
+            try:
+                if sourceItem.get_type() == mobiusEbookLib.ITEM_DOCUMENT:
+                    linkedPaths = suExtractHtmlLinkedPaths(suGetItemText(sourceItem), sourceItem.get_name())
+                elif suIsCssItem(sourceItem):
+                    linkedPaths = suExtractCssLinkedPaths(sourceItem.get_content(), sourceItem.get_name())
+                else:
+                    linkedPaths = set()
+            except Exception:
+                linkedPaths = set()
+
+            for linkedPath in linkedPaths:
+                suQueueItem(sourceItemByPath.get(linkedPath))
+
+        copiedItems = []
+        addedCopiedItemIds = set()
+        for itemId in spineDocumentIds:
+            if itemId in copiedItemIds and itemId in sourceItemById:
+                copiedItems.append(sourceItemById[itemId])
+                addedCopiedItemIds.add(itemId)
+
+        resourceItems = [
+            sourceItemById[itemId]
+            for itemId in copiedItemIds
+            if itemId in sourceItemById and itemId not in addedCopiedItemIds
+        ]
+        resourceItems.sort(key=lambda item: suNormalizeSourcePath(item.get_name()))
+        copiedItems.extend(resourceItems)
+        return copiedItems
 
     def suIsNavigationDocument(item):
         if item.get_type() == mobiusEbookLib.ITEM_NAVIGATION:
@@ -1251,11 +1458,30 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                 usedTargetPaths.add(candidateTargetPath)
                 return candidateTargetPath
 
-            copiedItems = []
+            sourceItemById = {}
+            sourceItemByPath = {}
             for item in sourceEpubBook.get_items():
-                if suIsNavigationDocument(item):
-                    continue
-                copiedItems.append(item)
+                sourceItemById[item.get_id()] = item
+                normalizedItemPath = suNormalizeSourcePath(item.get_name())
+                if normalizedItemPath:
+                    sourceItemByPath[normalizedItemPath] = item
+
+            spineDocumentIds = []
+            for itemId, linear in suIterSpineEntries(sourceEpubBook):
+                sourceItem = sourceItemById.get(itemId)
+                if sourceItem and sourceItem.get_type() == mobiusEbookLib.ITEM_DOCUMENT and not suIsNavigationDocument(sourceItem):
+                    spineDocumentIds.append(itemId)
+
+            useConservativeMerge = suShouldUseConservativeMerge(sourceItemById, sourceItemByPath, spineDocumentIds)
+            if useConservativeMerge:
+                copiedItems = suCollectConservativeItems(sourceItemById, sourceItemByPath, spineDocumentIds)
+            else:
+                copiedItems = []
+                for item in sourceEpubBook.get_items():
+                    if suIsNavigationDocument(item):
+                        continue
+                    copiedItems.append(item)
+
             for item in copiedItems:
                 itemTargetPathMap[item.get_id()] = suBuildSafeTargetPath(item.get_name())
                 suRegisterPathMapping(sourceFilenameMap, item.get_name(), itemTargetPathMap[item.get_id()])
@@ -1268,15 +1494,33 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
 
                 if item.get_type() == mobiusEbookLib.ITEM_DOCUMENT:
                     contentStr = itemContent.decode('utf-8', errors='ignore')
-                    contentStr = suRewriteHtmlLinks(contentStr, item.get_name(), newFilename, sourceFilenameMap)
+                    contentStr = suRewriteHtmlLinks(contentStr, item.get_name(), newFilename, sourceFilenameMap, useConservativeMerge)
                     newItem = griseoEpub.EpubHtml(uid=newId, file_name=newFilename, media_type=item.media_type, content=contentStr.encode('utf-8'), lang=languageCode)
                     copiedDocumentMap[item.get_id()] = newItem
                 else:
-                    if item.media_type == 'text/css' or newFilename.lower().endswith('.css'):
-                        itemContent = suRewriteCssLinks(itemContent, item.get_name(), newFilename, sourceFilenameMap)
+                    if suIsCssItem(item):
+                        itemContent = suRewriteCssLinks(itemContent, item.get_name(), newFilename, sourceFilenameMap, useConservativeMerge)
                     newItem = griseoEpub.EpubItem(uid=newId, file_name=newFilename, media_type=item.media_type, content=itemContent)
 
                 griseoEpubBook.add_item(newItem)
+
+            copiedStyleItems = [
+                griseoEpubBook.get_item_with_id(f"{bookPrefix}_{suSanitizeItemId(item.get_id())}")
+                for item in copiedItems
+                if suIsCssItem(item)
+            ]
+            copiedStyleItems = [item for item in copiedStyleItems if item]
+            if useConservativeMerge and copiedStyleItems:
+                for copiedDocument in copiedDocumentMap.values():
+                    for styleItem in copiedStyleItems:
+                        try:
+                            copiedDocument.add_link(
+                                href=suBuildRelativeTargetUrl(styleItem.get_name(), copiedDocument.get_name()),
+                                rel="stylesheet",
+                                type="text/css"
+                            )
+                        except Exception:
+                            pass
 
             bookTitleClean = os.path.splitext(os.path.basename(epubPath))[0]
             try:
@@ -1284,16 +1528,22 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                 if metaTitles: bookTitleClean = metaTitles[0][0]
             except: pass
 
-            for itemId, linear in sourceEpubBook.spine:
+            for itemId, linear in suIterSpineEntries(sourceEpubBook):
                 newDoc = copiedDocumentMap.get(itemId)
                 if newDoc:
                     spineList.append(newDoc)
+                    mergedDocumentCount += 1
 
             def suProcessToc(tocItems):
                 processedToc = []
                 for item in tocItems:
                     if isinstance(item, (list, tuple)):
-                        processedToc.append((suProcessToc([item[0]])[0], suProcessToc(item[1])))
+                        sectionItems = suProcessToc([item[0]])
+                        childItems = suProcessToc(item[1])
+                        if sectionItems:
+                            processedToc.append((sectionItems[0], childItems))
+                        elif childItems:
+                            processedToc.extend(childItems)
                     elif isinstance(item, griseoEpub.Link):
                         oldHref = item.href or ''
                         parsedHref = urllib.parse.urlsplit(oldHref)
@@ -1303,6 +1553,8 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                             if newBaseHref:
                                 encodedBaseHref = urllib.parse.quote(newBaseHref, safe='/-._~')
                                 newHref = urllib.parse.urlunsplit(('', '', encodedBaseHref, parsedHref.query, parsedHref.fragment))
+                            elif useConservativeMerge:
+                                continue
                         processedToc.append(griseoEpub.Link(newHref, item.title, bookPrefix + (item.uid or '')))
                     elif isinstance(item, griseoEpub.Section):
                         oldHref = item.href
@@ -1315,6 +1567,8 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                                 if newBaseHref:
                                     encodedBaseHref = urllib.parse.quote(newBaseHref, safe='/-._~')
                                     newHref = urllib.parse.urlunsplit(('', '', encodedBaseHref, parsedHref.query, parsedHref.fragment))
+                                elif useConservativeMerge:
+                                    newHref = None
                         processedToc.append(griseoEpub.Section(item.title, newHref))
                 return processedToc
             if flat_merge:
@@ -1325,6 +1579,9 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                 mappedToc = suProcessToc(sourceEpubBook.toc)
                 masterToc.append((bookSection, mappedToc))
         except Exception as error: print(STRINGS['error_generic'][languageCode].format(error))
+    if mergedDocumentCount == 0:
+        print(STRINGS['smart_merge_fail'][languageCode].format("No readable EPUB spine documents found."))
+        return False
     griseoEpubBook.spine = spineList
     griseoEpubBook.toc = masterToc
     griseoEpubBook.add_item(griseoEpub.EpubNcx())
