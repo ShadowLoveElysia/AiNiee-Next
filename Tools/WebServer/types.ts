@@ -153,12 +153,19 @@ export interface GlossaryItem {
   src: string;
   dst: string;
   info?: string;
+  source?: string;
+  volume?: number;
+  updated_in?: string;
+  updated_volume?: number;
+  history?: Record<string, any>[];
+  [key: string]: any;
 }
 
 export interface ExclusionItem {
   markers: string;
   info?: string;
   regex?: string;
+  [key: string]: any;
 }
 
 export interface CharacterizationItem {
@@ -168,12 +175,21 @@ export interface CharacterizationItem {
   age?: string;
   personality?: string;
   speech_style?: string;
+  pronouns?: string;
+  speech_quirks?: string;
   additional_info?: string;
+  source?: string;
+  volume?: number;
+  updated_in?: string;
+  updated_volume?: number;
+  history?: Record<string, any>[];
+  [key: string]: any;
 }
 
 export interface TranslationExampleItem {
   src: string;
   dst: string;
+  [key: string]: any;
 }
 
 export interface TermOption {
@@ -268,6 +284,9 @@ export interface AppConfig {
   prompt_dictionary_switch: boolean;
   exclusion_list_switch: boolean;
   characterization_switch: boolean;
+  character_recall_switch: boolean;
+  character_recall_context_lines: number;
+  character_recall_lookahead_lines: number;
   world_building_switch: boolean;
   writing_style_switch: boolean;
   translation_example_switch: boolean;
@@ -281,7 +300,9 @@ export interface AppConfig {
   prompt_dictionary_data: GlossaryItem[];
   characterization_data: CharacterizationItem[];
   world_building_content: string;
+  world_building_history?: Record<string, any>[];
   writing_style_content: string;
+  writing_style_history?: Record<string, any>[];
   translation_example_data: TranslationExampleItem[];
 
   // --- API & Platform ---

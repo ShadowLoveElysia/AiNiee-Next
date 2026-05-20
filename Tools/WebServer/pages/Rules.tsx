@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, Plus, Trash2, BookOpen, Ban, AlertTriangle, RefreshCw, Search, ToggleLeft, ToggleRight, Download, Upload, History, Users, Map as MapIcon, PenTool, Languages, FileJson, ChevronDown, Sparkles, Play, Square } from 'lucide-react';
+import { Save, Plus, Trash2, BookOpen, Ban, AlertTriangle, RefreshCw, Search, ToggleLeft, ToggleRight, Download, Upload, History, Users, Map as MapIcon, PenTool, Languages, FileJson, ChevronDown, Sparkles, Play, Square, Layers } from 'lucide-react';
 import { GlossaryItem, ExclusionItem, CharacterizationItem, TranslationExampleItem, TermItem, TermOption } from '../types';
 import { DataService } from '../services/DataService';
 import { nativeConfirm } from '../services/nativeDialog';
@@ -7,7 +7,7 @@ import { useI18n } from '../contexts/I18nContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { TermSelector } from '../components/TermSelector';
 
-type TabType = 'glossary' | 'exclusion' | 'characterization' | 'world' | 'style' | 'example' | 'ai_glossary';
+type TabType = 'glossary' | 'exclusion' | 'characterization' | 'world' | 'style' | 'example' | 'timeline' | 'ai_glossary';
 
 export const Rules: React.FC = () => {
     const { t } = useI18n();
@@ -54,6 +54,7 @@ export const Rules: React.FC = () => {
     
     // Filter State
     const [filter, setFilter] = useState('');
+    const [timelineVolume, setTimelineVolume] = useState(1);
 
     // AI Glossary Analysis State
     const [aiInputPath, setAiInputPath] = useState('');
@@ -76,6 +77,96 @@ export const Rules: React.FC = () => {
     const [showTermSelector, setShowTermSelector] = useState(false);
     const [selectorTerms, setSelectorTerms] = useState<TermItem[]>([]);
 
+    const normalizeVolume = (value: any): number | null => {
+        if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+        const numeric = Number(value);
+        if (Number.isInteger(numeric)) return numeric;
+        const match = String(value).match(/(?:vol(?:ume)?|book|v|第)?[\s._-]*0*(\d{1,4})(?:\s*[卷册集部])?/i);
+        return match ? Number(match[1]) : null;
+    };
+
+    const hasText = (value: any) => value !== null && value !== undefined && String(value).trim().length > 0;
+
+    const getHistory = (item: any): Record<string, any>[] => (
+        Array.isArray(item?.history) ? item.history.filter((entry: any) => entry && typeof entry === 'object') : []
+    );
+
+    const historySortKey = (entry: Record<string, any>) => {
+        const volume = normalizeVolume(entry.volume);
+        return volume === null ? 1000000000 : volume;
+    };
+
+    const timelineTextAppend = (existing: string, addition: any) => {
+        const current = String(existing || '').trim();
+        const next = String(addition || '').trim();
+        if (!next) return current;
+        if (!current) return next;
+        if (current.includes(next)) return current;
+        if (next.includes(current)) return next;
+        return `${current}\n\n${next}`;
+    };
+
+    const timelineTextForVolume = (history: any[], volume: number) => {
+        if (!Array.isArray(history)) return '';
+        return history
+            .filter(entry => entry && typeof entry === 'object')
+            .sort((a, b) => historySortKey(a) - historySortKey(b))
+            .reduce((text, entry) => {
+                const entryVolume = normalizeVolume(entry.volume);
+                if (entryVolume === null || entryVolume > volume) return text;
+                return timelineTextAppend(text, entry.content);
+            }, '');
+    };
+
+    const timelineItemForVolume = <T extends Record<string, any>>(
+        item: T,
+        volume: number,
+        keyField: string,
+        trackedFields: string[],
+    ): T | null => {
+        const history = getHistory(item);
+        if (history.length === 0) {
+            const itemVolume = normalizeVolume(item.volume);
+            return itemVolume !== null && itemVolume > volume ? null : item;
+        }
+
+        const selected: Record<string, any> = {};
+        let selectedVolume: number | null = null;
+        let selectedSource = '';
+        history
+            .sort((a, b) => historySortKey(a) - historySortKey(b))
+            .forEach(entry => {
+                const entryVolume = normalizeVolume(entry.volume);
+                if (entryVolume === null || entryVolume > volume) return;
+                if (hasText(entry[keyField])) selected[keyField] = entry[keyField];
+                trackedFields.forEach(field => {
+                    if (hasText(entry[field])) selected[field] = entry[field];
+                });
+                selectedVolume = entryVolume;
+                selectedSource = entry.source || `Vol_${entryVolume}`;
+            });
+
+        if (Object.keys(selected).length === 0) return null;
+        const result: Record<string, any> = {};
+        if (hasText(item[keyField])) result[keyField] = item[keyField];
+        else if (hasText(selected[keyField])) result[keyField] = selected[keyField];
+        trackedFields.forEach(field => {
+            if (field in selected) result[field] = selected[field];
+        });
+        if (selectedSource) result.source = selectedSource;
+        if (selectedVolume !== null) result.volume = selectedVolume;
+        return result as T;
+    };
+
+    const hasTimelineData = (glossaryItems = glossary, characterItems = characterization) => (
+        glossaryItems.some(item => getHistory(item).length > 0) ||
+        characterItems.some(item => getHistory(item).length > 0) ||
+        Boolean(config?.prompt_dictionary_data?.some(item => getHistory(item).length > 0)) ||
+        Boolean(config?.characterization_data?.some(item => getHistory(item).length > 0)) ||
+        Boolean(config?.world_building_history?.length) ||
+        Boolean(config?.writing_style_history?.length)
+    );
+
     // Refs
     const draftTimerRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +176,20 @@ export const Rules: React.FC = () => {
         loadProfiles();
         checkDrafts();
     }, []);
+
+    useEffect(() => {
+        if (activeTab === 'timeline' && !hasTimelineData()) {
+            setActiveTab('glossary');
+        }
+    }, [
+        activeTab,
+        glossary,
+        characterization,
+        config?.prompt_dictionary_data,
+        config?.characterization_data,
+        config?.world_building_history,
+        config?.writing_style_history,
+    ]);
 
     // 切换到AI术语分析标签页时加载当前状态
     useEffect(() => {
@@ -136,7 +241,7 @@ export const Rules: React.FC = () => {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [g, e, c, w, s, ex] = await Promise.all([
+            const [g, e, c, w, s, ex] = await Promise.allSettled([
                 DataService.getGlossary(),
                 DataService.getExclusion(),
                 DataService.getCharacterization(),
@@ -144,12 +249,12 @@ export const Rules: React.FC = () => {
                 DataService.getWritingStyle(),
                 DataService.getTranslationExample()
             ]);
-            setGlossary(g || []);
-            setExclusion(e || []);
-            setCharacterization(c || []);
-            setWorldBuilding(w || "");
-            setWritingStyle(s || "");
-            setTranslationExample(ex || []);
+            if (g.status === 'fulfilled') setGlossary(g.value || []);
+            if (e.status === 'fulfilled') setExclusion(e.value || []);
+            if (c.status === 'fulfilled') setCharacterization(c.value || []);
+            if (w.status === 'fulfilled') setWorldBuilding(w.value || "");
+            if (s.status === 'fulfilled') setWritingStyle(s.value || "");
+            if (ex.status === 'fulfilled') setTranslationExample(ex.value || []);
         } catch (error) {
             console.error("Failed to load rules", error);
         } finally {
@@ -201,16 +306,36 @@ export const Rules: React.FC = () => {
     const handleSave = async () => {
         setSaving(true);
         try {
+            let nextConfig = config ? { ...config } : null;
             switch (activeTab) {
-                case 'glossary': await DataService.saveGlossary(glossary); break;
-                case 'exclusion': await DataService.saveExclusion(exclusion); break;
-                case 'characterization': await DataService.saveCharacterization(characterization); break;
-                case 'world': await DataService.saveWorldBuilding(worldBuilding); break;
-                case 'style': await DataService.saveWritingStyle(writingStyle); break;
-                case 'example': await DataService.saveTranslationExample(translationExample); break;
+                case 'glossary':
+                    await DataService.saveGlossary(glossary);
+                    if (nextConfig) nextConfig = { ...nextConfig, prompt_dictionary_data: glossary };
+                    break;
+                case 'exclusion':
+                    await DataService.saveExclusion(exclusion);
+                    if (nextConfig) nextConfig = { ...nextConfig, exclusion_list_data: exclusion };
+                    break;
+                case 'characterization':
+                    await DataService.saveCharacterization(characterization);
+                    if (nextConfig) nextConfig = { ...nextConfig, characterization_data: characterization };
+                    break;
+                case 'world':
+                    await DataService.saveWorldBuilding(worldBuilding);
+                    if (nextConfig) nextConfig = { ...nextConfig, world_building_content: worldBuilding };
+                    break;
+                case 'style':
+                    await DataService.saveWritingStyle(writingStyle);
+                    if (nextConfig) nextConfig = { ...nextConfig, writing_style_content: writingStyle };
+                    break;
+                case 'example':
+                    await DataService.saveTranslationExample(translationExample);
+                    if (nextConfig) nextConfig = { ...nextConfig, translation_example_data: translationExample };
+                    break;
             }
-            if (config) {
-                await DataService.saveConfig(config);
+            if (nextConfig) {
+                await DataService.saveConfig(nextConfig);
+                setConfig(nextConfig);
             }
             alert(t('msg_saved'));
         } catch (error) {
@@ -306,6 +431,38 @@ export const Rules: React.FC = () => {
 
     const isLocal = config?.target_platform && ["sakura", "localllm", "murasaki"].includes(config.target_platform.toLowerCase());
     const isOnlineOnlyTab = ['characterization', 'world', 'style', 'example'].includes(activeTab);
+    const glossaryHasTimeline = glossary.some(item => getHistory(item).length > 0);
+    const characterHasTimeline = characterization.some(item => getHistory(item).length > 0);
+    const timelineGlossarySource = glossaryHasTimeline
+        ? glossary
+        : (config?.prompt_dictionary_data || []);
+    const timelineCharacterSource = characterHasTimeline
+        ? characterization
+        : (config?.characterization_data || []);
+    const timelineAvailable = hasTimelineData(timelineGlossarySource, timelineCharacterSource);
+    const previewGlossary = timelineGlossarySource
+        .map(item => timelineItemForVolume(item, timelineVolume, 'src', ['dst', 'info']))
+        .filter((item): item is GlossaryItem => Boolean(item));
+    const previewCharacters = timelineCharacterSource
+        .map(item => timelineItemForVolume(item, timelineVolume, 'original_name', [
+            'translated_name',
+            'gender',
+            'age',
+            'personality',
+            'speech_style',
+            'pronouns',
+            'speech_quirks',
+            'additional_info',
+        ]))
+        .filter((item): item is CharacterizationItem => Boolean(item));
+    const worldTimelineHistory = config?.world_building_history || [];
+    const styleTimelineHistory = config?.writing_style_history || [];
+    const previewWorldBuilding = worldTimelineHistory.length > 0
+        ? timelineTextForVolume(worldTimelineHistory, timelineVolume)
+        : worldBuilding;
+    const previewWritingStyle = styleTimelineHistory.length > 0
+        ? timelineTextForVolume(styleTimelineHistory, timelineVolume)
+        : writingStyle;
 
     // --- UI Helpers ---
     const TabButton = ({ id, icon: Icon, label }: { id: TabType, icon: any, label: string }) => {
@@ -338,7 +495,7 @@ export const Rules: React.FC = () => {
     const addCharacterItem = () => {
         setCharacterization([{ 
             original_name: '', translated_name: '', gender: '', age: '', 
-            personality: '', speech_style: '', additional_info: '' 
+            personality: '', speech_style: '', pronouns: '', speech_quirks: '', additional_info: ''
         }, ...characterization]);
         triggerDraftSave();
     };
@@ -558,6 +715,174 @@ export const Rules: React.FC = () => {
         </div>
     );
 
+    const renderTimelineBadge = (item: any) => {
+        const count = getHistory(item).length;
+        if (!count && !item?.source && !item?.volume) return null;
+        return (
+            <div className="flex flex-wrap gap-1 text-[11px]">
+                {item?.source && <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{item.source}</span>}
+                {normalizeVolume(item?.volume) !== null && <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">Vol_{normalizeVolume(item.volume)}</span>}
+                {count > 0 && <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">{count} versions</span>}
+            </div>
+        );
+    };
+
+    const renderHistoryTimeline = (item: any, keyField: string, fields: string[]) => {
+        const history = getHistory(item).sort((a, b) => historySortKey(a) - historySortKey(b));
+        if (!history.length) return <div className="text-xs text-slate-500">No timeline history</div>;
+        return (
+            <div className="mt-3 grid gap-2">
+                {history.map((entry, idx) => (
+                    <div key={idx} className="border border-slate-800 rounded bg-slate-950/60 p-3">
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="text-xs font-bold text-cyan-300">{entry.source || `Vol_${normalizeVolume(entry.volume) ?? '?'}`}</span>
+                            {normalizeVolume(entry.volume) !== null && <span className="text-[11px] text-slate-500">volume {normalizeVolume(entry.volume)}</span>}
+                        </div>
+                        <div className="grid gap-1 text-xs">
+                            {hasText(entry[keyField]) && <div><span className="text-slate-500">{keyField}: </span><span className="text-slate-300">{entry[keyField]}</span></div>}
+                            {fields.filter(field => hasText(entry[field])).map(field => (
+                                <div key={field} className="break-words">
+                                    <span className="text-slate-500">{field}: </span>
+                                    <span className="text-slate-300 whitespace-pre-wrap">{String(entry[field])}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+    const renderTimelineView = () => {
+        const timelineGlossary = timelineGlossarySource.filter(item => getHistory(item).length > 0);
+        const timelineCharacters = timelineCharacterSource.filter(item => getHistory(item).length > 0);
+        const worldHistory = config?.world_building_history || [];
+        const styleHistory = config?.writing_style_history || [];
+
+        return (
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-200/60' : 'bg-slate-900/50 border-slate-800'}`}>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                            <Layers size={18} style={{ color: themeColor }} />
+                            <div>
+                                <div className={`text-sm font-bold ${isLightCityTheme ? 'text-pink-700' : 'text-slate-200'}`}>多层时间线术语表</div>
+                                <div className="text-xs text-slate-500">只读预览。按卷号查看翻译时实际注入的术语、角色、世界观和文风。</div>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">预览卷号</span>
+                            <input
+                                type="number"
+                                min={1}
+                                value={timelineVolume}
+                                onChange={(e) => setTimelineVolume(Math.max(1, Number(e.target.value) || 1))}
+                                className="w-24 px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm text-slate-200 focus:border-primary outline-none"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {!timelineAvailable && (
+                    <div className="p-4 rounded-lg border border-slate-800 bg-slate-900/50 text-sm text-slate-400">
+                        当前规则配置没有检测到时间线历史。
+                    </div>
+                )}
+
+                {timelineAvailable && (
+                    <>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-100' : 'bg-slate-900 border-slate-800'}`}>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-bold text-cyan-300">Vol_{timelineVolume} 实际术语</h3>
+                                    <span className="text-xs text-slate-500">{previewGlossary.length}</span>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                                    {previewGlossary.map((item, idx) => (
+                                        <div key={`${item.src}-${idx}`} className="p-3 rounded border border-slate-800 bg-slate-950/60">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm text-green-300">{item.src}</div>
+                                                    <div className="text-sm text-blue-300">{item.dst}</div>
+                                                </div>
+                                                {renderTimelineBadge(item)}
+                                            </div>
+                                            {item.info && <div className="mt-2 text-xs text-slate-400 whitespace-pre-wrap">{item.info}</div>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-100' : 'bg-slate-900 border-slate-800'}`}>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-bold text-cyan-300">Vol_{timelineVolume} 实际角色设定</h3>
+                                    <span className="text-xs text-slate-500">{previewCharacters.length}</span>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                                    {previewCharacters.map((item, idx) => (
+                                        <div key={`${item.original_name}-${idx}`} className="p-3 rounded border border-slate-800 bg-slate-950/60">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm text-green-300">{item.original_name}</div>
+                                                    <div className="text-sm text-blue-300">{item.translated_name}</div>
+                                                </div>
+                                                {renderTimelineBadge(item)}
+                                            </div>
+                                            <div className="mt-2 grid gap-1 text-xs text-slate-400">
+                                                {item.personality && <div>personality: {item.personality}</div>}
+                                                {item.speech_style && <div>speech_style: {item.speech_style}</div>}
+                                                {item.pronouns && <div>pronouns: {item.pronouns}</div>}
+                                                {item.speech_quirks && <div>speech_quirks: {item.speech_quirks}</div>}
+                                                {item.additional_info && <div className="whitespace-pre-wrap">additional_info: {item.additional_info}</div>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-100' : 'bg-slate-900 border-slate-800'}`}>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-bold text-cyan-300">Vol_{timelineVolume} 世界观预览</h3>
+                                    <span className="text-xs text-slate-500">{worldHistory.length} versions</span>
+                                </div>
+                                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-slate-950/70 border border-slate-800 p-3 text-xs text-slate-300">{previewWorldBuilding || 'No content'}</pre>
+                            </div>
+                            <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-100' : 'bg-slate-900 border-slate-800'}`}>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-bold text-cyan-300">Vol_{timelineVolume} 文风预览</h3>
+                                    <span className="text-xs text-slate-500">{styleHistory.length} versions</span>
+                                </div>
+                                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-slate-950/70 border border-slate-800 p-3 text-xs text-slate-300">{previewWritingStyle || 'No content'}</pre>
+                            </div>
+                        </div>
+
+                        {(timelineGlossary.length > 0 || timelineCharacters.length > 0) && (
+                            <div className={`p-4 rounded-lg border ${isLightCityTheme ? 'bg-white/50 border-pink-100' : 'bg-slate-900 border-slate-800'}`}>
+                                <h3 className="text-sm font-bold text-cyan-300 mb-3">原始时间线版本</h3>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    {timelineGlossary.map((item, idx) => (
+                                        <div key={`g-${item.src}-${idx}`} className="p-3 rounded border border-slate-800 bg-slate-950/40">
+                                            <div className="text-sm text-green-300">{item.src}</div>
+                                            {renderHistoryTimeline(item, 'src', ['dst', 'info'])}
+                                        </div>
+                                    ))}
+                                    {timelineCharacters.map((item, idx) => (
+                                        <div key={`c-${item.original_name}-${idx}`} className="p-3 rounded border border-slate-800 bg-slate-950/40">
+                                            <div className="text-sm text-green-300">{item.original_name}</div>
+                                            {renderHistoryTimeline(item, 'original_name', ['translated_name', 'gender', 'age', 'personality', 'speech_style', 'pronouns', 'speech_quirks', 'additional_info'])}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div className="max-w-6xl mx-auto space-y-6 pb-12">
             {/* Header */}
@@ -607,31 +932,35 @@ export const Rules: React.FC = () => {
                         />
                     </div>
                     
-                    <div className="flex items-center gap-2">
-                        <button onClick={exportData} title="Export to File" className="p-2 bg-slate-800 text-slate-300 rounded-lg hover:text-white transition-colors border border-slate-700">
-                            <Download size={18} />
-                        </button>
+                    {activeTab !== 'timeline' && (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <button onClick={exportData} title="Export to File" className="p-2 bg-slate-800 text-slate-300 rounded-lg hover:text-white transition-colors border border-slate-700">
+                                    <Download size={18} />
+                                </button>
 
-                        <button onClick={() => fileInputRef.current?.click()} title="Import from File" className="p-2 bg-slate-800 text-slate-300 rounded-lg hover:text-white transition-colors border border-slate-700">
-                            <Upload size={18} />
-                            <input type="file" ref={fileInputRef} className="hidden" accept={activeTab === 'world' || activeTab === 'style' ? ".txt" : ".json"} onChange={importData} />
-                        </button>
+                                <button onClick={() => fileInputRef.current?.click()} title="Import from File" className="p-2 bg-slate-800 text-slate-300 rounded-lg hover:text-white transition-colors border border-slate-700">
+                                    <Upload size={18} />
+                                    <input type="file" ref={fileInputRef} className="hidden" accept={activeTab === 'world' || activeTab === 'style' ? ".txt" : ".json"} onChange={importData} />
+                                </button>
 
-                        {hasDraft && (
-                            <button onClick={recoverDraft} title="Recover Unsaved Draft" className="p-2 bg-orange-500/10 text-orange-400 rounded-lg hover:bg-orange-500/20 transition-colors border border-orange-500/30">
-                                <History size={18} />
+                                {hasDraft && (
+                                    <button onClick={recoverDraft} title="Recover Unsaved Draft" className="p-2 bg-orange-500/10 text-orange-400 rounded-lg hover:bg-orange-500/20 transition-colors border border-orange-500/30">
+                                        <History size={18} />
+                                    </button>
+                                )}
+                            </div>
+
+                            <button
+                                onClick={handleSave}
+                                disabled={saving}
+                                className="flex items-center gap-2 bg-primary hover:bg-cyan-400 text-slate-900 px-4 py-2 rounded-lg font-bold transition-colors shadow-lg shadow-cyan-500/20 disabled:opacity-50"
+                            >
+                                {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                                <span className="hidden sm:inline">{t('ui_rules_save')}</span>
                             </button>
-                        )}
-                    </div>
-
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="flex items-center gap-2 bg-primary hover:bg-cyan-400 text-slate-900 px-4 py-2 rounded-lg font-bold transition-colors shadow-lg shadow-cyan-500/20 disabled:opacity-50"
-                    >
-                        {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                        <span className="hidden sm:inline">{t('ui_rules_save')}</span>
-                    </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -643,6 +972,7 @@ export const Rules: React.FC = () => {
                 <TabButton id="world" icon={MapIcon} label={t('feature_world_building_switch')} />
                 <TabButton id="style" icon={PenTool} label={t('feature_writing_style_switch')} />
                 <TabButton id="example" icon={Languages} label={t('feature_translation_example_switch')} />
+                {timelineAvailable && <TabButton id="timeline" icon={Layers} label="时间线" />}
                 <TabButton id="ai_glossary" icon={Sparkles} label={t('ui_ai_glossary')} />
             </div>
 
@@ -792,6 +1122,10 @@ export const Rules: React.FC = () => {
                                                     <input type="text" placeholder={t('ui_rules_character_personality')} value={item.personality} onChange={(e) => updateCharacterItem(originalIdx, 'personality', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
                                                     <input type="text" placeholder={t('ui_rules_character_speech')} value={item.speech_style} onChange={(e) => updateCharacterItem(originalIdx, 'speech_style', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
                                                 </div>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <input type="text" placeholder={t('ui_rules_character_pronouns') || '第一人称/第二人称'} value={item.pronouns || ''} onChange={(e) => updateCharacterItem(originalIdx, 'pronouns', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                    <input type="text" placeholder={t('ui_rules_character_speech_quirks') || '口癖/语尾'} value={item.speech_quirks || ''} onChange={(e) => updateCharacterItem(originalIdx, 'speech_quirks', e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-300 focus:border-primary outline-none transition-all" />
+                                                </div>
                                                 <div className="flex gap-3">
                                                     <input type="text" placeholder={t('ui_rules_character_info')} value={item.additional_info} onChange={(e) => updateCharacterItem(originalIdx, 'additional_info', e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-400 focus:border-primary outline-none transition-all" />
                                                     <button onClick={() => setCharacterization(characterization.filter((_, i) => i !== originalIdx))} className={`p-2 transition-colors rounded border ${isLightCityTheme ? 'text-pink-300 hover:text-red-500 bg-white/80 border-pink-100' : 'text-slate-600 hover:text-red-400 bg-slate-950 border-slate-800'}`}><Trash2 size={18} /></button>
@@ -849,6 +1183,8 @@ export const Rules: React.FC = () => {
                                 </div>
                             </div>
                         )}
+
+                        {activeTab === 'timeline' && renderTimelineView()}
 
                         {activeTab === 'ai_glossary' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">

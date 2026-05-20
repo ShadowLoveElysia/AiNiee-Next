@@ -482,6 +482,8 @@ class GlossaryItem(BaseModel):
     src: str
     dst: str
     info: Optional[str] = None
+    class Config:
+        extra = 'allow'
 
 class TermOption(BaseModel):
     dst: str
@@ -498,6 +500,8 @@ class ExclusionItem(BaseModel):
     markers: str
     info: Optional[str] = None
     regex: Optional[str] = None
+    class Config:
+        extra = 'allow'
 
 class CharacterizationItem(BaseModel):
     original_name: str
@@ -506,11 +510,17 @@ class CharacterizationItem(BaseModel):
     age: Optional[str] = ""
     personality: Optional[str] = ""
     speech_style: Optional[str] = ""
+    pronouns: Optional[str] = ""
+    speech_quirks: Optional[str] = ""
     additional_info: Optional[str] = ""
+    class Config:
+        extra = 'allow'
 
 class TranslationExampleItem(BaseModel):
     src: str
     dst: str
+    class Config:
+        extra = 'allow'
 
 class StringContent(BaseModel):
     content: str
@@ -597,6 +607,7 @@ VERSION_FILE = os.path.join(RESOURCE_PATH, "Version", "version.json")
 PROFILES_PATH = os.path.join(RESOURCE_PATH, "profiles")
 RULES_PROFILES_PATH = os.path.join(RESOURCE_PATH, "rules_profiles")
 ROOT_CONFIG_FILE = os.path.join(RESOURCE_PATH, "config.json")
+PRESET_PATH = os.path.join(RESOURCE_PATH, "platforms", "preset.json")
 WEB_SERVER_PATH = os.path.join(PROJECT_ROOT, "Tools", "WebServer")
 WEB_SESSION_TOKEN = os.environ.get("AINIEE_WEB_SESSION_TOKEN", "") or secrets.token_urlsafe(32)
 MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
@@ -780,6 +791,31 @@ def save_config_generic(key: str, value: Any):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save setting {key}: {e}")
 
+def _file_cache_token(path: str) -> tuple:
+    """Return a cheap freshness token for config/profile files."""
+    try:
+        stat = os.stat(path)
+        return (path, stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (path, None, None)
+
+def _active_config_cache_key(root_config: Dict[str, Any]) -> tuple:
+    current_profile_name = root_config.get("active_profile", "default")
+    current_rules_name = root_config.get("active_rules_profile", "default")
+    profile_path, _ = resolve_profile_path(PROFILES_PATH, current_profile_name)
+    rules_path = ""
+    if current_rules_name != "None":
+        rules_path, _ = resolve_profile_path(RULES_PROFILES_PATH, current_rules_name, allow_none=True)
+
+    return (
+        current_profile_name,
+        current_rules_name,
+        _file_cache_token(ROOT_CONFIG_FILE),
+        _file_cache_token(PRESET_PATH),
+        _file_cache_token(profile_path),
+        _file_cache_token(rules_path) if rules_path else ("None", None, None),
+    )
+
 # --- API Endpoints ---
 
 @app.get("/api/system/mode")
@@ -840,10 +876,7 @@ def _load_active_config_payload() -> Dict[str, Any]:
     global _config_cache
 
     _, root_config = get_config_mode()
-    current_profile_name = root_config.get("active_profile", "default")
-    current_rules_name = root_config.get("active_rules_profile", "default")
-
-    cache_key = f"{current_profile_name}_{current_rules_name}"
+    cache_key = _active_config_cache_key(root_config)
     if cache_key in _config_cache:
         return _config_cache[cache_key]
     loaded_config = load_effective_config(root_config=root_config, create_missing=False)
@@ -871,14 +904,14 @@ async def get_config(request: Request):
         return sanitize_data_for_mcp(loaded_config, path="/api/config")
 
     return loaded_config
-@app.get("/api/glossary", response_model=List[GlossaryItem])
+@app.get("/api/glossary")
 async def get_glossary():
     config = _load_active_config_payload()
     return config.get("prompt_dictionary_data", [])
 
 @app.post("/api/glossary")
-async def save_glossary(items: List[GlossaryItem]):
-    save_rule_generic("prompt_dictionary_data", [item.dict() for item in items])
+async def save_glossary(items: List[Dict[str, Any]]):
+    save_rule_generic("prompt_dictionary_data", items)
     return {"message": "Glossary saved successfully."}
 
 @app.post("/api/glossary/add")
@@ -1011,26 +1044,26 @@ Translation|Note"""
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/exclusion", response_model=List[ExclusionItem])
+@app.get("/api/exclusion")
 async def get_exclusion():
     config = _load_active_config_payload()
     return config.get("exclusion_list_data", [])
 
 @app.post("/api/exclusion")
-async def save_exclusion(items: List[ExclusionItem]):
-    save_rule_generic("exclusion_list_data", [item.dict() for item in items])
+async def save_exclusion(items: List[Dict[str, Any]]):
+    save_rule_generic("exclusion_list_data", items)
     return {"message": "Exclusion list saved successfully."}
 
 # --- New Features Endpoints ---
 
-@app.get("/api/characterization", response_model=List[CharacterizationItem])
+@app.get("/api/characterization")
 async def get_characterization():
     config = _load_active_config_payload()
     return config.get("characterization_data", [])
 
 @app.post("/api/characterization")
-async def save_characterization(items: List[CharacterizationItem]):
-    save_rule_generic("characterization_data", [item.dict() for item in items])
+async def save_characterization(items: List[Dict[str, Any]]):
+    save_rule_generic("characterization_data", items)
     return {"message": "Characterization saved."}
 
 @app.get("/api/world_building", response_model=StringContent)
@@ -1053,14 +1086,14 @@ async def save_writing_style(data: StringContent):
     save_rule_generic("writing_style_content", data.content)
     return {"message": "Writing style saved."}
 
-@app.get("/api/translation_example", response_model=List[TranslationExampleItem])
+@app.get("/api/translation_example")
 async def get_translation_example():
     config = _load_active_config_payload()
     return config.get("translation_example_data", [])
 
 @app.post("/api/translation_example")
-async def save_translation_example(items: List[TranslationExampleItem]):
-    save_rule_generic("translation_example_data", [item.dict() for item in items])
+async def save_translation_example(items: List[Dict[str, Any]]):
+    save_rule_generic("translation_example_data", items)
     return {"message": "Translation examples saved."}
 
 # --- AI Glossary Analysis Endpoints ---
@@ -2410,7 +2443,7 @@ def get_draft_generic(filename: str):
         return None
 
 @app.post("/api/draft/glossary")
-async def save_glossary_draft(items: List[GlossaryItem]):
+async def save_glossary_draft(items: List[Dict[str, Any]]):
     return save_draft_generic("glossary_draft.json", items)
 
 @app.get("/api/draft/glossary")
@@ -2418,7 +2451,7 @@ async def get_glossary_draft():
     return get_draft_generic("glossary_draft.json") or []
 
 @app.post("/api/draft/exclusion")
-async def save_exclusion_draft(items: List[ExclusionItem]):
+async def save_exclusion_draft(items: List[Dict[str, Any]]):
     return save_draft_generic("exclusion_draft.json", items)
 
 @app.get("/api/draft/exclusion")
@@ -2426,7 +2459,7 @@ async def get_exclusion_draft():
     return get_draft_generic("exclusion_draft.json") or []
 
 @app.post("/api/draft/characterization")
-async def save_characterization_draft(items: List[CharacterizationItem]):
+async def save_characterization_draft(items: List[Dict[str, Any]]):
     return save_draft_generic("characterization_draft.json", items)
 
 @app.get("/api/draft/characterization")
@@ -2434,7 +2467,7 @@ async def get_characterization_draft():
     return get_draft_generic("characterization_draft.json") or []
 
 @app.post("/api/draft/translation_example")
-async def save_translation_example_draft(items: List[TranslationExampleItem]):
+async def save_translation_example_draft(items: List[Dict[str, Any]]):
     return save_draft_generic("translation_example_draft.json", items)
 
 @app.get("/api/draft/translation_example")
