@@ -281,15 +281,32 @@ class CommandModeRunner:
                 console.print("[red]Error: input_path is required for agent.[/red]")
                 return 2
             mode = getattr(args, "agent_mode", None) or "plan"
+            output_format = getattr(args, "agent_format", "text") or "text"
             if mode == "plan":
                 plan = facade.build_plan(input_path, mode=mode)
-                if getattr(args, "agent_format", "text") == "jsonl":
+                if output_format == "jsonl":
                     for event in events:
-                        print(json.dumps(event, ensure_ascii=False))
+                        print(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
                 else:
                     console.print_json(json.dumps(plan, ensure_ascii=False))
                 return 0
-            return facade.run(input_path, yes=bool(getattr(args, "non_interactive", False)), mode=mode)
+
+            # Keep the JSONL stream machine-readable for both successful runs
+            # and confirmation/error exits. AgentFacade emits all lifecycle
+            # events through the shared sink; flush them only after execution
+            # so stdout never contains Rich markup in JSONL mode.
+            result = facade.run(
+                input_path,
+                yes=bool(getattr(args, "non_interactive", False)),
+                mode=mode,
+                capture_output=(output_format == "jsonl"),
+            )
+            if output_format == "jsonl":
+                for event in events:
+                    print(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+            elif result == 3:
+                console.print("[yellow]Agent plan requires confirmation; re-run with --yes.[/yellow]")
+            return result
 
         if str(getattr(args, "task", "") or "").strip().lower() == "mcp":
             args.task = "mcp"

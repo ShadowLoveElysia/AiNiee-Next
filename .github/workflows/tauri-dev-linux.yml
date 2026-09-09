@@ -83,18 +83,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Upload launcher scripts to dev pre-release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ github.token }}
-          tag_name: dev-build
-          target_commitish: ${{ github.sha }}
-          name: "AiNiee Dev Preview (Web + GUI)"
-          prerelease: true
-          make_latest: false
-          files: |
-            LaunchGUI.bat
-            LaunchGUI.sh
-          overwrite_files: true
+        working-directory: ${{ github.workspace }}
+        run: >-
+          gh release upload dev-build LaunchGUI.bat LaunchGUI.sh
+          --clobber --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   arch-linux-launcher-check:
     runs-on: ubuntu-latest

@@ -5,7 +5,9 @@ import json
 from typing import Any, Iterable
 
 COMMANDS = frozenset({"prompt", "steer", "follow_up", "abort", "get_state", "new_session"})
-EVENTS = frozenset({"agent_start", "turn_start", "message_update", "tool_call", "tool_result", "confirmation_required", "task_start", "task_end", "agent_end", "error"})
+# ``plan_ready`` is emitted before a run is confirmed and is part of the
+# public lifecycle stream consumed by CLI/TUI clients.
+EVENTS = frozenset({"agent_start", "turn_start", "message_update", "tool_call", "tool_result", "confirmation_required", "plan_ready", "task_start", "task_end", "agent_end", "error"})
 
 
 def encode_message(message: dict[str, Any]) -> str:
@@ -33,4 +35,3 @@ def validate_command(command: dict[str, Any]) -> dict[str, Any]:
     if request_id is not None and not isinstance(request_id, str):
         raise ValueError("request_id must be a string")
     return command
-
