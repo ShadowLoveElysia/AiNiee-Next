@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import abc
-import enum
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class SkillError(Exception):
@@ -50,6 +49,50 @@ class SkillResult:
         data: Any = None,
     ) -> SkillResult:
         return cls(success=False, data=data, error=message, error_code=code)
+
+
+def normalize_skill_payload(payload: Any) -> Dict[str, Any]:
+    """Normalize the shared bare/wrapped JSON request shape.
+
+    Both the HTTP and standalone CLI entry points accept either a bare object
+    (``{"action": "ping"}``) or an explicit ``{"args": {...}}`` wrapper.
+    Mixing wrapper and sibling fields is rejected so callers cannot receive
+    different semantics depending on which entry point they use.
+    """
+    if not isinstance(payload, dict):
+        raise SkillError("Skill arguments must be a JSON object.", "INVALID_ARGUMENTS")
+    if "args" not in payload:
+        return dict(payload)
+    if set(payload) != {"args"} or not isinstance(payload["args"], dict):
+        raise SkillError(
+            "The wrapped skill request must contain only an object-valued 'args' field.",
+            "INVALID_ARGUMENTS",
+        )
+    return dict(payload["args"])
+
+
+def normalize_skill_action(args: Dict[str, Any], *, default: str = "") -> str | None:
+    """Return a normalized action or ``None`` when the caller sent a bad type."""
+    value = default if "action" not in args else args["action"]
+    if not isinstance(value, str):
+        return None
+    return value.strip().lower()
+
+
+def reject_unknown_skill_fields(
+    args: Dict[str, Any],
+    allowed: set[str],
+    *,
+    skill_name: str,
+) -> SkillResult | None:
+    """Keep a Skill action strict without importing business dependencies."""
+    unexpected = sorted(set(args) - allowed)
+    if unexpected:
+        return SkillResult.fail(
+            f"Unknown {skill_name} fields: {', '.join(unexpected)}",
+            "INVALID_ARGUMENTS",
+        )
+    return None
 
 
 @dataclass
@@ -135,8 +178,20 @@ class SkillRegistry:
         return self.get(name).meta.to_dict()
 
     def execute(self, name: str, args: Dict[str, Any]) -> SkillResult:
-        skill = self.get(name)
-        return skill.execute(args)
+        try:
+            normalized_args = normalize_skill_payload(args)
+        except SkillError as exc:
+            return SkillResult.fail(str(exc), exc.code)
+        if "action" in normalized_args and not isinstance(normalized_args["action"], str):
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
+        try:
+            skill = self.get(name)
+            return skill.execute(normalized_args)
+        except SkillError as exc:
+            # Skills may raise a structured validation error from a shared
+            # helper (for example, the workspace path policy). Keep HTTP, CLI,
+            # and direct registry callers on the same result contract.
+            return SkillResult.fail(str(exc), exc.code)
 
     @property
     def count(self) -> int:

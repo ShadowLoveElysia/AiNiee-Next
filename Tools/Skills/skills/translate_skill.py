@@ -1,41 +1,24 @@
 from __future__ import annotations
 
-import os
-import shlex
-import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ModuleFolders.Infrastructure.TaskContract import TaskContractError
-from Tools.Skills.skill_base import Skill, SkillMeta, SkillParameter, SkillResult
+from Tools.Skills.skill_base import (
+    Skill,
+    SkillMeta,
+    SkillParameter,
+    SkillResult,
+    reject_unknown_skill_fields,
+)
 from Tools.Skills.skills.common import (
+    SkillPathError,
     task_skill_parameters,
     task_spec_from_skill_args,
     task_subprocess_invocation,
+    validate_wait_options,
 )
-
-
-PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..")
-)
-
-
-def _run_ainiee_cli(
-    args: List[str],
-    timeout: int = 300,
-    *,
-    env: Dict[str, str] | None = None,
-) -> subprocess.CompletedProcess:
-    """Run a CLI subcommand and return the result."""
-    cmd = [sys.executable, "-m", "ainiee_cli"] + args
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=PROJECT_ROOT,
-        env=env,
-    )
+from Tools.Skills.task_runtime import TaskAlreadyRunningError, get_task_manager
 
 
 class TranslateSkill(Skill):
@@ -48,10 +31,29 @@ class TranslateSkill(Skill):
             parameters=[
                 SkillParameter(
                     name="action",
-                    description="Operation: run, status.",
+                    description="Operation: run, status, stop.",
                     type="string",
                     required=True,
-                    enum=["run", "status"],
+                    enum=["run", "status", "stop"],
+                ),
+                SkillParameter(
+                    name="task_id",
+                    description="Stable task ID returned by run (for status/stop).",
+                    type="string",
+                    required=False,
+                ),
+                SkillParameter(
+                    name="wait",
+                    description="Wait for completion before returning (default false).",
+                    type="boolean",
+                    required=False,
+                    default=False,
+                ),
+                SkillParameter(
+                    name="wait_timeout",
+                    description="Maximum seconds to wait when wait=true; omitted means no extra wait limit.",
+                    type="integer",
+                    required=False,
                 ),
                 SkillParameter(
                     name="task_type",
@@ -73,49 +75,118 @@ class TranslateSkill(Skill):
                     "profile": "default",
                 },
                 {"action": "status"},
+                {"action": "stop", "task_id": "<task-id>"},
             ],
         )
 
-    def _run_translate_subprocess(self, args: Dict[str, Any]) -> SkillResult:
-        """Execute translation via CLI subprocess (混合模式: CLI fallback)."""
+    def _status(self, task_id: Any = None) -> SkillResult:
+        manager = get_task_manager()
+        if task_id is not None and task_id != "":
+            if not isinstance(task_id, str):
+                return SkillResult.fail("task_id must be a string.", "INVALID_ARGUMENTS")
+            record = manager.get(str(task_id))
+            if record is None:
+                return SkillResult.fail(f"Unknown task_id: {task_id}", "TASK_NOT_FOUND")
+        else:
+            record = manager.latest(task_type="translate")
+            if record is None:
+                return SkillResult.ok({"task_id": None, "running": False, "status": "idle"})
+        record = dict(record)
+        record["running"] = record.get("status") in {"starting", "running", "stopping"}
+        return SkillResult.ok(record)
+
+    def _stop(self, task_id: Any = None) -> SkillResult:
+        manager = get_task_manager()
+        if task_id is not None and not isinstance(task_id, str):
+            return SkillResult.fail("task_id must be a string.", "INVALID_ARGUMENTS")
+        selected = str(task_id or "").strip()
+        if not selected:
+            latest = manager.latest(task_type="translate")
+            selected = str((latest or {}).get("task_id") or "")
+        if not selected:
+            return SkillResult.fail("task_id is required when no translation task exists.", "TASK_NOT_FOUND")
+        record = manager.cancel(selected)
+        if record is None:
+            return SkillResult.fail(f"Unknown task_id: {selected}", "TASK_NOT_FOUND")
+        return SkillResult.ok(record)
+
+    def _submit_translate(self, args: Dict[str, Any]) -> SkillResult:
+        invalid = reject_unknown_skill_fields(
+            args,
+            {
+                "action", "task_type", "input_path", "output_path", "profile",
+                "rules_profile", "source_lang", "target_lang", "project_type",
+                "resume", "queue_file", "platform", "model", "api_url", "api_key",
+                "failover", "threads", "retry", "timeout", "rounds", "pre_lines",
+                "lines_limit", "tokens_limit", "lines", "tokens", "think_depth",
+                "thinking_budget", "polish_mode", "manga", "wait", "wait_timeout",
+                "task", "run_all_in_one",
+            },
+            skill_name="translate",
+        )
+        if invalid:
+            return invalid
+        wait_options = validate_wait_options(args)
+        if isinstance(wait_options, SkillResult):
+            return wait_options
+        wait, wait_timeout = wait_options
+
         try:
             spec = task_spec_from_skill_args(args)
             cli_args, env = task_subprocess_invocation(spec)
+        except SkillPathError as exc:
+            return SkillResult.fail(str(exc), exc.code)
         except TaskContractError as exc:
             return SkillResult.fail(str(exc), "INVALID_TASK")
 
+        manager = get_task_manager()
+
+        # The child receives the exact shared TaskContract argv; credentials stay in
+        # its environment and are removed from the persisted/public task record.
+        command = [sys.executable, *cli_args]
         try:
-            result = _run_ainiee_cli(cli_args[2:], timeout=3600, env=env)
-            data = {
-                "exit_code": result.returncode,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "command": shlex.join([sys.executable, *cli_args]),
-            }
-            if result.returncode != 0:
-                return SkillResult.fail(
-                    f"Translation subprocess failed with exit code {result.returncode}.",
-                    "SUBPROCESS_FAILED",
-                    data=data,
-                )
-            return SkillResult.ok(data)
-        except subprocess.TimeoutExpired:
-            return SkillResult.fail("Translation task timed out.", "TIMEOUT")
-        except FileNotFoundError as e:
-            return SkillResult.fail(f"Python executable not found: {e}", "RUNTIME_ERROR")
+            record = manager.submit(
+                command,
+                env=env,
+                task_type="translate",
+                request=args,
+                exclusive_task_type="translate",
+            )
+        except TaskAlreadyRunningError as exc:
+            return SkillResult.fail(str(exc), "TASK_ALREADY_RUNNING", data={"task_id": exc.task_id})
+        if record.get("status") == "failed":
+            return SkillResult.fail(
+                str(record.get("error") or "Translation task failed to start."),
+                "RUNTIME_ERROR",
+                data=record,
+            )
+
+        if wait:
+            final = manager.wait(record["task_id"], timeout=wait_timeout) or record
+            return SkillResult.ok(final)
+        return SkillResult.ok(record)
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        action = (args.get("action") or "").strip().lower()
+        action_value = args.get("action")
+        if not isinstance(action_value, str):
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
+        action = action_value.strip().lower()
 
         if action == "status":
-            # Check if a task is currently running by looking for PID/lock files
-            return SkillResult.ok({
-                "running": False,
-                "note": "Task status check available via WebServer API when running.",
-            })
-
+            invalid = reject_unknown_skill_fields(
+                args, {"action", "task_id"}, skill_name="translate status"
+            )
+            if invalid:
+                return invalid
+            return self._status(args.get("task_id"))
+        if action == "stop":
+            invalid = reject_unknown_skill_fields(
+                args, {"action", "task_id"}, skill_name="translate stop"
+            )
+            if invalid:
+                return invalid
+            return self._stop(args.get("task_id"))
         if action == "run":
-            # 混合模式: 通过CLI子进程执行
-            return self._run_translate_subprocess(args)
+            return self._submit_translate(args)
 
         return SkillResult.fail(f"Unknown translate action: {action}", "INVALID_ACTION")

@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir -p deploy_package
           
-          cp Dockerfile pyproject.toml README.md deploy_package/
+          cp Dockerfile docker-entrypoint.sh pyproject.toml README.md deploy_package/
           
           # 如果有 docker-compose.yml 也拷进去
           [ -f docker-compose.yml ] && cp docker-compose.yml deploy_package/

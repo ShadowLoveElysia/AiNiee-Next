@@ -33,6 +33,7 @@ export const TaskRunner: React.FC = () => {
   
   const intervalRef = useRef<any>(null);
   const taskGenerationRef = useRef(0);
+  const taskIdRef = useRef<string | null>(null);
   const pollInFlightRef = useRef(false);
   const startInFlightRef = useRef(false);
   const cursorRef = useRef({ logs: 0, chart: 0, comparison: 0 });
@@ -210,7 +211,8 @@ export const TaskRunner: React.FC = () => {
               const data = await DataService.getTaskStatus(
                   requestedCursor.logs,
                   requestedCursor.chart,
-                  requestedCursor.comparison
+                  requestedCursor.comparison,
+                  taskIdRef.current || undefined,
               );
               if (generation !== taskGenerationRef.current) return;
               const nextCursor = data.cursors || requestedCursor;
@@ -363,7 +365,8 @@ export const TaskRunner: React.FC = () => {
       addLog(`[SYSTEM] Starting ${isAllInOne ? 'ALL-IN-ONE' : String(payload.task).toUpperCase()} task...`, "system");
 
       try {
-          await DataService.startTask(payload);
+          const started = await DataService.startTask(payload);
+          taskIdRef.current = started.task_id || null;
           if (taskGeneration !== taskGenerationRef.current) return;
           startInFlightRef.current = false;
           setIsStarting(false);
@@ -381,7 +384,8 @@ export const TaskRunner: React.FC = () => {
   const handleStop = async () => {
       addLog("[SYSTEM] Sending STOP signal...", "warning");
       try {
-          await DataService.stopTask();
+          await DataService.stopTask(taskIdRef.current || undefined);
+          taskIdRef.current = null;
           taskGenerationRef.current += 1;
           stopPolling();
           startInFlightRef.current = false;
@@ -470,6 +474,7 @@ export const TaskRunner: React.FC = () => {
                 chart: data.cursors?.chart ?? (data.chart_data?.length || 0),
                 comparison: data.cursors?.comparison ?? (data.comparison ? 1 : 0)
             };
+            taskIdRef.current = data.task_id || null;
             const recoveredStatus = resolveComparisonStatus(
                 data.stats?.status || 'idle',
                 cursorRef.current.comparison,
@@ -477,19 +482,19 @@ export const TaskRunner: React.FC = () => {
             );
             setComparisonChannelStatus(recoveredStatus.status);
             setComparisonLagSec(recoveredStatus.lagSec);
-            if (data.stats.status !== 'running') {
+            if (!data.running && data.stats.status !== 'running') {
                 setPreviewTaskOverride(null);
             }
             setTaskState(prev => ({
                 ...prev,
-                isRunning: data.stats.status === 'running',
+                isRunning: Boolean(data.running || data.stats.status === 'running'),
                 stats: data.stats,
                 chartData: data.chart_data || [],
                 comparison: data.comparison || prev.comparison,
                 logs: mapLogs(data.logs || [], 'sync')
             }));
             
-            if (data.stats.status === 'running') {
+            if (data.running || data.stats.status === 'running') {
                 startPolling(recoveryGeneration);
             }
         } catch (e) {

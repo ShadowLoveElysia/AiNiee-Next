@@ -41,6 +41,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy project definition and metadata required for build/sync
 COPY pyproject.toml README.md LICENSE ./
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 # Using 'uv sync' will install dependencies from pyproject.toml. 
 # We use --no-install-project because the source code is not yet copied.
 RUN uv sync --no-install-project
@@ -58,8 +59,8 @@ COPY Tools/ ./Tools/
 # This overwrites the empty/source Tools/WebServer/dist with the built one
 COPY --from=builder /web/dist ./Tools/WebServer/dist
 
-# Expose Web Server port
-EXPOSE 8000
+# Expose Web Server and optional Skills Server ports.
+EXPOSE 8000 8766
 
-# Set entrypoint
-ENTRYPOINT ["uv", "run", "ainiee_cli.py"]
+# The default remains the CLI. Set AINIEE_SERVICE=skills to run the Skills API.
+ENTRYPOINT ["sh", "/app/docker-entrypoint.sh"]

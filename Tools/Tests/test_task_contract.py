@@ -307,21 +307,35 @@ class TaskContractTests(unittest.TestCase):
     def test_queue_skill_run_executes_cli(self):
         self._import_with_rapidjson("ModuleFolders.Service.TaskQueue.QueueManager")
         queue_module = self._import_with_rapidjson("Tools.Skills.skills.queue_skill")
-        completed = SimpleNamespace(returncode=0, stdout="queue complete", stderr="")
+        captured = {}
 
-        with patch.object(queue_module.subprocess, "run", return_value=completed) as run:
+        class FakeTaskManager:
+            def submit(self, command, **kwargs):
+                captured["command"] = command
+                captured["kwargs"] = kwargs
+                return {
+                    "task_id": "queue-task-contract",
+                    "task_type": "queue",
+                    "status": "running",
+                    "running": True,
+                }
+
+        with patch.object(
+            queue_module, "get_task_manager", return_value=FakeTaskManager()
+        ):
             result = queue_module.QueueSkill().execute(
                 {"action": "run", "queue_file": "H:/Queue Files/tasks.json"}
             )
 
         self.assertTrue(result.success)
-        command = run.call_args.args[0]
+        command = captured["command"]
         self.assertEqual(command[1:4], ["-m", "ainiee_cli", "queue"])
         self.assertEqual(
             command[command.index("--queue-file") + 1],
             "H:/Queue Files/tasks.json",
         )
         self.assertIn("--yes", command)
+        self.assertEqual(captured["kwargs"]["task_type"], "queue")
 
     def test_queue_skill_uses_custom_queue_file_for_management_actions(self):
         self._import_with_rapidjson("ModuleFolders.Service.TaskQueue.QueueManager")

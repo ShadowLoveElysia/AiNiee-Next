@@ -1,4 +1,4 @@
-import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint, QueueTaskItem } from '../types';
+import { AppConfig, TaskPayload, TaskStats, LogEntry, ChartDataPoint, QueueTaskItem, TaskLifecycle } from '../types';
 import type { MangaBrushStrokePayload } from '../components/manga/shared';
 import { MangaDeleteRuntimeValidationHistoryResult, MangaExportFormat, MangaExportResult, MangaFontCatalogEntry, MangaJob, MangaModelManagerManifest, MangaModelPackageStatus, MangaOpenProjectSummary, MangaOperationResult, MangaPageDetail, MangaPageQualityGate, MangaProjectSummary, MangaPsdExportOptions, MangaRuntimeReadinessReport, MangaRuntimeStatusSummary, MangaRuntimeValidationDiffResult, MangaRuntimeValidationHistoryItem, MangaRuntimeValidationResult, MangaSceneSummary } from '../types/manga';
 
@@ -77,7 +77,7 @@ const authenticatedApiFetch: typeof window.fetch = async (input, init) => {
     return response;
 };
 
-interface TaskStatusResponse {
+interface TaskStatusResponse extends TaskLifecycle {
     stats: TaskStats;
     logs: LogEntry[];
     chart_data?: ChartDataPoint[];
@@ -1073,7 +1073,7 @@ export const DataService = {
     /**
      * Start a new task (Translate, Polish, or Export)
      */
-    async startTask(payload: TaskPayload): Promise<{ success: boolean; message: string }> {
+    async startTask(payload: TaskPayload): Promise<{ success: boolean; message: string; task_id?: string; status?: string; running?: boolean }> {
         try {
             const res = await fetch(`${API_BASE}/task/run`, {
                 method: 'POST',
@@ -1093,10 +1093,16 @@ export const DataService = {
     /**
      * Stop the currently running task
      */
-    async stopTask(): Promise<void> {
+    async stopTask(taskId?: string): Promise<TaskLifecycle> {
         try {
-            const res = await fetch(`${API_BASE}/task/stop`, { method: 'POST' });
-            if (!res.ok) throw new Error('Failed to stop task');
+            const res = await fetch(`${API_BASE}/task/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(taskId ? { task_id: taskId } : {}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || data.error || 'Failed to stop task');
+            return data;
         } catch (error) {
             console.error("API Error: stopTask", error);
             throw error;
@@ -1109,7 +1115,8 @@ export const DataService = {
     async getTaskStatus(
         logCursor = 0,
         chartCursor = 0,
-        comparisonCursor = 0
+        comparisonCursor = 0,
+        taskId?: string,
     ): Promise<TaskStatusResponse> {
         try {
             const params = new URLSearchParams({
@@ -1118,6 +1125,7 @@ export const DataService = {
                 comparison_cursor: String(comparisonCursor),
                 _t: String(Date.now())
             });
+            if (taskId) params.set('task_id', taskId);
             const res = await fetch(`${API_BASE}/task/status?${params.toString()}`);
             if (!res.ok) throw new Error('Failed to get status');
             return await res.json();

@@ -20,6 +20,16 @@ export interface TaskStats {
   errorRate?: number;
 }
 
+export interface TaskLifecycle {
+  task_id?: string | null;
+  status?: 'idle' | 'starting' | 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
+  running?: boolean;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  exit_code?: number | null;
+}
+
 export interface ChartDataPoint {
   time: string;
   rpm: number;

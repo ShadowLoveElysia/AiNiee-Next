@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from Tools.Skills.skill_base import Skill, SkillMeta, SkillParameter, SkillResult
+from Tools.Skills.skill_base import (
+    Skill,
+    SkillMeta,
+    SkillParameter,
+    SkillResult,
+    normalize_skill_action,
+    reject_unknown_skill_fields,
+)
 from Tools.Skills.skills.common import (
     active_profile_name,
     atomic_write_json,
@@ -18,6 +25,24 @@ _MISSING = object()
 
 
 class ConfigSkill(Skill):
+    @staticmethod
+    def _string_argument(args: Dict[str, Any], name: str, *, required: bool = False) -> str | None | SkillResult:
+        value = args.get(name)
+        if value is None or value == "":
+            if required:
+                return SkillResult.fail(
+                    f"Missing required parameter: {name}", "MISSING_PARAM"
+                )
+            return None
+        if not isinstance(value, str):
+            return SkillResult.fail(f"{name} must be a string.", "INVALID_ARGUMENTS")
+        value = value.strip()
+        if required and not value:
+            return SkillResult.fail(
+                f"Missing required parameter: {name}", "MISSING_PARAM"
+            )
+        return value
+
     @property
     def meta(self) -> SkillMeta:
         return SkillMeta(
@@ -60,7 +85,14 @@ class ConfigSkill(Skill):
         )
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        action = (args.get("action") or "").strip().lower()
+        invalid = reject_unknown_skill_fields(
+            args, {"action", "key", "value", "profile"}, skill_name="config"
+        )
+        if invalid:
+            return invalid
+        action = normalize_skill_action(args)
+        if action is None:
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
         if action == "list_keys":
             try:
@@ -74,9 +106,9 @@ class ConfigSkill(Skill):
             })
 
         if action == "get":
-            key = (args.get("key") or "").strip()
-            if not key:
-                return SkillResult.fail("Missing required parameter: key", "MISSING_PARAM")
+            key = self._string_argument(args, "key", required=True)
+            if isinstance(key, SkillResult):
+                return key
             try:
                 path, profile = resolve_config_profile_path(args.get("profile"))
             except ValueError as e:
@@ -101,13 +133,18 @@ class ConfigSkill(Skill):
             })
 
         if action == "set":
-            key = (args.get("key") or "").strip()
-            if not key:
-                return SkillResult.fail("Missing required parameter: key", "MISSING_PARAM")
+            key = self._string_argument(args, "key", required=True)
+            if isinstance(key, SkillResult):
+                return key
             if "value" not in args:
                 return SkillResult.fail("Missing required parameter: value", "MISSING_PARAM")
             try:
-                path, profile = resolve_config_profile_path(args.get("profile") or active_profile_name())
+                profile_arg = (
+                    args.get("profile")
+                    if "profile" in args
+                    else active_profile_name()
+                )
+                path, profile = resolve_config_profile_path(profile_arg)
             except ValueError as e:
                 return SkillResult.fail(str(e), "INVALID_PROFILE")
 

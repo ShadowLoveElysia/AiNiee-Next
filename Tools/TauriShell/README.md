@@ -57,3 +57,15 @@ Output:
 $env:AINIEE_GUI_PORT = "18001"
 npm.cmd run tauri:dev
 ```
+
+To start the optional Skills control plane alongside WebServer, pass the
+following arguments to the host process (or set the corresponding environment
+variables):
+
+```powershell
+python tauri_web_host.py --skills --skills-auth-token "your-token"
+```
+
+Skills remains loopback-only by default. A remote bind requires
+`--skills-allow-remote-access` and authentication; `--skills-no-auth` is only
+appropriate for a trusted local development run.

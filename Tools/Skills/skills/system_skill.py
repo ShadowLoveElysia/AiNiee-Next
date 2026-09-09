@@ -4,7 +4,14 @@ import os
 import sys
 from typing import Any, Dict
 
-from Tools.Skills.skill_base import Skill, SkillMeta, SkillParameter, SkillResult
+from Tools.Skills.skill_base import (
+    Skill,
+    SkillMeta,
+    SkillParameter,
+    SkillResult,
+    normalize_skill_action,
+    reject_unknown_skill_fields,
+)
 
 
 PROJECT_ROOT = os.path.abspath(
@@ -60,7 +67,12 @@ class SystemSkill(Skill):
         return meta
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        action = (args.get("action") or "info").strip().lower()
+        invalid = reject_unknown_skill_fields(args, {"action"}, skill_name="system")
+        if invalid:
+            return invalid
+        action = normalize_skill_action(args, default="info")
+        if action is None:
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
         if action == "ping":
             return SkillResult.ok({"pong": True})

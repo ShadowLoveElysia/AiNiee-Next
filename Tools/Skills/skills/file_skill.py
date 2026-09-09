@@ -3,7 +3,19 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
-from Tools.Skills.skill_base import Skill, SkillMeta, SkillParameter, SkillResult
+from Tools.Skills.skill_base import (
+    Skill,
+    SkillMeta,
+    SkillParameter,
+    SkillResult,
+    normalize_skill_action,
+    reject_unknown_skill_fields,
+)
+from Tools.Skills.skills.common import (
+    SkillPathError,
+    validate_skill_glob_pattern,
+    validate_skill_path,
+)
 
 
 PROJECT_ROOT = os.path.abspath(
@@ -48,24 +60,52 @@ class FileSkill(Skill):
         )
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        action = (args.get("action") or "").strip().lower()
+        invalid = reject_unknown_skill_fields(
+            args, {"action", "path", "pattern"}, skill_name="file"
+        )
+        if invalid:
+            return invalid
+        action = normalize_skill_action(args)
+        if action is None:
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
         if action == "list":
             import glob as glob_module
 
-            path = args.get("path") or "."
-            pattern = args.get("pattern") or "*"
-            search = os.path.join(path, pattern) if os.path.isdir(path) else path
+            try:
+                requested_path = args.get("path")
+                path = validate_skill_path(
+                    PROJECT_ROOT if requested_path is None or requested_path == "" else requested_path,
+                    field_name="path",
+                    must_exist=True,
+                    expect_dir=True,
+                )
+                requested_pattern = args.get("pattern")
+                pattern = validate_skill_glob_pattern(
+                    "*" if requested_pattern is None or requested_pattern == "" else requested_pattern
+                )
+            except SkillPathError as exc:
+                return SkillResult.fail(str(exc), exc.code)
+
+            search = os.path.join(path, pattern)
             files = sorted(glob_module.glob(search))
             result = []
             for f in files:
-                stat = os.stat(f)
+                try:
+                    safe_path = validate_skill_path(f, field_name="path", must_exist=True)
+                    stat = os.stat(safe_path)
+                except (SkillPathError, OSError) as exc:
+                    # A file can disappear between glob and stat; omit it rather
+                    # than turning an otherwise valid discovery request into a 500.
+                    if isinstance(exc, SkillPathError):
+                        continue
+                    continue
                 result.append({
-                    "name": os.path.basename(f),
-                    "path": os.path.abspath(f),
+                    "name": os.path.basename(safe_path),
+                    "path": safe_path,
                     "size": stat.st_size,
-                    "is_dir": os.path.isdir(f),
-                    "ext": os.path.splitext(f)[1].lower(),
+                    "is_dir": os.path.isdir(safe_path),
+                    "ext": os.path.splitext(safe_path)[1].lower(),
                 })
             return SkillResult.ok({
                 "count": len(result),
@@ -75,11 +115,15 @@ class FileSkill(Skill):
 
         if action == "info":
             path = args.get("path", "")
-            if not path:
+            if path is None or path == "":
                 return SkillResult.fail("Missing required parameter: path", "MISSING_PARAM")
-            if not os.path.exists(path):
-                return SkillResult.fail(f"Path not found: {path}", "NOT_FOUND")
-            stat = os.stat(path)
+            try:
+                path = validate_skill_path(path, field_name="path", must_exist=True)
+                stat = os.stat(path)
+            except SkillPathError as exc:
+                return SkillResult.fail(str(exc), exc.code)
+            except OSError as exc:
+                return SkillResult.fail(f"Unable to inspect path: {exc}", "IO_ERROR")
             supported_exts = {
                 ".txt", ".epub", ".docx", ".srt", ".ass", ".vtt", ".lrc",
                 ".json", ".po", ".xlsx", ".csv", ".mobi", ".azw3", ".fb2",
@@ -99,13 +143,20 @@ class FileSkill(Skill):
         if action == "upload_path":
             """Return the project staging path suggestion for a file."""
             path = args.get("path", "")
-            if not path:
+            if path is None or path == "":
                 return SkillResult.fail("Missing required parameter: path", "MISSING_PARAM")
-            if not os.path.exists(path):
-                return SkillResult.fail(f"Path not found: {path}", "NOT_FOUND")
+            try:
+                path = validate_skill_path(
+                    path,
+                    field_name="path",
+                    must_exist=True,
+                    expect_file=True,
+                )
+            except SkillPathError as exc:
+                return SkillResult.fail(str(exc), exc.code)
 
             return SkillResult.ok({
-                "local_path": os.path.abspath(path),
+                "local_path": path,
                 "note": "Use this path as input_path for translate skill or queue skill.",
             })
 

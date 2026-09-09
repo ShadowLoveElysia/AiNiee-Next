@@ -16,6 +16,7 @@ REQUIRED_SKILL_FILES = (
     "__init__.py",
     "skill_base.py",
     "server.py",
+    "task_runtime.py",
     "skills/__init__.py",
     "skills/common.py",
     "skills/system_skill.py",
@@ -43,19 +44,43 @@ def inspect_skills_runtime(project_root: str | None = None) -> Dict[str, Any]:
     ]
 
     # The HTTP layer has no extra server dependencies; business logic reuses project modules.
-    required_modules = {"json", "http.server", "urllib.parse"}
+    required_modules = ("json", "http.server", "urllib.parse")
     missing_modules = [
         name for name in required_modules if not _module_exists(name)
     ]
 
-    available = not missing_files and not missing_modules
+    import_errors: Dict[str, str] = {}
+    if not missing_files:
+        # Keep the component check independent from optional project packages.
+        # The HTTP process imports the registry when it starts and will report a
+        # precise import error there; this check must remain usable for install
+        # diagnostics in a minimal environment.
+        try:
+            from Tools.Skills.skills import build_registry
+
+            registry = build_registry()
+            registry_count = registry.count
+        except Exception as exc:
+            registry_count = 0
+            import_errors["skills_registry"] = f"{type(exc).__name__}: {exc}"
+    else:
+        registry_count = 0
+
+    component_ready = not missing_files and not missing_modules
+    business_ready = component_ready and not import_errors
 
     return {
-        "available": available,
+        # ``available`` means the Skills component and HTTP stdlib are present;
+        # ``business_ready`` additionally proves all registered Skills import.
+        "available": component_ready,
+        "component_ready": component_ready,
+        "business_ready": business_ready,
         "project_root": resolved_root,
         "component_root": component_root,
         "missing_files": missing_files,
         "missing_modules": missing_modules,
+        "import_errors": import_errors,
+        "skills_count": registry_count,
         "note": "The Skills HTTP layer has no server package dependencies beyond the standard library.",
     }
 
@@ -65,6 +90,7 @@ def format_runtime_status_lines(status: Dict[str, Any]) -> List[str]:
     lines: List[str] = []
     missing_files = status.get("missing_files", [])
     missing_modules = status.get("missing_modules", [])
+    import_errors = status.get("import_errors", {})
 
     if missing_files:
         lines.append("Missing Skills component files:")
@@ -74,7 +100,25 @@ def format_runtime_status_lines(status: Dict[str, Any]) -> List[str]:
         lines.append("Missing standard library modules (unexpected):")
         lines.extend(f"  - {name}" for name in missing_modules)
 
+    if import_errors:
+        lines.append("Skills registry import failed:")
+        lines.extend(f"  - {name}: {error}" for name, error in import_errors.items())
+
+    if not lines and not status.get("business_ready", True):
+        lines.append("Skills HTTP component is ready, but one or more production Skills cannot be imported.")
+
     if not lines:
         lines.append("AiNiee Skills runtime is ready (no extra server dependencies required).")
 
     return lines
+
+
+def runtime_check_exit_code(status: Dict[str, Any]) -> int:
+    """Return the stable exit code used by no-socket Skills preflight commands.
+
+    ``0`` means every registered production Skill imported successfully.  ``2``
+    means the probe ran, but files, standard-library support, or business
+    dependencies are incomplete.  A probe implementation error is reserved for
+    the caller and should use exit code ``1``.
+    """
+    return 0 if status.get("business_ready", False) else 2

@@ -94,6 +94,63 @@ def normalize_cli_path(path: str) -> str:
     return os.path.abspath(os.path.expanduser(raw_path))
 
 
+def _skills_task_argument_names(args) -> list[str]:
+    """Return task arguments that have no meaning in Skills server mode."""
+    candidates = (
+        ("input_path", "input_path"),
+        ("output_path", "--output"),
+        ("profile", "--profile"),
+        ("rules_profile", "--rules-profile"),
+        ("queue_file", "--queue-file"),
+        ("source_lang", "--source"),
+        ("target_lang", "--target"),
+        ("project_type", "--type"),
+        ("resume", "--resume"),
+        ("non_interactive", "--yes"),
+        ("threads", "--threads"),
+        ("retry", "--retry"),
+        ("rounds", "--rounds"),
+        ("timeout", "--timeout"),
+        ("polish_mode", "--polish-mode"),
+        ("platform", "--platform"),
+        ("model", "--model"),
+        ("api_url", "--api-url"),
+        ("api_key", "--api-key"),
+        ("think_depth", "--think-depth"),
+        ("thinking_budget", "--thinking-budget"),
+        ("failover", "--failover"),
+        ("web_mode", "--web-mode"),
+        ("manga", "--manga"),
+        ("manga_strict_models", "--manga-strict-models"),
+        ("manga_allow_fallback", "--manga-allow-fallback"),
+        ("manga_runtime_check", "--manga-runtime-check"),
+        ("manga_ocr_engine", "--manga-ocr-engine"),
+        ("manga_detect_engine", "--manga-detect-engine"),
+        ("manga_segment_engine", "--manga-segment-engine"),
+        ("manga_inpaint_engine", "--manga-inpaint-engine"),
+        ("manga_runtime_device", "--manga-runtime-device"),
+        ("manga_detect_device", "--manga-detect-device"),
+        ("manga_ocr_device", "--manga-ocr-device"),
+        ("manga_inpaint_device", "--manga-inpaint-device"),
+        ("mcp", "--mcp"),
+        ("mcp_stdio", "--mcp-stdio"),
+        ("mcp_http", "--mcp-http"),
+        ("lines", "--lines"),
+        ("tokens", "--tokens"),
+        ("pre_lines", "--pre-lines"),
+        ("_task_api_key_ephemeral", "AINIEE_WEB_TASK_API_KEY"),
+    )
+    invalid = []
+    for attribute, label in candidates:
+        value = getattr(args, attribute, None)
+        if value not in (None, False, ""):
+            invalid.append(label)
+    transport = getattr(args, "mcp_transport", "stdio")
+    if transport not in (None, "", "stdio"):
+        invalid.append("--mcp-transport")
+    return invalid
+
+
 def derive_manga_output_path(input_path: str) -> str:
     normalized = normalize_cli_path(input_path)
     base_name = os.path.basename(normalized.rstrip(os.sep))
@@ -214,11 +271,55 @@ class CommandModeRunner:
             return result
 
     def run(self, args):
+        if str(getattr(args, "task", "") or "").strip().lower() == "agent":
+            from ModuleFolders.Service.Agent.AgentFacade import AgentFacade
+            import json
+            events = []
+            facade = AgentFacade(event_sink=events.append)
+            input_path = getattr(args, "input_path", None)
+            if not input_path:
+                console.print("[red]Error: input_path is required for agent.[/red]")
+                return 2
+            mode = getattr(args, "agent_mode", None) or "plan"
+            if mode == "plan":
+                plan = facade.build_plan(input_path, mode=mode)
+                if getattr(args, "agent_format", "text") == "jsonl":
+                    for event in events:
+                        print(json.dumps(event, ensure_ascii=False))
+                else:
+                    console.print_json(json.dumps(plan, ensure_ascii=False))
+                return 0
+            return facade.run(input_path, yes=bool(getattr(args, "non_interactive", False)), mode=mode)
+
         if str(getattr(args, "task", "") or "").strip().lower() == "mcp":
             args.task = "mcp"
             # MCP 命令行模式交给专用桥接层处理，保持 ainiee_cli.py 只做委托。
             return self.host.mcp_runtime_bridge.run_mcp_server_from_command(
                 transport=getattr(args, "mcp_transport", "stdio"),
+            )
+
+        if str(getattr(args, "task", "") or "").strip().lower() in {"skills", "skill"}:
+            invalid = _skills_task_argument_names(args)
+            if invalid:
+                console.print(
+                    "[red]Skills server mode does not accept translation task arguments: "
+                    + ", ".join(invalid)
+                    + "[/red]"
+                )
+                return 2
+            # Skills command mode is kept in the runtime bridge so TUI and CLI
+            # share the same binding, authentication, and cleanup rules.
+            return self.host.skills_runtime_bridge.run_skills_server_from_command(
+                host=getattr(args, "skills_host", None),
+                port=getattr(args, "skills_port", None),
+                require_auth=(
+                    False if getattr(args, "skills_no_auth", False) else None
+                ),
+                auth_token=getattr(args, "skills_auth_token", None),
+                allow_origin=getattr(args, "skills_allow_origin", None),
+                allow_remote_access=(
+                    True if getattr(args, "skills_allow_remote_access", False) else None
+                ),
             )
 
         if getattr(args, "manga_runtime_check", False):

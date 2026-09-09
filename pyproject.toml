@@ -76,13 +76,30 @@ dependencies = [
 
 [project.scripts]
 ainiee = "ainiee_cli:main"
+ainiee-skills = "Tools.Skills.server:main"
+ainiee-skills-cli = "Tools.Skills.cli:main"
+ainiee-agent = "Tools.Agent.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18N"]
+packages = ["ModuleFolders", "Resource", "PluginScripts", "StevExtraction", "I18N", "Tools"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"ainiee_cli.py" = "ainiee_cli.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["ainiee_cli.py", "pyproject.toml", "README.md", "LICENSE"]
+include = [
+    "ainiee_cli.py",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "ModuleFolders/**",
+    "Resource/**",
+    "PluginScripts/**",
+    "StevExtraction/**",
+    "I18N/**",
+    "Tools/**",
+]

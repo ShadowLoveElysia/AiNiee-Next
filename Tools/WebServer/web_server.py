@@ -10,6 +10,7 @@ import subprocess
 import time
 import collections
 import locale
+import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -110,6 +111,7 @@ except Exception as exc:
 # --- Global State & Task Management ---
 
 WEB_TASK_API_KEY_ENV = TASK_API_KEY_ENV
+WEB_TASK_ID_ENV = "AINIEE_WEB_TASK_ID"
 
 
 def resolve_task_worker_python(project_root: str, platform_name: str | None = None) -> str:
@@ -140,6 +142,15 @@ class TaskManager:
         if not hasattr(self, 'initialized'):  # Prevent re-initialization
             self.process: Optional[subprocess.Popen] = None
             self.status: str = "idle"  # idle, running, stopping, completed, error
+            # ``status`` is retained for the existing Web UI.  The lifecycle
+            # fields below are the stable cross-entry task contract consumed
+            # by Web, CLI, and Skills callers.
+            self.lifecycle_status: str = "idle"
+            self.task_id: Optional[str] = None
+            self.created_at: Optional[str] = None
+            self.started_at: Optional[str] = None
+            self.finished_at: Optional[str] = None
+            self.exit_code: Optional[int] = None
             self.logs = collections.deque(maxlen=500)
             self.chart_data = collections.deque(maxlen=60) # 1 min history at 1s intervals
             self.stats: Dict[str, Any] = self._get_initial_stats()
@@ -154,6 +165,57 @@ class TaskManager:
 
             # Use a separate thread to monitor the process output
             self.monitor_thread: Optional[threading.Thread] = None
+
+    @staticmethod
+    def _timestamp() -> str:
+        return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+    def _canonical_status(self) -> str:
+        """Return the stable lifecycle status without breaking legacy stats."""
+        return self.lifecycle_status
+
+    def _is_task_active_locked(self) -> bool:
+        # The child process is the source of truth for occupancy.  Lifecycle
+        # fields describe the last known state and may outlive a cleaned-up
+        # process (for example after a failed monitor thread or host restart).
+        # Treating a stale ``lifecycle_status=running`` as active would block
+        # every later task even though no worker is owned by this manager.
+        if self.process is None:
+            return False
+        # Keep the slot reserved until the monitor finalizes a process that
+        # has already exited.  Otherwise a fast worker can be replaced by a
+        # new task while its monitor thread is still writing the terminal
+        # status, and that thread will then lose ownership of its record.
+        if self.status in {"running", "stopping"}:
+            return True
+        try:
+            return self.process.poll() is None
+        except (AttributeError, OSError):
+            # A minimal/fake process may not expose ``poll``.  In that case
+            # regard an owned process as active unless it has already reached
+            # a terminal legacy status.
+            return self.status in {"starting", "running", "stopping"}
+
+    def task_conflict_detail(self) -> str | None:
+        """Return the protocol error for a concurrent start, if one exists."""
+        with self._lock:
+            if not self._is_task_active_locked():
+                return None
+            if self.status == "stopping" or self.lifecycle_status == "stopping":
+                return "Task process is still stopping; retry after it exits."
+            return "A task is already running."
+
+    def _task_contract(self) -> Dict[str, Any]:
+        running = self.lifecycle_status in {"starting", "running", "stopping"}
+        return {
+            "task_id": self.task_id,
+            "status": self._canonical_status(),
+            "running": running,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "exit_code": self.exit_code,
+        }
 
     def _get_initial_stats(self) -> Dict[str, Any]:
         return {
@@ -218,6 +280,7 @@ class TaskManager:
                 "comparison": self.comparison_seq,
             },
             "comparison_updated_at": self.comparison_updated_at,
+            **self._task_contract(),
         }
 
     def _log_and_parse(self, stream):
@@ -253,37 +316,47 @@ class TaskManager:
                 self.push_log(line)
 
 
-    def start_task(self, payload: TaskSpec | Dict[str, Any]) -> bool:
-        """Starts the ainiee_cli.py script as a subprocess with config overrides."""
+    def start_task(self, payload: TaskSpec | Dict[str, Any]) -> str | None:
+        """Start a worker and return the stable task ID, or ``None`` on failure."""
         with self._lock:
-            if self.status in {"running", "stopping"} or (
-                self.process is not None and self.process.poll() is None
-            ):
-                return False
-            
+            if self._is_task_active_locked():
+                return None
+
+            self.task_id = str(uuid.uuid4())
+            self.created_at = self._timestamp()
+            self.started_at = None
+            self.finished_at = None
+            self.exit_code = None
+            self.lifecycle_status = "starting"
+
             self.status = "running"
             self.logs.clear()
             self.chart_data.clear()
             self.reset_comparison()
             self.stats = self._get_initial_stats()
             self.stats["status"] = "running"
+            self.stats["task_id"] = self.task_id
             self.push_log("Task starting with parameters from web UI...")
 
             try:
                 worker_python = resolve_task_worker_python(PROJECT_ROOT)
             except FileNotFoundError as exc:
                 self.status = "error"
+                self.lifecycle_status = "failed"
                 self.stats["status"] = "error"
                 self.push_log(str(exc), "error")
-                return False
+                self.finished_at = self._timestamp()
+                return None
 
             try:
                 spec = payload if isinstance(payload, TaskSpec) else TaskSpec.from_mapping(payload)
             except TaskContractError as exc:
                 self.status = "error"
+                self.lifecycle_status = "failed"
                 self.stats["status"] = "error"
                 self.push_log(f"Invalid task payload: {exc}", "error")
-                return False
+                self.finished_at = self._timestamp()
+                return None
 
             cli_args = [
                 worker_python,
@@ -302,6 +375,8 @@ class TaskManager:
                 env.pop(WEB_TASK_API_KEY_ENV, None)
                 if spec.api_key:
                     env[WEB_TASK_API_KEY_ENV] = spec.api_key
+                if self.task_id:
+                    env[WEB_TASK_ID_ENV] = self.task_id
                 # 获取当前 WebServer 的运行地址
                 env["AINIEE_INTERNAL_API_URL"] = task_manager.internal_api_url
                 env[INTERNAL_AUTH_ENV] = INTERNAL_API_TOKEN
@@ -326,15 +401,32 @@ class TaskManager:
                     target=self._process_monitor,
                     args=(self.process,),
                 )
+
+                self.started_at = self._timestamp()
+                self.lifecycle_status = "running"
                 self.monitor_thread.daemon = True
                 self.monitor_thread.start()
 
-                return True
+                return self.task_id
             except Exception as e:
+                failed_process = self.process
+                if failed_process is not None:
+                    try:
+                        if failed_process.poll() is None:
+                            failed_process.kill()
+                        failed_process.wait(timeout=2)
+                    except (OSError, subprocess.TimeoutExpired, AttributeError):
+                        # A failed monitor setup must not leave an unowned
+                        # worker behind.  The process is best-effort cleaned
+                        # up here; the task is still reported as failed.
+                        pass
+                    self.process = None
                 self.status = "error"
+                self.lifecycle_status = "failed"
                 self.stats["status"] = "error"
                 self.push_log(f"Failed to start process: {e}", "error")
-                return False
+                self.finished_at = self._timestamp()
+                return None
 
     def _process_monitor(self, process=None):
         """Monitors the subprocess, which now provides correctly decoded strings."""
@@ -402,23 +494,31 @@ class TaskManager:
             if self.status == "running":
                 if process and process.returncode == 0:
                     self.status = "completed"
+                    self.lifecycle_status = "completed"
                     self.stats["status"] = "completed"
                 else:
                     self.status = "error"
+                    self.lifecycle_status = "failed"
                     self.stats["status"] = "error"
             elif self.status == "stopping":
                 self.status = "idle"
+                self.lifecycle_status = "stopped"
                 self.stats["status"] = "idle"
                 self.push_log("Task stopped.")
+            self.exit_code = process.returncode if process else None
+            self.finished_at = self._timestamp()
             self.process = None
 
-    def stop_task(self):
-        """Stops the running task."""
+    def stop_task(self, task_id: str | None = None):
+        """Stop one task, returning ``False`` for an unknown task ID."""
         with self._lock:
+            if task_id and task_id != self.task_id:
+                return False
             if self.status not in {"running", "stopping"} or not self.process:
                 return True
-            
+
             self.status = "stopping"
+            self.lifecycle_status = "stopping"
             self.stats["status"] = "stopping"
             self.push_log("Sending force stop signal...", "warning")
             
@@ -440,7 +540,10 @@ class TaskManager:
 
             self.process = None
             self.status = "idle"
+            self.lifecycle_status = "stopped"
             self.stats["status"] = "idle"
+            self.exit_code = process.returncode
+            self.finished_at = self._timestamp()
             self.push_log("Task stopped.")
             return True
 
@@ -695,6 +798,13 @@ class TaskPayload(BaseModel):
 
     def to_task_spec(self) -> TaskSpec:
         return TaskSpec.from_mapping(self.model_dump(exclude_none=True))
+
+
+class TaskControlPayload(BaseModel):
+    """Optional control body shared by Web status/stop callers."""
+
+    model_config = ConfigDict(extra="forbid")
+    task_id: Optional[str] = None
 
 # --- FastAPI Application ---
 
@@ -2653,6 +2763,8 @@ async def switch_rules_profile(request: RulesProfileSwitchRequest, http_request:
 
         _config_cache.clear()
         return await get_config(http_request)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2880,13 +2992,9 @@ async def create_platform(request: PlatformCreateRequest):
 
 @app.post("/api/task/run")
 async def run_task(payload: TaskPayload):
-    if task_manager.status in {"running", "stopping"}:
-        detail = (
-            "Task process is still stopping; retry after it exits."
-            if task_manager.status == "stopping"
-            else "A task is already running."
-        )
-        raise HTTPException(status_code=409, detail=detail)
+    conflict_detail = task_manager.task_conflict_detail()
+    if conflict_detail:
+        raise HTTPException(status_code=409, detail=conflict_detail)
 
     spec = payload.to_task_spec()
     active_config = _load_active_config_payload()
@@ -2925,27 +3033,52 @@ async def run_task(payload: TaskPayload):
     except Exception as e:
         print(f"Warning: Failed to flush web cache before task start: {e}")
 
-    if not task_manager.start_task(spec):
+    task_id = task_manager.start_task(spec)
+    if not task_id:
+        # The initial check is intentionally only an optimization.  The
+        # manager lock is authoritative, so a concurrent request can be
+        # rejected here even when both requests passed the pre-check.
+        conflict_detail = task_manager.task_conflict_detail()
+        if conflict_detail:
+            raise HTTPException(status_code=409, detail=conflict_detail)
         raise HTTPException(status_code=500, detail="Failed to start task process.")
-    
-    return {"success": True, "message": "Task started successfully."}
+
+    return {
+        "success": True,
+        "message": "Task started successfully.",
+        "task_id": task_id,
+        "status": task_manager.lifecycle_status,
+        "running": task_manager.lifecycle_status in {"starting", "running", "stopping"},
+    }
 
 @app.post("/api/task/stop")
-async def stop_task():
-    if not task_manager.stop_task():
+async def stop_task(payload: Optional[TaskControlPayload] = None):
+    requested_task_id = payload.task_id if payload is not None else None
+    if requested_task_id is not None and not requested_task_id.strip():
+        raise HTTPException(status_code=422, detail="task_id must not be empty.")
+    if not task_manager.stop_task(requested_task_id):
+        if requested_task_id and requested_task_id != task_manager.task_id:
+            raise HTTPException(status_code=404, detail="Task not found.")
         raise HTTPException(
             status_code=409,
             detail="Task process is still stopping; retry after it exits.",
         )
-    return {"message": "Stop signal sent."}
+    return {
+        "success": True,
+        "message": "Stop signal sent.",
+        **task_manager._task_contract(),
+    }
 
 @app.get("/api/task/status")
 async def get_task_status(
     response: Response,
+    task_id: Optional[str] = Query(None),
     log_cursor: int = Query(0, ge=0),
     chart_cursor: int = Query(0, ge=0),
     comparison_cursor: int = Query(0, ge=0)
 ):
+    if task_id is not None and task_id != task_manager.task_id:
+        raise HTTPException(status_code=404, detail="Task not found.")
     response.headers["Cache-Control"] = "no-store"
     return task_manager.snapshot_status(log_cursor, chart_cursor, comparison_cursor)
 
@@ -4378,7 +4511,13 @@ async def add_to_queue(item: QueueTaskItem, request: Request):
         task.status = "waiting"
         task.locked = False
 
-        qm.add_task(task)
+        if not qm.add_task(task):
+            if getattr(qm, "last_save_error", "") == "conflict":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Queue changed since it was loaded; reload and retry.",
+                )
+            raise HTTPException(status_code=500, detail="Failed to write queue file")
         return {"success": True}
     except TaskContractError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -4395,7 +4534,14 @@ async def remove_from_queue(index: int):
         if qm.remove_task(index):
             return {"success": True}
         else:
+            if getattr(qm, "last_save_error", "") == "conflict":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Queue changed since it was loaded; reload and retry.",
+                )
             raise HTTPException(status_code=400, detail="Failed to remove task")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -4475,6 +4621,11 @@ async def update_queue_item(index: int, item: QueueTaskUpdate, request: Request)
         if qm.update_task(index, task):
             return {"success": True}
         else:
+            if getattr(qm, "last_save_error", "") == "conflict":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Queue changed since it was loaded; reload and retry.",
+                )
             raise HTTPException(status_code=400, detail="Failed to update task")
     except TaskContractError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -4491,7 +4642,14 @@ async def clear_queue():
         if qm.clear_tasks():
             return {"success": True}
         else:
+            if getattr(qm, "last_save_error", "") == "conflict":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Queue changed since it was loaded; reload and retry.",
+                )
             raise HTTPException(status_code=400, detail="Failed to clear queue")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -4523,6 +4681,10 @@ async def run_queue():
             status_code=503,
             detail="Queue execution requires host integration. Start Web Server from AiNiee CLI."
         )
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -4597,7 +4759,13 @@ async def save_queue_raw(request: QueueRawRequest, http_request: Request):
             _ensure_no_mcp_secret_placeholder(parsed_content, "Queue raw content")
 
         if hasattr(qm, 'load_from_json'):
-            qm.load_from_json(content_to_save)
+            if not qm.load_from_json(content_to_save):
+                if getattr(qm, "last_save_error", "") == "conflict":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Queue changed since it was loaded; reload and retry.",
+                    )
+                raise HTTPException(status_code=500, detail="Failed to write queue file")
         else:
             # Fallback: save to file directly and reload
             try:
@@ -4612,6 +4780,8 @@ async def save_queue_raw(request: QueueRawRequest, http_request: Request):
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid JSON format")
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -4638,6 +4808,11 @@ async def move_queue_item(from_index: int, request: QueueMoveRequest):
         if qm.move_task(from_index, request.to_index):
             return {"success": True}
         else:
+            if getattr(qm, "last_save_error", "") == "conflict":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Queue changed since it was loaded; reload and retry.",
+                )
             raise HTTPException(status_code=400, detail="Failed to move task")
     except HTTPException:
         raise
@@ -4657,6 +4832,11 @@ async def reorder_queue(request: QueueReorderRequest):
             if qm.reorder_tasks(request.new_order):
                 return {"success": True}
             else:
+                if getattr(qm, "last_save_error", "") == "conflict":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Queue changed since it was loaded; reload and retry.",
+                    )
                 raise HTTPException(status_code=400, detail="Failed to reorder tasks")
         else:
             # Fallback: manual reorder
@@ -4668,8 +4848,16 @@ async def reorder_queue(request: QueueReorderRequest):
             # Reorder tasks according to new order
             new_tasks = [qm.tasks[i] for i in request.new_order]
             qm.tasks = new_tasks
-            qm.save_tasks()
+            if not qm.save_tasks():
+                if getattr(qm, "last_save_error", "") == "conflict":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Queue changed since it was loaded; reload and retry.",
+                    )
+                raise HTTPException(status_code=500, detail="Failed to write queue file")
             return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

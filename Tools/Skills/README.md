@@ -21,9 +21,15 @@ Skills 则完全不同：
 
 ### 启动 Skills Server
 
-命令行启动：
+命令行启动（默认仅监听本机）：
 ```bash
 python Tools/Skills/server.py --port 8766
+```
+
+需要局域网监听时，必须显式允许远程绑定，并保持鉴权：
+```bash
+AINIEE_SKILLS_AUTH_TOKEN="your-token" \
+python Tools/Skills/server.py --host 0.0.0.0 --allow-remote-access --port 8766
 ```
 
 默认情况下，`POST /skills/{name}` 需要鉴权。服务启动时会在终端输出本次运行的
@@ -40,6 +46,23 @@ AINIEE_SKILLS_AUTH_TOKEN="your-token" python Tools/Skills/server.py --port 8766
 bash Tools/Skills/launcher.sh --port 8766
 ```
 
+Windows 可直接运行：
+```bat
+Tools\Skills\launcher.bat --port 8766
+```
+
+Skills 也会随 Python wheel 一起安装，并提供 `ainiee-skills` 与
+`ainiee-skills-cli` 两个命令；源码环境优先使用项目中的 `uv`，没有 `uv`
+时启动脚本会回退到 Python 解释器。
+
+Docker 镜像默认仍启动 CLI。要启动 Skills API（容器分支显式允许容器端口监听，仍建议设置令牌）：
+```bash
+docker run --rm -p 8766:8766 \
+  -e AINIEE_SERVICE=skills \
+  -e AINIEE_SKILLS_AUTH_TOKEN="your-token" \
+  ghcr.io/<owner>/<repo>:<tag>
+```
+
 ### 检查服务是否运行
 
 ```bash
@@ -50,6 +73,21 @@ curl http://127.0.0.1:8766/health
 ```json
 {"status": "ok", "service": "ainiee-skills", "skills_count": 6}
 ```
+
+### 不启动服务检查运行环境
+
+在完整依赖尚未安装、或当前环境禁止监听端口时，可以先运行无 socket
+探测。它会检查 Skills 文件、标准库 HTTP 支持和六个生产 Skill 的导入状态，
+并输出 JSON：
+
+```bash
+python Tools/Skills/cli.py check
+# 或
+python Tools/Skills/server.py --check
+```
+
+退出码约定：`0` 表示生产 Skill 全部可导入；`2` 表示探测成功但文件、标准库
+或业务依赖不完整；`1` 仅表示探测器自身异常。该命令不会启动 HTTP listener。
 
 ### 查看可用 Skills
 
@@ -146,6 +184,9 @@ python Tools/Skills/cli.py run system '{"action": "ping"}'
 
 # 启动 HTTP 服务
 python Tools/Skills/cli.py server --port 8766
+
+# 无 socket 依赖探测
+python Tools/Skills/cli.py check
 ```
 
 ## 目录结构
@@ -158,7 +199,9 @@ Tools/Skills/
 ├── server.py              # HTTP 服务（基于 stdlib http.server）
 ├── cli.py                 # CLI 运行器
 ├── runtime.py             # 运行环境检查
-├── launcher.sh            # Shell 启动脚本
+├── launcher.sh            # Linux/macOS Shell 启动脚本
+├── launcher.bat           # Windows 启动脚本
+├── task_runtime.py        # 异步任务 ID、状态、停止与恢复记录
 └── skills/
     ├── __init__.py        # 注册中心（注册所有 skill）
     ├── system_skill.py    # 系统信息与健康检查
@@ -169,13 +212,46 @@ Tools/Skills/
     └── file_skill.py      # 文件操作
 ```
 
-## 执行模式（混合模式）
+## 执行模式与任务生命周期
 
-Skills 支持三种执行模式，自动选择：
+`system`、`config`、`profile`、`file` 在当前进程内执行；`translate.run` 和
+`queue.run` 使用共享 `TaskSpec/TaskContract` 生成参数，并通过统一任务管理器启动隔离的 CLI 子进程。
+Skills 不会让 Agent 直接写翻译缓存，也不会自动代理 WebServer 路由。
 
-1. **直接调用（首选）**：进程内直接调用 AiNiee 内部 API
-2. **CLI 子进程**：通过 `uv run ainiee_cli.py` 子进程执行任务
-3. **WebServer 代理**：通过 WebServer HTTP API 代理调用
+`translate.run` 默认立即返回稳定的 `task_id`：
+
+```json
+{"success": true, "data": {"task_id": "...", "status": "running", "running": true}}
+```
+
+**查询与停止翻译：**
+```bash
+curl -X POST http://127.0.0.1:8766/skills/translate \
+  -H "Content-Type: application/json" \
+  -H "X-AiNiee-Skills-Auth: your-token" \
+  -d '{"action":"status", "task_id":"<task-id>"}'
+
+curl -X POST http://127.0.0.1:8766/skills/translate \
+  -H "Content-Type: application/json" \
+  -H "X-AiNiee-Skills-Auth: your-token" \
+  -d '{"action":"stop", "task_id":"<task-id>"}'
+```
+
+随后使用 `{"action":"status","task_id":"..."}` 查询，或使用
+`{"action":"stop","task_id":"..."}` 请求停止。状态可能为
+`starting`、`running`、`stopping`、`completed`、`failed`、`stopped`、`orphaned`；
+最近任务记录保存在 `Resource/automation_progress/skills_tasks.json`（只保存脱敏
+元数据，写入失败时仍可使用内存状态）。需要同步等待时可在请求中传入 `"wait": true`。
+
+`queue.run` 与 `translate.run` 使用相同的 `task_id`、`status`、`stop` 和 `wait` 协议；
+队列任务类型为 `queue`，进程内同类任务同时只能运行一个。
+
+文件、队列和任务输入路径默认限制在项目目录与系统临时目录；需要访问其他工作区时，
+可通过 `AINIEE_SKILLS_ALLOWED_PATHS`（按系统路径分隔符列出多个根目录）显式加入。仅在
+完全可信的本机自动化中使用 `AINIEE_SKILLS_ALLOW_EXTERNAL_PATHS=1` 放开路径边界。
+
+HTTP 与独立 CLI 的 Skill 参数都支持裸对象和 `{"args": {...}}` 包装对象；包装对象
+不得再混入同级字段，非对象 JSON 统一返回 `INVALID_ARGUMENTS`。
 
 ## MCP 与 Skills 对比
 
@@ -185,7 +261,7 @@ Skills 支持三种执行模式，自动选择：
 | 依赖 | mcp、fastapi、uvicorn | 仅标准库 |
 | 传输层 | stdio / streamable-http / SSE | HTTP |
 | 路由发现 | 自动（全部 /api/*） | 手动精选 |
-| 执行模式 | WebServer 代理 | 直接 / CLI / WebServer |
+| 执行模式 | WebServer 代理 | 进程内 Skill / CLI 子进程 |
 | 默认端口 | 8765 | 8766 |
 
 ## 扩展：添加新的 Skill

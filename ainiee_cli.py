@@ -111,6 +111,7 @@ class CLIMenu:
         self._crash_handler = None
         self._web_runtime_bridge = None
         self._mcp_runtime_bridge = None
+        self._skills_runtime_bridge = None
         self.runtime_config_overrides = {}
         self._command_mode_runner = None
         self._export_flow = None
@@ -140,6 +141,8 @@ class CLIMenu:
         self.web_server_thread = None
         self.mcp_server_process = None
         self.mcp_server_active = False
+        self.skills_server = None
+        self.skills_server_active = False
 
         # 操作记录器 (必须在 _check_web_server_dist 之前初始化，因为 display_banner 会使用它)
         self.operation_logger = OperationLogger()
@@ -350,6 +353,14 @@ class CLIMenu:
 
             self._mcp_runtime_bridge = MCPRuntimeBridge(self)
         return self._mcp_runtime_bridge
+
+    @property
+    def skills_runtime_bridge(self):
+        if self._skills_runtime_bridge is None:
+            from ModuleFolders.UserInterface.SkillsRuntimeBridge import SkillsRuntimeBridge
+
+            self._skills_runtime_bridge = SkillsRuntimeBridge(self)
+        return self._skills_runtime_bridge
 
     @property
     def command_mode_runner(self):
@@ -732,8 +743,12 @@ class CLIMenu:
 
             from ModuleFolders.Base.EventManager import EventManager
             EventManager.get_singleton().emit(Base.EVENT.TASK_STOP, {"reason": "stop"})
-        elif getattr(self, "web_server_active", False) or getattr(self, "mcp_server_active", False):
-            # WebServer / MCP 运行时，抛出 KeyboardInterrupt 让对应流程自行清理并返回菜单或退出
+        elif (
+            getattr(self, "web_server_active", False)
+            or getattr(self, "mcp_server_active", False)
+            or getattr(self, "skills_server_active", False)
+        ):
+            # 外部服务运行时，抛出 KeyboardInterrupt 让对应流程自行清理并返回菜单或退出
             raise KeyboardInterrupt
         else:
             sys.exit(0)
@@ -851,6 +866,8 @@ class CLIMenu:
             return "Start Web Server"
         if menu_key == "start_mcp_server" and label == f"menu_{menu_key}":
             return "Start MCP Server"
+        if menu_key == "start_skills_server" and label == f"menu_{menu_key}":
+            return "Start Skills Server"
         if menu_key == "task_queue" and label == f"menu_{menu_key}":
             return i18n.get("menu_task_queue")
         if menu_key == "automation" and label == f"menu_{menu_key}":
@@ -884,6 +901,7 @@ class CLIMenu:
             "update_web": lambda: self.update_manager.setup_web_server(manual=True),
             "start_web_server": self.start_web_server,
             "start_mcp_server": self.start_mcp_server,
+            "start_skills_server": self.start_skills_server,
             "manga_runtime_manager": self.manga_runtime_menu_handler.show,
         }
 
@@ -893,8 +911,8 @@ class CLIMenu:
     def _show_flat_main_menu(self) -> bool:
         self.display_banner()
         table = Table(show_header=False, box=None)
-        menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "automation", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "manga_runtime_manager", "acknowledgements"]
-        colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "bold yellow", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "cyan", "bold yellow"]
+        menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "automation", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "start_skills_server", "manga_runtime_manager", "acknowledgements"]
+        colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "bold yellow", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "bold cyan", "cyan", "bold yellow"]
         actions = self._main_menu_actions()
 
         for i, (menu_key, color) in enumerate(zip(menus, colors), 1):
@@ -941,6 +959,7 @@ class CLIMenu:
                 ("plugin_settings", "cyan"),
                 ("start_web_server", "magenta"),
                 ("start_mcp_server", "bold magenta"),
+                ("start_skills_server", "bold cyan"),
             ]),
             ("main_menu_group_maintenance", "dim", [
                 ("qa", "yellow"),
@@ -2449,6 +2468,9 @@ class CLIMenu:
     def start_mcp_server(self):
         self.mcp_runtime_bridge.start_mcp_server()
 
+    def start_skills_server(self):
+        self.skills_runtime_bridge.start_skills_server()
+
     def _get_profiles_list(self, profiles_dir):
         return list_profile_names(profiles_dir)
 
@@ -2547,20 +2569,63 @@ def main():
         choices=['stdio', 'streamable-http', 'streamable_http', 'http', 'sse'],
         help="MCP transport mode when task is 'mcp'",
     )
+    parser.add_argument(
+        '--skills',
+        action='store_true',
+        help="Shortcut for launching the Skills HTTP server.",
+    )
+    parser.add_argument(
+        '--skills-host', '--host', dest='skills_host',
+        help="Skills HTTP bind host override.",
+    )
+    parser.add_argument(
+        '--skills-port', '--port', dest='skills_port', type=int,
+        help="Skills HTTP port override.",
+    )
+    parser.add_argument(
+        '--skills-auth-token', '--auth-token', dest='skills_auth_token',
+        help="Skills HTTP auth token override.",
+    )
+    parser.add_argument(
+        '--skills-allow-remote-access', '--allow-remote-access',
+        action='store_true',
+        help="Allow a one-run non-loopback Skills bind; HTTP authentication remains required.",
+    )
+    parser.add_argument(
+        '--skills-no-auth', '--no-auth',
+        action='store_true',
+        help="Disable Skills HTTP auth for a trusted local-only run.",
+    )
+    parser.add_argument(
+        '--skills-allow-origin', '--allow-origin', dest='skills_allow_origin',
+        help="Optional Skills CORS origin.",
+    )
 
     # 文本处理逻辑
+    parser.add_argument('--mode', dest='agent_mode', choices=['plan', 'run'], default=None, help='Agent mode: plan or run.')
+    parser.add_argument('--format', dest='agent_format', choices=['text', 'jsonl'], default='text', help='Agent output format.')
+
     parser.add_argument('--lines', type=int, help="Lines per request (Line Mode)")
     parser.add_argument('--tokens', type=int, help="Tokens per request (Token Mode)")
     parser.add_argument('--pre-lines', type=int, help="Context lines to include")
 
     args = parser.parse_args()
-    _consume_web_task_api_key(args)
 
     raw_task = args.task
     raw_task_name = str(raw_task or '').strip().lower()
+    # A worker credential is only meaningful for a translation subprocess.  A
+    # Skills/MCP service can be started in the same worker environment, but it
+    # must not turn the inherited task credential into a rejected ``--api-key``
+    # argument (or keep it available to unrelated child processes).
+    if raw_task_name in {'mcp', 'skills', 'skill', 'agent'} or args.skills:
+        os.environ.pop(WEB_TASK_API_KEY_ENV, None)
+        args._task_api_key_ephemeral = False
+    else:
+        _consume_web_task_api_key(args)
+
     if raw_task is not None:
-        if raw_task_name == 'mcp':
-            args.task = 'mcp'
+        if raw_task_name in {'mcp', 'skills', 'skill', 'agent'}:
+            args.task = 'agent' if raw_task_name == 'agent' else ('mcp' if raw_task_name == 'mcp' else 'skills')
         else:
             try:
                 args.task = normalize_task_name(raw_task)
@@ -2595,6 +2660,34 @@ def main():
     if args.mcp or args.mcp_stdio or args.mcp_http:
         args.task = 'mcp'
 
+    if args.skills and args.task and args.task != 'skills':
+        parser.error("--skills cannot be combined with a different task.")
+    if args.skills and any((args.mcp, args.mcp_stdio, args.mcp_http)):
+        parser.error("--skills cannot be combined with MCP shortcut flags.")
+    if args.skills:
+        args.task = 'skills'
+
+    # Skills server overrides are accepted as aliases for the standalone
+    # ``Tools/Skills/server.py`` entry point, but must never be silently
+    # ignored by an ordinary translation/MCP/TUI invocation.
+    skills_override_flags = [
+        flag
+        for flag, value in (
+            ('--skills-host/--host', args.skills_host),
+            ('--skills-port/--port', args.skills_port),
+            ('--skills-auth-token/--auth-token', args.skills_auth_token),
+            ('--skills-allow-origin/--allow-origin', args.skills_allow_origin),
+            ('--skills-allow-remote-access/--allow-remote-access', args.skills_allow_remote_access),
+            ('--skills-no-auth/--no-auth', args.skills_no_auth),
+        )
+        if value not in (None, False, '')
+    ]
+    if skills_override_flags and args.task != 'skills':
+        parser.error(
+            'Skills server options require the skills task: '
+            + ', '.join(skills_override_flags)
+        )
+
     if args.manga_runtime_check:
         if args.task and args.task not in {'translate', 'manga'}:
             parser.error("--manga-runtime-check can only be used with translate/manga tasks.")
@@ -2627,6 +2720,10 @@ def main():
             import Tools.WebServer.web_server as ws_module
             ws_module.stop_server()
         except:
+            pass
+        try:
+            cli.skills_runtime_bridge.stop_skills_server()
+        except Exception:
             pass
         sys.exit(exit_code)
 

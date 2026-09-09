@@ -3,7 +3,14 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List
 
-from Tools.Skills.skill_base import Skill, SkillMeta, SkillParameter, SkillResult
+from Tools.Skills.skill_base import (
+    Skill,
+    SkillMeta,
+    SkillParameter,
+    SkillResult,
+    normalize_skill_action,
+    reject_unknown_skill_fields,
+)
 from Tools.Skills.skills.common import (
     PROFILES_PATH,
     atomic_write_json,
@@ -16,6 +23,28 @@ from Tools.Skills.skills.common import (
 
 
 class ProfileSkill(Skill):
+    @staticmethod
+    def _profile_argument(
+        args: Dict[str, Any], name: str, *, default: str | None = None
+    ) -> str | SkillResult:
+        value = args.get(name)
+        if value is None or value == "":
+            if default is not None:
+                return default
+            return SkillResult.fail(
+                f"Missing required parameter: {name}", "MISSING_PARAM"
+            )
+        if not isinstance(value, str):
+            return SkillResult.fail(f"{name} must be a string.", "INVALID_ARGUMENTS")
+        value = value.strip()
+        if not value:
+            if default is not None:
+                return default
+            return SkillResult.fail(
+                f"Missing required parameter: {name}", "MISSING_PARAM"
+            )
+        return value
+
     @property
     def meta(self) -> SkillMeta:
         return SkillMeta(
@@ -56,7 +85,14 @@ class ProfileSkill(Skill):
         return list_profile_names(PROFILES_PATH)
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        action = (args.get("action") or "").strip().lower()
+        invalid = reject_unknown_skill_fields(
+            args, {"action", "name", "base"}, skill_name="profile"
+        )
+        if invalid:
+            return invalid
+        action = normalize_skill_action(args)
+        if action is None:
+            return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
         if action == "list":
             profiles = self._list_profiles()
@@ -78,9 +114,9 @@ class ProfileSkill(Skill):
             })
 
         if action == "switch":
-            name = (args.get("name") or "").strip()
-            if not name:
-                return SkillResult.fail("Missing required parameter: name", "MISSING_PARAM")
+            name = self._profile_argument(args, "name")
+            if isinstance(name, SkillResult):
+                return name
             try:
                 _, name = resolve_profile_path(PROFILES_PATH, name)
             except ValueError as e:
@@ -105,9 +141,9 @@ class ProfileSkill(Skill):
                 return SkillResult.fail(f"Failed to save config: {e}", "WRITE_ERROR")
 
         if action == "create":
-            name = (args.get("name") or "").strip()
-            if not name:
-                return SkillResult.fail("Missing required parameter: name", "MISSING_PARAM")
+            name = self._profile_argument(args, "name")
+            if isinstance(name, SkillResult):
+                return name
             try:
                 profile_path, name = resolve_profile_path(PROFILES_PATH, name)
             except ValueError as e:
@@ -115,7 +151,9 @@ class ProfileSkill(Skill):
             if os.path.exists(profile_path):
                 return SkillResult.fail(f"Profile '{name}' already exists.", "ALREADY_EXISTS")
 
-            base = (args.get("base") or "default").strip()
+            base = self._profile_argument(args, "base", default="default")
+            if isinstance(base, SkillResult):
+                return base
             try:
                 base_path, base = resolve_profile_path(PROFILES_PATH, base)
             except ValueError as e:
@@ -139,9 +177,9 @@ class ProfileSkill(Skill):
             })
 
         if action == "delete":
-            name = (args.get("name") or "").strip()
-            if not name:
-                return SkillResult.fail("Missing required parameter: name", "MISSING_PARAM")
+            name = self._profile_argument(args, "name")
+            if isinstance(name, SkillResult):
+                return name
             try:
                 profile_path, name = resolve_profile_path(PROFILES_PATH, name)
             except ValueError as e:

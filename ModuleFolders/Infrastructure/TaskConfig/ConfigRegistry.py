@@ -1167,6 +1167,39 @@ register_config(ConfigItem(
     category="advanced"
 ))
 
+# --- Skills Server 配置 (ADVANCED) ---
+register_config(ConfigItem(
+    key="skills_server_port",
+    default=8766,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.INT,
+    i18n_key="setting_skills_server_port",
+    i18n_desc_key="setting_skills_server_port_desc",
+    min_value=1,
+    max_value=65535,
+    category="advanced"
+))
+
+register_config(ConfigItem(
+    key="skills_require_auth",
+    default=True,
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_skills_require_auth",
+    i18n_desc_key="setting_skills_require_auth_desc",
+    category="advanced"
+))
+
+register_config(ConfigItem(
+    key="skills_allow_origin",
+    default="",
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.STRING,
+    i18n_key="setting_skills_allow_origin",
+    i18n_desc_key="setting_skills_allow_origin_desc",
+    category="advanced"
+))
+
 register_config(ConfigItem(
     key="enable_background_prewarm",
     default=True,
