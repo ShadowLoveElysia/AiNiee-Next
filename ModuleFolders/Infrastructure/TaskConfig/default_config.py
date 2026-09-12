@@ -77,6 +77,7 @@ DEFAULT_CONFIG = {
     "enable_bilingual_output": False,
     "bilingual_text_order": "translation_first",
     "epub_language_update_mode": "auto",
+    "epub_layout_mode": "off",
     "polishing_mode_selection": "translated_text_polish",
     "polishing_pre_line_counts": 2,
     "proofread_report_mode": "archive",

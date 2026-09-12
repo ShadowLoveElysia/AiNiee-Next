@@ -87,9 +87,11 @@ jobs:
           zip -r docker-deploy.zip deploy_package/
 
       - name: Upload Docker Assets to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'release' && github.event.release.tag_name != ''
+        uses: softprops/action-gh-release@v2
         with:
+          # release 事件的 github.ref 可能是 refs/heads/main；始终使用事件携带的标签。
+          tag_name: ${{ github.event.release.tag_name }}
           files: docker-deploy.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -152,6 +152,11 @@ class FileOutputer:
                 "bilingual_order": bilingual_order,
                 "input_root": input_path,
                 "epub_language_update_mode": config.get("epub_language_update_mode", "auto"),
+                "epub_layout_mode": config.get("epub_layout_mode", "off"),
+                "epub_layout_direction": {
+                    "vertical_to_horizontal": "horizontal",
+                    "horizontal_to_vertical": "vertical",
+                }.get(config.get("epub_layout_mode", "off"), "unchanged"),
                 "interface_language": config.get("interface_language", "zh_CN"),
             }
             base_args.update(kwargs)

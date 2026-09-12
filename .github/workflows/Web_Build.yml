@@ -29,7 +29,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: Tools/WebServer/package-lock.json
 
@@ -67,9 +67,11 @@ jobs:
         run: zip -r ../../web-dist.zip dist/
 
       - name: Upload Release Build to Official Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && github.event.release.tag_name != ''
         uses: softprops/action-gh-release@v2
         with:
+          # release 事件的 github.ref 可能是 refs/heads/main；始终使用事件携带的标签。
+          tag_name: ${{ github.event.release.tag_name }}
           files: web-dist.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

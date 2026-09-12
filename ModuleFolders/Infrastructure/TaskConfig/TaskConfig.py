@@ -154,6 +154,7 @@ class TaskConfig(Base):
         self.enable_bilingual_output = False # NEW: 是否启用双语输出
         self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
         self.epub_language_update_mode = "auto"
+        self.epub_layout_mode = "off"
         self.polishing_mode_selection = POLISH_TRANSLATED_TEXT # NEW: 润色模式选择
         self.polishing_pre_line_counts = 2 # NEW: 润色时获取上文的行数
         self.proofread_report_mode = "archive"

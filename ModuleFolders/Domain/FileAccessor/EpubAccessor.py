@@ -334,14 +334,75 @@ class EpubAccessor:
         self, content: dict[str, str], write_file_path: Path,
         source_file_path: Path,
         html_language: str = "",
+        layout_direction: str = "unchanged",
     ):
         if html_language:
             content = self._merge_language_updates(source_file_path, content, html_language)
+        if layout_direction in {"horizontal", "vertical"}:
+            content = self._merge_layout_updates(source_file_path, content, layout_direction)
         normalized_content = {
             filename: self._normalize_output_text(filename, file_content)
             for filename, file_content in content.items()
         }
         ZipUtil.replace_in_zip_file(source_file_path, write_file_path, normalized_content)
+
+    def _merge_layout_updates(self, source_file_path: Path, content: dict[str, str], layout_direction: str):
+        """Apply a portable writing-mode override to EPUB XHTML and spine metadata.
+
+        Inline declarations intentionally win over stylesheet defaults while leaving
+        the original document structure and unrelated resources untouched.
+        """
+        updated_content = dict(content)
+        with zipfile.ZipFile(source_file_path, "r") as zipf:
+            files = {item.filename: item for item in zipf.infolist()}
+            for filename, file_info in files.items():
+                lower_name = filename.lower()
+                original = updated_content.get(filename)
+                if original is None:
+                    original = self._read_text(zipf, file_info)
+                if lower_name.endswith(self.HTML_LANGUAGE_EXTENSIONS):
+                    updated_content[filename] = self._update_layout_html(str(original), layout_direction)
+                elif lower_name.endswith(self.OPF_EXTENSION):
+                    updated_content[filename] = self._update_layout_opf(str(original), layout_direction)
+        return updated_content
+
+    def _update_layout_html(self, content: str, layout_direction: str) -> str:
+        if not content:
+            return content
+        writing_mode = "vertical-rl" if layout_direction == "vertical" else "horizontal-tb"
+        direction = "rtl" if layout_direction == "vertical" else "ltr"
+        declarations = f"writing-mode:{writing_mode}; -webkit-writing-mode:{writing_mode}; direction:{direction}; text-orientation:mixed;"
+        def replace_tag(match):
+            tag = match.group(0)
+            style_match = re.search(r"\s+style\s*=\s*([\"'])(.*?)\1", tag, flags=re.IGNORECASE | re.DOTALL)
+            if style_match:
+                existing = style_match.group(2).strip()
+                if existing and not existing.endswith(";"):
+                    existing += ";"
+                replacement = f' style={style_match.group(1)}{existing} {declarations}{style_match.group(1)}'
+                return tag[:style_match.start()] + replacement + tag[style_match.end():]
+            return tag[:-1].rstrip() + f' style="{declarations}">'
+
+        updated = re.sub(r"<(?:html|body)\b[^>]*>", replace_tag, content, flags=re.IGNORECASE)
+        return updated
+
+    def _update_layout_opf(self, content: str, layout_direction: str) -> str:
+        if not content:
+            return content
+        value = "rtl" if layout_direction == "vertical" else "ltr"
+        # EPUB 3 uses page-progression-direction on spine; EPUB 2 readers ignore it.
+        spine_match = re.search(r"<spine\b[^>]*>", content, flags=re.IGNORECASE)
+        if not spine_match:
+            return content
+        spine_tag = spine_match.group(0)
+        if re.search(r"\bpage-progression-direction\s*=", spine_tag, flags=re.IGNORECASE):
+            updated = re.sub(
+                r"(\bpage-progression-direction\s*=\s*[\"']).*?([\"'])",
+                rf"\g<1>{value}\2", spine_tag, count=1, flags=re.IGNORECASE,
+            )
+        else:
+            updated = spine_tag[:-1].rstrip() + f' page-progression-direction="{value}">'
+        return content[:spine_match.start()] + updated + content[spine_match.end():]
 
     def _merge_language_updates(self, source_file_path: Path, content: dict[str, str], html_language: str):
         updated_content = dict(content)

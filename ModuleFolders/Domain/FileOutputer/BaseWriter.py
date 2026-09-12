@@ -40,6 +40,9 @@ class OutputConfig:
     input_root: Path = None
     bilingual_order: BilingualOrder = field(default=BilingualOrder.TRANSLATION_FIRST)  # 双语排序配置
     epub_language_update_mode: str = "auto"
+    epub_layout_mode: str = "off"
+    # Optional EPUB writing-mode override.  ``unchanged`` preserves the source.
+    epub_layout_direction: str = "unchanged"
     interface_language: str = "zh_CN"
 
     def __post_init__(self):

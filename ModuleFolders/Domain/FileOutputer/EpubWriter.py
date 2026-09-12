@@ -88,6 +88,7 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
             translation_file_path,
             source_file_path,
             html_language=self._resolve_epub_language(),
+            layout_direction=getattr(self.output_config, "epub_layout_direction", "unchanged"),
         )
 
     def _resolve_epub_language(self):

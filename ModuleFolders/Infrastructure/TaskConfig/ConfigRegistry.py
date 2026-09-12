@@ -477,6 +477,17 @@ register_config(ConfigItem(
     category="utility"
 ))
 
+register_config(ConfigItem(
+    key="epub_layout_mode",
+    default="off",
+    level=ConfigLevel.USER,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_epub_layout_mode",
+    i18n_desc_key="setting_epub_layout_mode_desc",
+    choices=["off", "vertical_to_horizontal", "horizontal_to_vertical"],
+    category="utility"
+))
+
 # --- 提示词功能开关 (USER) ---
 register_config(ConfigItem(
     key="pre_translation_switch",
