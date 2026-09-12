@@ -86,6 +86,7 @@ class ExportFlow:
                     "translated_suffix": config.output_filename_suffix,
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
+                    "epub_layout_mode": getattr(config, "epub_layout_mode", "off"),
                 }
                 self.host.file_outputer.output_translated_content(
                     project,

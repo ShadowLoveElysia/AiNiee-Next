@@ -49,6 +49,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev-build
+          # Avoid the action defaulting target_commitish to refs/heads/main when
+          # updating the shared development release.
+          target_commitish: ${{ github.sha }}
           name: "Web 网页端 - 开发预览版"
           body: |
             这是由 GitHub Actions 自动生成的最新开发版编译产物。

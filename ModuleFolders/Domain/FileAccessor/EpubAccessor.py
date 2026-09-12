@@ -361,9 +361,32 @@ class EpubAccessor:
                 if original is None:
                     original = self._read_text(zipf, file_info)
                 if lower_name.endswith(self.HTML_LANGUAGE_EXTENSIONS):
-                    updated_content[filename] = self._update_layout_html(str(original), layout_direction)
+                    try:
+                        updated_content[filename] = self._update_layout_html(str(original), layout_direction)
+                    except Exception:
+                        # Layout conversion is best effort; a malformed auxiliary document
+                        # must not abort an otherwise valid EPUB export.
+                        updated_content[filename] = str(original)
                 elif lower_name.endswith(self.OPF_EXTENSION):
-                    updated_content[filename] = self._update_layout_opf(str(original), layout_direction)
+                    try:
+                        updated_content[filename] = self._update_layout_opf(str(original), layout_direction)
+                    except Exception:
+                        updated_content[filename] = str(original)
+                elif lower_name.endswith(".css"):
+                    # Keep stylesheet text visible to the post-pass detector;
+                    # ZipUtil still writes it byte-for-byte when unchanged.
+                    updated_content[filename] = str(original)
+
+        # Some EPUBs contain stylesheet rules marked !important.  If the direct
+        # rewrite above cannot disarm those rules, inject a private fallback
+        # stylesheet with stronger declarations.  This is intentionally silent.
+        if self._layout_conversion_needs_fallback(updated_content, layout_direction):
+            for filename, value in list(updated_content.items()):
+                if filename.lower().endswith(self.HTML_LANGUAGE_EXTENSIONS):
+                    try:
+                        updated_content[filename] = self._inject_layout_fallback(value, layout_direction)
+                    except Exception:
+                        pass
         return updated_content
 
     def _update_layout_html(self, content: str, layout_direction: str) -> str:
@@ -371,7 +394,32 @@ class EpubAccessor:
             return content
         writing_mode = "vertical-rl" if layout_direction == "vertical" else "horizontal-tb"
         direction = "rtl" if layout_direction == "vertical" else "ltr"
-        declarations = f"writing-mode:{writing_mode}; -webkit-writing-mode:{writing_mode}; direction:{direction}; text-orientation:mixed;"
+        declarations = (
+            f"writing-mode:{writing_mode} !important; "
+            f"-webkit-writing-mode:{writing_mode} !important; "
+            f"direction:{direction} !important; text-orientation:mixed !important;"
+        )
+
+        # Rewrite declarations embedded in <style> blocks and inline styles so
+        # source !important rules cannot keep the opposite orientation active.
+        opposite_values = ("vertical-rl", "vertical-lr") if layout_direction == "horizontal" else ("horizontal-tb", "horizontal-bt", "horizontal-lr")
+        value_pattern = "|".join(re.escape(value) for value in opposite_values)
+        updated = re.sub(
+            rf"((?:-epub-|-webkit-)?writing-mode\s*:\s*){value_pattern}",
+            rf"\g<1>{writing_mode}",
+            content,
+            flags=re.IGNORECASE,
+        )
+
+        # Remove common orientation marker classes used by Japanese EPUBs.
+        marker = "vrtl" if layout_direction == "horizontal" else "hrtl"
+        updated = re.sub(
+            rf"(\bclass\s*=\s*[\"'][^\"']*)\b{marker}\b",
+            r"\1",
+            updated,
+            flags=re.IGNORECASE,
+        )
+
         def replace_tag(match):
             tag = match.group(0)
             style_match = re.search(r"\s+style\s*=\s*([\"'])(.*?)\1", tag, flags=re.IGNORECASE | re.DOTALL)
@@ -383,14 +431,33 @@ class EpubAccessor:
                 return tag[:style_match.start()] + replacement + tag[style_match.end():]
             return tag[:-1].rstrip() + f' style="{declarations}">'
 
-        updated = re.sub(r"<(?:html|body)\b[^>]*>", replace_tag, content, flags=re.IGNORECASE)
+        updated = re.sub(r"<(?:html|body)\b[^>]*>", replace_tag, updated, flags=re.IGNORECASE)
         return updated
 
     def _update_layout_opf(self, content: str, layout_direction: str) -> str:
         if not content:
             return content
         value = "rtl" if layout_direction == "vertical" else "ltr"
+        primary_mode = "vertical-rl" if layout_direction == "vertical" else "horizontal-lr"
         # EPUB 3 uses page-progression-direction on spine; EPUB 2 readers ignore it.
+        # EPUB 3 metadata used by several readers to choose the initial mode.
+        def update_primary_meta(match):
+            tag = match.group(0)
+            return re.sub(
+                r"(\bcontent\s*=\s*[\"']).*?([\"'])",
+                rf"\g<1>{primary_mode}\2",
+                tag,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+        content = re.sub(
+            r"<meta\b[^>]*(?:property|name)\s*=\s*[\"']primary-writing-mode[\"'][^>]*>",
+            update_primary_meta,
+            content,
+            flags=re.IGNORECASE,
+        )
+
         spine_match = re.search(r"<spine\b[^>]*>", content, flags=re.IGNORECASE)
         if not spine_match:
             return content
@@ -403,6 +470,37 @@ class EpubAccessor:
         else:
             updated = spine_tag[:-1].rstrip() + f' page-progression-direction="{value}">'
         return content[:spine_match.start()] + updated + content[spine_match.end():]
+
+    def _layout_conversion_needs_fallback(self, content: dict[str, str], layout_direction: str) -> bool:
+        """Detect an opposite writing-mode that survived the direct rewrite."""
+        opposite = ("vertical-rl", "vertical-lr") if layout_direction == "horizontal" else ("horizontal-tb", "horizontal-bt", "horizontal-lr")
+        pattern = re.compile(
+            r"(?:writing-mode|primary-writing-mode)[^>\r\n]{0,160}\b(?:"
+            + "|".join(re.escape(v) for v in opposite)
+            + r")\b",
+            re.IGNORECASE,
+        )
+        return any(
+            pattern.search(value)
+            for filename, value in content.items()
+            if filename.lower().endswith(self.HTML_LANGUAGE_EXTENSIONS + (self.OPF_EXTENSION, ".css"))
+        )
+
+    def _inject_layout_fallback(self, content: str, layout_direction: str) -> str:
+        writing_mode = "vertical-rl" if layout_direction == "vertical" else "horizontal-tb"
+        direction = "rtl" if layout_direction == "vertical" else "ltr"
+        fallback = (
+            '<style id="ainiee-layout-fallback">'
+            f"html, html body, body, body *, html.vrtl, html.vrtl body, html.vrtl body * {{ writing-mode:{writing_mode} !important; "
+            f"-webkit-writing-mode:{writing_mode} !important; direction:{direction} !important; }}"
+            "</style>"
+        )
+        if re.search(r"id\s*=\s*[\"']ainiee-layout-fallback[\"']", content, re.IGNORECASE):
+            return content
+        head_match = re.search(r"</head\s*>", content, flags=re.IGNORECASE)
+        if head_match:
+            return content[:head_match.start()] + fallback + content[head_match.start():]
+        return fallback + content
 
     def _merge_language_updates(self, source_file_path: Path, content: dict[str, str], html_language: str):
         updated_content = dict(content)
