@@ -1069,6 +1069,8 @@
     "warning_remote_access_disabled": "LAN およびリモートアクセスは現在無効です。LAN／リモートで使用する場合は、設定で LAN／リモートアクセスを有効にしてください。",
     "setting_webserver_port": "WebServerポート",
     "setting_webserver_port_desc": "WebServerのポート番号 (1-65535)",
+    "setting_webserver_allowed_origins": "WebServer 許可オリジン",
+    "setting_webserver_allowed_origins_desc": "リバースプロキシで信頼する HTTP/HTTPS オリジンを任意でカンマ区切り指定します。",
     "setting_mcp_server_port": "MCP サービスポート",
     "setting_mcp_server_port_desc": "MCP サービスが待ち受けるポート番号 (1-65535)。変更後は、MCP クライアント側の接続ルートも通常は更新が必要です。",
     "setting_skills_server_port": "Skills サービスポート",

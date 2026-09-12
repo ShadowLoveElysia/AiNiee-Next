@@ -1113,6 +1113,8 @@
     "warning_remote_access_disabled": "El acceso LAN y remoto está desactivado. Si lo necesitas, activa Acceso LAN / remoto en la configuración.",
     "setting_webserver_port": "Puerto de WebServer",
     "setting_webserver_port_desc": "Número de puerto para WebServer (1-65535)",
+    "setting_webserver_allowed_origins": "Orígenes permitidos de WebServer",
+    "setting_webserver_allowed_origins_desc": "Orígenes HTTP/HTTPS de confianza opcionales para un proxy inverso, separados por comas.",
     "setting_mcp_server_port": "Puerto del servidor MCP",
     "setting_mcp_server_port_desc": "Número de puerto del servidor MCP (1-65535). Tras cambiarlo, normalmente también hay que actualizar la ruta MCP en el cliente.",
     "setting_skills_server_port": "Puerto del servidor Skills",

@@ -432,7 +432,6 @@ class PromptBuilder(Base):
     def find_glossary_matches(glossary_data: list, full_text: str) -> list:
         result = []
         seen_keys = set()
-        full_text_lower = None
 
         for item in glossary_data:
             if not isinstance(item, dict):
@@ -440,12 +439,10 @@ class PromptBuilder(Base):
             src = item.get("src", "")
             if not src:
                 continue
-            if PromptBuilder._should_ignore_glossary_case(src):
-                if full_text_lower is None:
-                    full_text_lower = full_text.lower()
-                if src.lower() not in full_text_lower:
-                    continue
-            elif src not in full_text:
+            # Use the same boundary and inflection-aware matcher for the
+            # preflight check; a literal substring check would skip entries
+            # such as ``book`` when the text only contains ``books``.
+            if not any(PromptBuilder._iter_glossary_term_matches(full_text, src)):
                 continue
 
             found_texts = set(match.group(0) for match in PromptBuilder._iter_glossary_term_matches(full_text, src))
@@ -465,11 +462,6 @@ class PromptBuilder(Base):
     def glossary_term_exists(text: str, term: str) -> bool:
         if not text or not term:
             return False
-        if PromptBuilder._should_ignore_glossary_case(term):
-            if term.lower() not in text.lower():
-                return False
-        elif term not in text:
-            return False
         return any(PromptBuilder._iter_glossary_term_matches(text, term))
 
     def _iter_glossary_term_matches(text: str, term: str):
@@ -487,19 +479,96 @@ class PromptBuilder(Base):
         return any(char.isascii() and char.isalpha() for char in term)
 
     def _build_glossary_term_pattern(term: str) -> str:
-        escaped = re.escape(term)
-        if not any(char.isascii() and (char.isalnum() or char in "_+-#.") for char in term):
-            return escaped
+        variants = PromptBuilder._english_glossary_variants(term)
+        if not variants:
+            variants = (term,)
 
-        prefix_chars = r"A-Za-z0-9_"
-        suffix_chars = r"A-Za-z0-9_"
-        if term[0].isascii() and not (term[0].isalnum() or term[0] == "_"):
-            prefix_chars += re.escape(term[0])
-        if term[-1].isascii() and not (term[-1].isalnum() or term[-1] == "_"):
-            suffix_chars += re.escape(term[-1])
-        prefix = rf"(?<![{prefix_chars}])"
-        suffix = rf"(?![{suffix_chars}])"
-        return f"{prefix}{escaped}{suffix}"
+        patterns = []
+        for variant in variants:
+            escaped = re.escape(variant)
+            if not any(char.isascii() and (char.isalnum() or char in "_+-#.") for char in variant):
+                patterns.append(escaped)
+                continue
+
+            prefix_chars = r"A-Za-z0-9_"
+            suffix_chars = r"A-Za-z0-9_"
+            if variant[0].isascii() and not (variant[0].isalnum() or variant[0] == "_"):
+                prefix_chars += re.escape(variant[0])
+            if variant[-1].isascii() and not (variant[-1].isalnum() or variant[-1] == "_"):
+                suffix_chars += re.escape(variant[-1])
+            prefix = rf"(?<![{prefix_chars}])"
+            suffix = rf"(?![{suffix_chars}])"
+            patterns.append(f"{prefix}{escaped}{suffix}")
+
+        if len(patterns) == 1:
+            return patterns[0]
+        return "(?:" + "|".join(patterns) + ")"
+
+    @staticmethod
+    @lru_cache(maxsize=4096)
+    def _english_glossary_variants(term: str) -> tuple[str, ...]:
+        """Return conservative English inflections for a single ASCII term.
+
+        Glossary matching still uses exact word boundaries. Inflections are only
+        generated for plain English words, so Japanese, Chinese, mixed-script,
+        and phrase entries retain their previous literal matching behaviour.
+        """
+        if not term or not re.fullmatch(r"[A-Za-z]+", term):
+            return ()
+
+        word = term.lower()
+        if len(word) < 3:
+            return ()
+
+        variants = {term}
+        irregular = {
+            "child": "children",
+            "person": "people",
+            "man": "men",
+            "woman": "women",
+            "mouse": "mice",
+            "goose": "geese",
+            "tooth": "teeth",
+            "foot": "feet",
+            "ox": "oxen",
+        }
+        if word in irregular:
+            variants.add(irregular[word])
+
+        if word.endswith("is"):
+            variants.add(word[:-2] + "es")
+        elif word.endswith(("s", "x", "z", "ch", "sh")):
+            variants.add(word + "es")
+        elif word.endswith("y") and len(word) > 1 and word[-2] not in "aeiou":
+            variants.add(word[:-1] + "ies")
+        else:
+            variants.add(word + "s")
+
+        if word.endswith("y") and len(word) > 1 and word[-2] not in "aeiou":
+            variants.add(word[:-1] + "ied")
+        elif word.endswith("e"):
+            variants.add(word + "d")
+        else:
+            variants.add(word + "ed")
+
+        if word.endswith("e") and not word.endswith(("ee", "ye")):
+            variants.add(word[:-1] + "ing")
+        else:
+            variants.add(word + "ing")
+            # Handle frequent one-syllable CVC verbs (run -> running).
+            if (
+                len(word) >= 3
+                and word[-1] not in "wxy"
+                and word[-1] not in "aeiou"
+                and word[-2] in "aeiou"
+                and word[-3] not in "aeiou"
+            ):
+                variants.add(word + word[-1] + "ing")
+
+        # Preserve the user's spelling for the exact entry; generated forms
+        # are lower-case and matching remains case-insensitive.
+        variants.discard(word)
+        return tuple(dict.fromkeys((term, *sorted(variants))))
 
     def normalize_translation_memory_source(text: str, min_length: int = 8) -> str:
         normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()

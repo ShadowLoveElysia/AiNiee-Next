@@ -1097,6 +1097,8 @@
     "warning_remote_access_disabled": "LAN and remote access are currently disabled. If you need LAN or remote access, enable LAN / Remote Access in Settings.",
     "setting_webserver_port": "WebServer Port",
     "setting_webserver_port_desc": "Port number for WebServer (1-65535)",
+    "setting_webserver_allowed_origins": "WebServer allowed origins",
+    "setting_webserver_allowed_origins_desc": "Optional comma-separated HTTPS/HTTP origins trusted behind a reverse proxy.",
     "setting_mcp_server_port": "MCP Server Port",
     "setting_mcp_server_port_desc": "Port number for the MCP server (1-65535). After changing it, the MCP route in your client usually needs to be updated as well.",
     "setting_skills_server_port": "Skills Server Port",

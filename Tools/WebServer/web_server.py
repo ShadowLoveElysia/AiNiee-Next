@@ -823,6 +823,10 @@ WEB_SESSION_TOKEN = os.environ.get("AINIEE_WEB_SESSION_TOKEN", "") or secrets.to
 MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
 INTERNAL_API_TOKEN = os.environ.get(INTERNAL_AUTH_ENV, "") or secrets.token_urlsafe(32)
 REMOTE_ACCESS_ENABLED = False
+# Explicit origins are useful when the Web UI is published behind a TLS
+# reverse proxy.  They are intentionally opt-in; an empty value keeps the
+# strict same-origin check below.
+WEB_ALLOWED_ORIGINS_ENV = "AINIEE_WEB_ALLOWED_ORIGINS"
 PUBLIC_API_ROUTES = {
     ("POST", "/api/session/bootstrap"),
     ("GET", "/api/version"),
@@ -867,6 +871,68 @@ def _has_valid_mcp_auth(request: Request) -> bool:
 def _has_valid_internal_auth(request: Request) -> bool:
     token = request.headers.get(INTERNAL_AUTH_HEADER, "")
     return bool(token) and secrets.compare_digest(token, INTERNAL_API_TOKEN)
+
+
+def _normalise_origin(value: str) -> str:
+    """Normalise an origin for exact, scheme/host/port comparisons."""
+    return str(value or "").strip().rstrip("/").lower()
+
+
+def _configured_web_origins() -> set[str]:
+    """Return explicitly trusted Web UI origins from env/configuration."""
+    values = os.environ.get(WEB_ALLOWED_ORIGINS_ENV, "")
+    try:
+        # The setting is stored with the rest of the WebServer options.  Do
+        # not make bootstrap depend on a valid config file: an empty set
+        # simply falls back to the strict same-origin path.
+        _, root_config = get_config_mode()
+        configured = load_effective_config(root_config=root_config, create_missing=False)
+        values = values or configured.get("webserver_allowed_origins", "")
+    except Exception:
+        pass
+    if isinstance(values, (list, tuple, set)):
+        candidates = values
+    else:
+        candidates = re.split(r"[,\n]", str(values or ""))
+    return {_normalise_origin(item) for item in candidates if _normalise_origin(item)}
+
+
+def _trusted_proxy_request(request: Request) -> bool:
+    """Trust forwarded host/scheme only from a local proxy or explicit opt-in."""
+    flag = os.environ.get("AINIEE_TRUST_PROXY_HEADERS", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    client_host = (request.client.host if request.client else "") or ""
+    return _is_loopback_bind_host(client_host)
+
+
+def _request_public_origin(request: Request) -> str:
+    """Build the browser-visible origin, honoring trusted proxy headers."""
+    scheme = request.url.scheme
+    host = request.headers.get("host", "")
+    if _trusted_proxy_request(request):
+        forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+        forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+        if forwarded_scheme in {"http", "https"}:
+            scheme = forwarded_scheme
+        if forwarded_host and " " not in forwarded_host and "\t" not in forwarded_host:
+            host = forwarded_host
+    if not host or any(char in host for char in "\r\n"):
+        return ""
+    return _normalise_origin(f"{scheme}://{host}")
+
+
+def _request_public_scheme(request: Request) -> str:
+    origin = _request_public_origin(request)
+    return origin.split(":", 1)[0] if ":" in origin else request.url.scheme
+
+
+def _request_bind_host(request: Request) -> str:
+    """Return the address the ASGI server received the connection on."""
+    server = request.scope.get("server")
+    if isinstance(server, (tuple, list)) and server:
+        return str(server[0] or "")
+    return request.url.hostname or ""
 
 
 def _ensure_api_access(request: Request) -> None:
@@ -918,12 +984,13 @@ async def web_session_middleware(request: Request, call_next):
 @app.post("/api/session/bootstrap", status_code=204)
 async def bootstrap_web_session(request: Request, response: Response):
     """Establish the short-lived browser channel before accessing sensitive APIs."""
-    origin = request.headers.get("origin", "").rstrip("/")
-    expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}".rstrip("/")
+    origin = _normalise_origin(request.headers.get("origin", ""))
+    expected_origin = _request_public_origin(request)
+    allowed_origins = _configured_web_origins()
+    origin_is_allowed = bool(origin) and (origin == expected_origin or origin in allowed_origins)
     if (
-        (not REMOTE_ACCESS_ENABLED and not _is_loopback_bind_host(request.url.hostname or ""))
-        or not origin
-        or origin != expected_origin
+        (not REMOTE_ACCESS_ENABLED and not _is_loopback_bind_host(_request_bind_host(request)))
+        or not origin_is_allowed
     ):
         raise HTTPException(status_code=403, detail="Web UI session bootstrap requires a same-origin request.")
     response.set_cookie(
@@ -931,7 +998,7 @@ async def bootstrap_web_session(request: Request, response: Response):
         value=WEB_SESSION_TOKEN,
         httponly=True,
         samesite="strict",
-        secure=request.url.scheme == "https",
+        secure=_request_public_scheme(request) == "https",
         path="/",
     )
 

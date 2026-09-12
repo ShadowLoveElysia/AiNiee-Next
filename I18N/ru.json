@@ -1113,6 +1113,8 @@
     "warning_remote_access_disabled": "Доступ из локальной сети и удалённый доступ сейчас отключены. Если они нужны, включите параметр «Доступ из LAN / удалённый доступ» в настройках.",
     "setting_webserver_port": "Порт WebServer",
     "setting_webserver_port_desc": "Номер порта WebServer (1-65535)",
+    "setting_webserver_allowed_origins": "Разрешённые источники WebServer",
+    "setting_webserver_allowed_origins_desc": "Необязательные доверенные HTTP/HTTPS-источники для обратного прокси, через запятую.",
     "setting_mcp_server_port": "Порт MCP Server",
     "setting_mcp_server_port_desc": "Номер порта MCP Server (1-65535). После изменения обычно нужно также обновить MCP-маршрут в клиенте.",
     "setting_skills_server_port": "Порт Skills Server",

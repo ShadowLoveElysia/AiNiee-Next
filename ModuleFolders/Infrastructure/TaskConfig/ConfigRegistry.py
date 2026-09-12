@@ -1154,6 +1154,16 @@ register_config(ConfigItem(
     category="advanced"
 ))
 
+register_config(ConfigItem(
+    key="webserver_allowed_origins",
+    default="",
+    level=ConfigLevel.ADVANCED,
+    config_type=ConfigType.STRING,
+    i18n_key="setting_webserver_allowed_origins",
+    i18n_desc_key="setting_webserver_allowed_origins_desc",
+    category="advanced"
+))
+
 # --- MCP Server 配置 (ADVANCED) ---
 register_config(ConfigItem(
     key="mcp_server_port",

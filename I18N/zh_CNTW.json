@@ -1113,6 +1113,8 @@
     "warning_remote_access_disabled": "目前區域網路與遠端存取功能已停用；若您需要透過區域網路或遠端使用，請在設定中開啟區域網路／遠端存取功能",
     "setting_webserver_port": "WebServer 連接埠",
     "setting_webserver_port_desc": "WebServer 服務監聽的連接埠號 (1-65535)",
+    "setting_webserver_allowed_origins": "WebServer 允許的來源",
+    "setting_webserver_allowed_origins_desc": "反向代理情境下可選的可信 HTTP/HTTPS 來源，多個來源請以逗號分隔。",
     "setting_mcp_server_port": "MCP 服務連接埠",
     "setting_mcp_server_port_desc": "MCP 服務監聽的連接埠號 (1-65535)。修改後，MCP 用戶端中的服務路由通常也需要同步調整。",
     "setting_skills_server_port": "Skills 服務連接埠",

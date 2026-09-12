@@ -39,8 +39,25 @@ const isProtectedApiRequest = (input: RequestInfo | URL, init?: RequestInit): bo
 
 const bootstrapWebSession = async (force = false): Promise<void> => {
     if (!webSessionBootstrap || force) {
-        webSessionBootstrap = nativeFetch(`${API_BASE}/session/bootstrap`, { method: 'POST' }).then(async response => {
-            if (!response.ok) throw await responseError(response, 'Failed to establish Web UI session');
+        // Explicit credentials and cache policy matter when the SPA is served through
+        // an HTTPS reverse proxy. The browser otherwise may retain a stale bootstrap
+        // response or omit the session cookie when a Request was constructed by a
+        // caller with different defaults.
+        webSessionBootstrap = nativeFetch(`${API_BASE}/session/bootstrap`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { Accept: 'application/json' },
+        }).then(async response => {
+            if (!response.ok) {
+                const error = await responseError(response, 'Failed to establish Web UI session');
+                console.warn('Web UI session bootstrap failed', {
+                    status: error.status,
+                    detail: error.message,
+                    origin: window.location.origin,
+                });
+                throw error;
+            }
         });
     }
     try {
@@ -62,7 +79,12 @@ const authenticatedApiFetch: typeof window.fetch = async (input, init) => {
     }
 
     await bootstrapWebSession();
-    const preparedRequest = new Request(input, init);
+    // Protected endpoints are same-origin by construction. Force cookie handling
+    // even when a caller passes a Request created with `credentials: omit`.
+    const preparedRequest = new Request(input, {
+        ...init,
+        credentials: 'same-origin',
+    });
     const retryRequest = preparedRequest.clone();
     let response = await nativeFetch(preparedRequest);
     if (

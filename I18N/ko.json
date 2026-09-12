@@ -1113,6 +1113,8 @@
     "warning_remote_access_disabled": "현재 LAN 및 원격 접근 기능이 비활성화되어 있습니다. LAN 또는 원격 사용이 필요하면 설정에서 LAN / 원격 접근 기능을 활성화하세요.",
     "setting_webserver_port": "WebServer 포트",
     "setting_webserver_port_desc": "WebServer 포트 번호(1-65535)",
+    "setting_webserver_allowed_origins": "WebServer 허용 Origin",
+    "setting_webserver_allowed_origins_desc": "역방향 프록시에서 신뢰할 HTTP/HTTPS Origin을 선택적으로 쉼표로 구분해 입력합니다.",
     "setting_mcp_server_port": "MCP 서버 포트",
     "setting_mcp_server_port_desc": "MCP 서버 포트 번호(1-65535). 변경 후에는 보통 클라이언트의 MCP 라우트도 함께 업데이트해야 합니다.",
     "setting_skills_server_port": "Skills 서버 포트",

@@ -97,6 +97,7 @@ DEFAULT_CONFIG = {
     "exclude_rule_str": "",
     "recent_projects": [],
     "enable_remote_access": False,
+    "webserver_allowed_origins": "",
     "mcp_server_port": 8765,
     "skills_server_port": 8766,
     "skills_require_auth": True,
