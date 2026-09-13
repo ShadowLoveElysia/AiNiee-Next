@@ -131,6 +131,13 @@ class LanguageFilter(PluginBase):
                             f"[[green]INFO[/]] [LanguageFilter] 文件 {path} 主要语言为 {first_language}"
                         )
 
+                # Mixed-language files need an explicit dominant-language
+                # majority before filtering. Three or more languages are
+                # intentionally left untouched to avoid false exclusions.
+                if not self._should_filter_mixed_file(file, config):
+                    print(f"[LanguageFilter] 文件 {path} 检测到多语言或主语言占比不足，跳过语言过滤")
+                    continue
+
                 # 根据不同情况分别处理
                 if TranslatorUtil.map_language_code_to_name(first_language) == config.target_language:
                     target.extend(self._filter_target_language_match(path, file_items, first_language))
@@ -147,11 +154,46 @@ class LanguageFilter(PluginBase):
                 # 原文片段列表
                 file_items = file.items
 
+                if not self._should_filter_mixed_file(file, config):
+                    print(f"[LanguageFilter] 文件 {path} 检测到多语言或主语言占比不足，跳过语言过滤")
+                    continue
+
                 # 原有的非自动检测模式，优化为使用统一的函数
                 #target.extend(self._filter_normal_language(file, data.items_iter(), config.source_language)) # 性能更好
-                target.extend(self._filter_normal_language(file, file_items, config.source_language))
+            target.extend(self._filter_normal_language(file, file_items, config.source_language))
 
         print("")
+
+    def _should_filter_mixed_file(self, file, config) -> bool:
+        """Return whether a file has a sufficiently dominant language.
+
+        The statistics are already sorted by DirectoryReader by occurrence
+        count. The configured value is the maximum minority-language share
+        that may be filtered (default 10%, equivalent to 9:1).
+        Three or more detected languages disable this optimization.
+        """
+        stats = list(file.language_stats or [])
+        low_confidence_stats = list(getattr(file, "lc_language_stats", None) or [])
+        known_codes = {entry[0] for entry in stats}
+        # DirectoryReader stores languages below its confidence cut-off in a
+        # separate list; they still count as distinct languages for safety.
+        for entry in low_confidence_stats:
+            if entry[0] not in known_codes:
+                stats.append(entry)
+                known_codes.add(entry[0])
+        if len(stats) <= 1:
+            return True
+        if len(stats) >= 3:
+            return False
+        total = sum(max(0, int(entry[1])) for entry in stats)
+        if total <= 0:
+            return False
+        threshold = getattr(config, "language_filter_minority_ratio_threshold", 0.1)
+        try:
+            threshold = min(max(float(threshold), 0.1), 1.0)
+        except (TypeError, ValueError):
+            threshold = 0.1
+        return stats[0][1] / total >= (1.0 - threshold)
         for item in tqdm(target):
             item.translation_status = TranslationStatus.EXCLUDED
 

@@ -1662,5 +1662,7 @@
     "setting_sparse_completion_lookahead_lines_desc": "Pares de origen y traducción posteriores enviados al completar números omitidos; el glosario usa el lote completo y el contexto visible.",
     "msg_sparse_completion_start": "La comprobación preliminar de la respuesta inicial detectó los números omitidos {} en el lote actual; se envía de inmediato una solicitud exclusiva para completarlos (no es una retraducción de una ronda posterior) ...",
     "msg_sparse_completion_success": "Los números omitidos {} se completaron y fusionaron en el lote actual; ahora se ejecutarán las comprobaciones completas existentes y solo se escribirá en la caché si se superan ...",
-    "msg_sparse_completion_failed": "No se pudieron completar los números omitidos {} del lote actual; el complemento se descartó. Ahora se comprobará la respuesta original y solo pasará a una ronda posterior de retraducción si no supera las comprobaciones ..."
+    "msg_sparse_completion_failed": "No se pudieron completar los números omitidos {} del lote actual; el complemento se descartó. Ahora se comprobará la respuesta original y solo pasará a una ronda posterior de retraducción si no supera las comprobaciones ...",
+    "setting_language_filter_minority_ratio_threshold": "Umbral de filtrado del idioma minoritario",
+    "setting_language_filter_minority_ratio_threshold_desc": "Filtra archivos bilingües solo cuando la proporción del idioma minoritario no supera este valor; los archivos con tres o más idiomas se omiten. Rango 0.1-1.0, valor predeterminado 0.1."
 }

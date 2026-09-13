@@ -1662,5 +1662,7 @@
     "setting_sparse_completion_lookahead_lines_desc": "補全缺失編號時附帶的原譯對照下文；術語命中使用完整批次和可見前後文。",
     "msg_sparse_completion_start": "目前批次首次回應的編號預檢發現缺失 {}，正在立即追加一次僅補缺號請求（不是下一輪重譯） ...",
     "msg_sparse_completion_success": "目前批次缺失編號 {} 已補全並合併，現繼續執行原有完整譯文檢查；檢查通過後才會寫入快取 ...",
-    "msg_sparse_completion_failed": "目前批次缺失編號 {} 補全失敗，補全結果已捨棄；現對原回應執行完整檢查，未通過時才進入下一輪重譯 ..."
+    "msg_sparse_completion_failed": "目前批次缺失編號 {} 補全失敗，補全結果已捨棄；現對原回應執行完整檢查，未通過時才進入下一輪重譯 ...",
+    "setting_language_filter_minority_ratio_threshold": "少數語言過濾佔比閾值",
+    "setting_language_filter_minority_ratio_threshold_desc": "僅當少數語言佔比不超過此值時才過濾雙語言檔案；三種及以上語言自動跳過。範圍 0.1-1.0，預設 0.1。"
 }

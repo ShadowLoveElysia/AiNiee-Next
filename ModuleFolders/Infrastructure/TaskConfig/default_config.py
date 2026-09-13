@@ -711,6 +711,7 @@ DEFAULT_CONFIG = {
     "enable_auto_restore_ebook": True,
     "enable_dry_run": False,
     "source_language": "auto",
+    "language_filter_minority_ratio_threshold": 0.1,
     "target_language": "Chinese",
     "target_platform": "sakura",
     "base_url": "http://127.0.0.1:8080",

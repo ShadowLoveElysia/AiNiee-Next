@@ -1631,5 +1631,7 @@
     "setting_sparse_completion_lookahead_lines_desc": "欠落した番号を補完する際に送信する後文の原文・訳文ペアです。用語照合はバッチ全体と表示中の文脈を使用します。",
     "msg_sparse_completion_start": "現在のバッチの初回応答番号を事前検査した結果、{} の欠落が見つかりました。後続ラウンドでの再翻訳ではなく、欠落番号だけを補うリクエストを直ちに追加送信します ...",
     "msg_sparse_completion_success": "現在のバッチの欠落番号 {} を補完して統合しました。既存の訳文全体の検査を続行し、合格した場合にのみキャッシュへ書き込みます ...",
-    "msg_sparse_completion_failed": "現在のバッチの欠落番号 {} を補完できなかったため、補完結果を破棄しました。元の応答に対して完全検査を行い、不合格の場合にのみ後続ラウンドで再翻訳します ..."
+    "msg_sparse_completion_failed": "現在のバッチの欠落番号 {} を補完できなかったため、補完結果を破棄しました。元の応答に対して完全検査を行い、不合格の場合にのみ後続ラウンドで再翻訳します ...",
+    "setting_language_filter_minority_ratio_threshold": "少数言語フィルター比率しきい値",
+    "setting_language_filter_minority_ratio_threshold_desc": "少数言語の比率がこの値以下の場合のみ二言語ファイルをフィルタリングし、3言語以上のファイルはスキップします。範囲 0.1-1.0、既定値 0.1。"
 }

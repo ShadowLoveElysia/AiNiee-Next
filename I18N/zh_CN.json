@@ -1678,5 +1678,7 @@
     "setting_sparse_completion_lookahead_lines_desc": "补全缺失编号时附带的原译对照下文；术语命中使用完整批次和可见前后文。",
     "msg_sparse_completion_start": "当前批次首次响应的编号预检发现缺失 {}，正在立即追加一次仅补缺号请求（不是下一轮重译） ...",
     "msg_sparse_completion_success": "当前批次缺失编号 {} 已补全并合并，现继续执行原有完整译文检查；检查通过后才会写入缓存 ...",
-    "msg_sparse_completion_failed": "当前批次缺失编号 {} 补全失败，补全结果已丢弃；现对原响应执行完整检查，未通过时才进入下一轮重译 ..."
+    "msg_sparse_completion_failed": "当前批次缺失编号 {} 补全失败，补全结果已丢弃；现对原响应执行完整检查，未通过时才进入下一轮重译 ...",
+    "setting_language_filter_minority_ratio_threshold": "少数语言过滤占比阈值",
+    "setting_language_filter_minority_ratio_threshold_desc": "仅当少数语言占比不超过此值时才过滤双语言文件；三种及以上语言自动跳过。范围 0.1-1.0，默认 0.1。"
 }

@@ -118,6 +118,9 @@ class TaskConfig(Base):
 
         # 翻译和润色相关设置
         self.source_language = "auto"
+        # Maximum minority-language share that may be filtered. A default of
+        # 0.1 means filtering is allowed only for a 9:1 (or stronger) split.
+        self.language_filter_minority_ratio_threshold = 0.1
         self.target_language = "zh"
         self.label_input_path = ""
         self.label_output_path = ""

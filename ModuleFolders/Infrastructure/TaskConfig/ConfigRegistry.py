@@ -159,6 +159,18 @@ register_config(ConfigItem(
     category="language"
 ))
 
+register_config(ConfigItem(
+    key="language_filter_minority_ratio_threshold",
+    default=0.1,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.FLOAT,
+    i18n_key="setting_language_filter_minority_ratio_threshold",
+    i18n_desc_key="setting_language_filter_minority_ratio_threshold_desc",
+    min_value=0.1,
+    max_value=1.0,
+    category="language"
+))
+
 # --- 界面语言配置 (USER) ---
 register_config(ConfigItem(
     key="interface_language",

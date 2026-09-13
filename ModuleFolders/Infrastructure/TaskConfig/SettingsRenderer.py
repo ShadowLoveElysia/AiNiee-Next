@@ -286,6 +286,16 @@ class SettingsMenuBuilder:
             if item.max_value is not None:
                 value = min(int(item.max_value), value)
             return value
+        elif item.config_type == ConfigType.FLOAT:
+            value = float(Prompt.ask(
+                self.i18n.get(item.i18n_key),
+                default=str(current)
+            ))
+            if item.min_value is not None:
+                value = max(float(item.min_value), value)
+            if item.max_value is not None:
+                value = min(float(item.max_value), value)
+            return value
         elif item.config_type == ConfigType.PATH:
             return Prompt.ask(
                 self.i18n.get(item.i18n_key),

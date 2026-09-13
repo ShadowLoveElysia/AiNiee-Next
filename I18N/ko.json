@@ -1662,5 +1662,7 @@
     "setting_sparse_completion_lookahead_lines_desc": "누락된 번호를 보완할 때 전송하는 다음 원문/번역 쌍입니다. 용어 일치는 전체 배치와 표시된 문맥을 사용합니다.",
     "msg_sparse_completion_start": "현재 배치의 첫 응답 번호 사전 검사에서 누락 번호 {}를 발견했습니다. 이후 라운드 재번역이 아니라 누락 번호만 보완하는 요청을 즉시 한 번 추가합니다 ...",
     "msg_sparse_completion_success": "현재 배치의 누락 번호 {}를 보완해 병합했습니다. 이제 기존 전체 번역 검사를 계속하며, 통과한 경우에만 캐시에 기록합니다 ...",
-    "msg_sparse_completion_failed": "현재 배치의 누락 번호 {}를 보완하지 못해 보완 결과를 폐기했습니다. 이제 원래 응답을 전체 검사하고, 통과하지 못한 경우에만 이후 라운드에서 재번역합니다 ..."
+    "msg_sparse_completion_failed": "현재 배치의 누락 번호 {}를 보완하지 못해 보완 결과를 폐기했습니다. 이제 원래 응답을 전체 검사하고, 통과하지 못한 경우에만 이후 라운드에서 재번역합니다 ...",
+    "setting_language_filter_minority_ratio_threshold": "소수 언어 필터 비율 임계값",
+    "setting_language_filter_minority_ratio_threshold_desc": "소수 언어 비율이 이 값 이하인 경우에만 이중 언어 파일을 필터링하며, 세 개 이상의 언어가 있는 파일은 건너뜁니다. 범위 0.1-1.0, 기본값 0.1."
 }
