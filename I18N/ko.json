@@ -903,6 +903,7 @@
     "msg_confirm_clear_file": "내용이 비어 있습니다. 파일을 비울까요?",
     "label_category_format_conversion": "형식 변환",
     "setting_enable_post_conversion": "번역 후 출력 형식 자동 변환(전자책 전용)",
+    "setting_enable_export_post_conversion": "내보내기 전용 모드에서 형식 변환 활성화",
     "setting_fixed_output_format_switch": "고정 출력 형식(매번 묻지 않음)",
     "setting_fixed_output_format": "출력 형식",
     "prompt_select_output_format": "최종 출력 형식 선택",

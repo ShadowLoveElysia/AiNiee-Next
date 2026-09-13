@@ -903,6 +903,7 @@
     "msg_confirm_clear_file": "El contenido está vacío. ¿Confirmar limpieza del archivo?",
     "label_category_format_conversion": "Conversión de formato",
     "setting_enable_post_conversion": "Convertir automáticamente el formato de salida tras traducir (solo ebooks)",
+    "setting_enable_export_post_conversion": "Activar la conversión de formato en el modo de solo exportación",
     "setting_fixed_output_format_switch": "Formato de salida fijo (no preguntar cada vez)",
     "setting_fixed_output_format": "Formato de salida",
     "prompt_select_output_format": "Selecciona el formato final de salida",

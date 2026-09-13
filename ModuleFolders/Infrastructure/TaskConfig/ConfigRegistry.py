@@ -1320,6 +1320,16 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="enable_export_post_conversion",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_enable_export_post_conversion",
+    depends_on="enable_post_conversion",
+    category="format_conversion"
+))
+
+register_config(ConfigItem(
     key="fixed_output_format_switch",
     default=False,
     level=ConfigLevel.USER,

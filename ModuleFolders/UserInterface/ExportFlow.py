@@ -4,6 +4,7 @@
 """
 import glob
 import os
+import subprocess
 
 from rich.console import Console
 from rich.panel import Panel
@@ -114,6 +115,7 @@ class ExportFlow:
                     output_config,
                     config,
                 )
+                self._convert_output_format(output_path, target_path, non_interactive)
 
             console.print(f"\n[green]✓ {self.i18n.get('msg_export_completed')}[/green]")
             console.print(f"[dim]Output: {output_path}[/dim]")
@@ -164,6 +166,72 @@ class ExportFlow:
         except OSError:
             return None
         return None
+
+    def _convert_output_format(self, output_path, target_path, non_interactive):
+        """Apply the configured ebook format conversion after cache export."""
+        settings = self.host.config
+        if not settings.get("enable_post_conversion", False) or not settings.get(
+            "enable_export_post_conversion", False
+        ):
+            return
+
+        ebook_exts = {".epub", ".mobi", ".azw3", ".fb2", ".txt", ".docx", ".pdf", ".htmlz", ".kepub"}
+        input_ext = os.path.splitext(target_path)[1].lower() if os.path.isfile(target_path) else ""
+        if input_ext not in ebook_exts and not os.path.isdir(target_path):
+            return
+
+        if settings.get("fixed_output_format_switch", False):
+            target_format = str(settings.get("fixed_output_format", "epub")).strip().lower()
+        elif non_interactive:
+            return
+        else:
+            console.print(f"\n[cyan]{self.i18n.get('msg_format_conversion_hint')}[/cyan]")
+            formats = ["epub", "mobi", "azw3", "fb2", "pdf", "txt", "docx", "htmlz"]
+            for index, fmt in enumerate(formats, 1):
+                console.print(f"  [cyan]{index}.[/] {fmt.upper()}")
+            console.print(f"  [dim]0.[/] {self.i18n.get('opt_none')}")
+            choice = IntPrompt.ask(
+                self.i18n.get("prompt_select_output_format"),
+                choices=[str(index) for index in range(len(formats) + 1)],
+                default=0,
+                show_choices=False,
+            )
+            if choice == 0:
+                return
+            target_format = formats[choice - 1]
+
+        if not target_format or target_format == "epub":
+            return
+        epub_files = [name for name in os.listdir(output_path) if name.lower().endswith(".epub")]
+        if not epub_files:
+            return
+
+        from ModuleFolders.UserInterface.UIHelpers import ensure_calibre_available
+
+        language = getattr(self.host, "current_lang", None) or settings.get("interface_language", "en")
+        calibre_path = ensure_calibre_available(language)
+        if not calibre_path:
+            console.print("[dim]Format conversion skipped: Calibre unavailable.[/dim]")
+            return
+        for epub_name in epub_files:
+            src_path = os.path.join(output_path, epub_name)
+            dst_path = os.path.splitext(src_path)[0] + f".{target_format}"
+            try:
+                result = subprocess.run(
+                    [calibre_path, src_path, dst_path],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=300,
+                )
+                if result.returncode == 0:
+                    console.print(f"[green]✓ Converted: {os.path.basename(dst_path)}[/green]")
+                else:
+                    detail = (result.stderr or result.stdout or "").strip()[:200]
+                    console.print(f"[yellow]Conversion warning: {detail}[/yellow]")
+            except Exception as exc:
+                console.print(f"[yellow]Conversion error: {exc}[/yellow]")
 
     def _select_target_path(self):
         last_path = self.host.config.get("label_input_path")

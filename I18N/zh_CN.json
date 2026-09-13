@@ -919,6 +919,7 @@
     "msg_confirm_clear_file": "内容为空，是否确认清空该文件内容？",
     "label_category_format_conversion": "格式转换",
     "setting_enable_post_conversion": "翻译后自动转换输出格式 (仅电子书)",
+    "setting_enable_export_post_conversion": "在“仅执行导出”中启用格式转换",
     "setting_fixed_output_format_switch": "固定输出格式 (避免每次询问)",
     "setting_fixed_output_format": "输出格式",
     "prompt_select_output_format": "请选择最终输出格式",

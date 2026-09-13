@@ -893,6 +893,7 @@
     "prompt_toggle_or_back": "Enter ID to toggle, or q/b/0/Enter to go back",
     "label_category_format_conversion": "Format Conversion",
     "setting_enable_post_conversion": "Auto-convert output format after translation (E-book only)",
+    "setting_enable_export_post_conversion": "Enable format conversion during export-only mode",
     "setting_fixed_output_format_switch": "Fixed output format (skip asking each time)",
     "setting_fixed_output_format": "Output Format",
     "prompt_select_output_format": "Select final output format",

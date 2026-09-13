@@ -903,6 +903,7 @@
     "msg_confirm_clear_file": "內容為空，是否確認清空此檔案內容？",
     "label_category_format_conversion": "格式轉換",
     "setting_enable_post_conversion": "翻譯後自動轉換輸出格式 (僅電子書)",
+    "setting_enable_export_post_conversion": "在「僅執行匯出」中啟用格式轉換",
     "setting_fixed_output_format_switch": "固定輸出格式 (避免每次詢問)",
     "setting_fixed_output_format": "輸出格式",
     "prompt_select_output_format": "請選擇最終輸出格式",

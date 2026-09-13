@@ -903,6 +903,7 @@
     "msg_confirm_clear_file": "Содержимое пустое. Очистить файл?",
     "label_category_format_conversion": "Преобразование формата",
     "setting_enable_post_conversion": "Автоматически преобразовывать формат вывода после перевода (только электронные книги)",
+    "setting_enable_export_post_conversion": "Включить преобразование формата в режиме экспорта",
     "setting_fixed_output_format_switch": "Фиксированный формат вывода (не спрашивать каждый раз)",
     "setting_fixed_output_format": "Формат вывода",
     "prompt_select_output_format": "Выберите итоговый формат вывода",
