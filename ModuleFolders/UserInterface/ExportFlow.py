@@ -49,27 +49,46 @@ class ExportFlow:
             if not target_path:
                 return
 
-        if os.path.isdir(target_path):
+        target_path = os.path.abspath(os.path.expanduser(str(target_path).strip().strip('"').strip("'")))
+        selected_cache = self._cache_path_from_input(target_path)
+
+        if selected_cache:
+            cache_path = selected_cache
+            output_path = os.path.dirname(os.path.dirname(cache_path))
+            target_path = self._infer_source_target(output_path)
+            if not target_path:
+                console.print(
+                    f"[red]Unable to locate the original input for cache: {cache_path}[/red]"
+                )
+                return
+        elif os.path.isdir(target_path):
             target_path = self._maybe_switch_to_single_file(target_path)
 
         if not os.path.exists(target_path):
             console.print(f"[red]Error: Input path '{target_path}' not found.[/red]")
             return
 
-        abs_input = os.path.abspath(target_path)
-        parent_dir = os.path.dirname(abs_input)
-        base_name = os.path.basename(abs_input)
-        if os.path.isfile(target_path):
-            base_name = os.path.splitext(base_name)[0]
-        output_path = os.path.join(parent_dir, f"{base_name}_AiNiee_Output")
+        if not selected_cache:
+            abs_input = os.path.abspath(target_path)
+            parent_dir = os.path.dirname(abs_input)
+            base_name = os.path.basename(abs_input)
+            if os.path.isfile(target_path):
+                base_name = os.path.splitext(base_name)[0]
+            output_path = os.path.join(parent_dir, f"{base_name}_AiNiee_Output")
 
-        cache_path = os.path.join(output_path, "cache", "AinieeCacheData.json")
-        proofread_cache_path = os.path.join(output_path, "cache", "AinieeCacheData_proofread.json")
-        cache_path = self._resolve_cache_path(
-            cache_path,
-            proofread_cache_path,
-            non_interactive,
-        )
+            cache_path = os.path.join(output_path, "cache", "AinieeCacheData.json")
+            proofread_cache_path = os.path.join(output_path, "cache", "AinieeCacheData_proofread.json")
+            cache_path = self._resolve_cache_path(
+                cache_path,
+                proofread_cache_path,
+                non_interactive,
+            )
+        else:
+            # A directly selected cache file is already resolved above. Keep the
+            # proofread choice disabled because the user's selection is explicit.
+            proofread_cache_path = os.path.join(
+                output_path, "cache", "AinieeCacheData_proofread.json"
+            )
         if not cache_path:
             return
 
@@ -103,6 +122,48 @@ class ExportFlow:
 
         if not non_interactive:
             Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+
+    @staticmethod
+    def _cache_path_from_input(path):
+        """Return a selected cache file path, or None for normal input paths."""
+        if not os.path.isfile(path):
+            return None
+        name = os.path.basename(path).lower()
+        if name not in {"ainieecachedata.json", "ainieecachedata_proofread.json"}:
+            return None
+        if os.path.basename(os.path.dirname(path)).lower() != "cache":
+            return None
+        return path
+
+    def _infer_source_target(self, output_path):
+        """Find the source file/directory associated with an output directory."""
+        configured = self.host.config.get("label_input_path")
+        if configured and os.path.exists(configured):
+            configured = os.path.abspath(os.path.expanduser(str(configured)))
+            if os.path.dirname(configured) == os.path.dirname(output_path):
+                return configured
+
+        output_name = os.path.basename(os.path.normpath(output_path))
+        suffix = "_AiNiee_Output"
+        if not output_name.endswith(suffix):
+            return None
+        source_name = output_name[: -len(suffix)]
+        parent = os.path.dirname(output_path)
+
+        directory_candidate = os.path.join(parent, source_name)
+        if os.path.isdir(directory_candidate):
+            return directory_candidate
+
+        # Match a source file with the same stem (e.g. book.epub -> book_AiNiee_Output).
+        try:
+            for entry in os.scandir(parent):
+                if not entry.is_file():
+                    continue
+                if os.path.splitext(entry.name)[0] == source_name:
+                    return entry.path
+        except OSError:
+            return None
+        return None
 
     def _select_target_path(self):
         last_path = self.host.config.get("label_input_path")
@@ -165,6 +226,13 @@ class ExportFlow:
             output_path = Prompt.ask(self.i18n.get("msg_enter_output_path")).strip().strip('"').strip("'")
             if output_path.lower() == "q":
                 return None
+            output_path = os.path.abspath(os.path.expanduser(output_path))
+            selected_cache = self._cache_path_from_input(output_path)
+            if selected_cache:
+                return selected_cache
+            # Accept either the project output directory or its cache directory.
+            if os.path.basename(os.path.normpath(output_path)).lower() == "cache":
+                output_path = os.path.dirname(output_path)
             cache_path = os.path.join(output_path, "cache", "AinieeCacheData.json")
             proofread_cache_path = os.path.join(output_path, "cache", "AinieeCacheData_proofread.json")
 
