@@ -904,6 +904,8 @@
     "label_category_format_conversion": "형식 변환",
     "setting_enable_post_conversion": "번역 후 출력 형식 자동 변환(전자책 전용)",
     "setting_enable_export_post_conversion": "내보내기 전용 모드에서 형식 변환 활성화",
+    "setting_sync_export_metadata_title": "내보내기 전용 모드에서 메타데이터 동기화 활성화",
+    "setting_sync_output_metadata_title": "전자책 메타데이터 제목을 파일 이름과 동기화",
     "setting_fixed_output_format_switch": "고정 출력 형식(매번 묻지 않음)",
     "setting_fixed_output_format": "출력 형식",
     "prompt_select_output_format": "최종 출력 형식 선택",

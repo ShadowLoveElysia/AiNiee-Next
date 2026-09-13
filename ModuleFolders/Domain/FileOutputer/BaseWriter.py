@@ -44,6 +44,7 @@ class OutputConfig:
     # Optional EPUB writing-mode override.  ``unchanged`` preserves the source.
     epub_layout_direction: str = "unchanged"
     interface_language: str = "zh_CN"
+    sync_metadata_title: bool = False
 
     def __post_init__(self):
         if self.translated_config is None:

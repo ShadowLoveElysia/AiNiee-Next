@@ -335,16 +335,41 @@ class EpubAccessor:
         source_file_path: Path,
         html_language: str = "",
         layout_direction: str = "unchanged",
+        metadata_title: str = "",
     ):
         if html_language:
             content = self._merge_language_updates(source_file_path, content, html_language)
         if layout_direction in {"horizontal", "vertical"}:
             content = self._merge_layout_updates(source_file_path, content, layout_direction)
+        if metadata_title:
+            content = self._merge_title_update(source_file_path, content, metadata_title)
         normalized_content = {
             filename: self._normalize_output_text(filename, file_content)
             for filename, file_content in content.items()
         }
         ZipUtil.replace_in_zip_file(source_file_path, write_file_path, normalized_content)
+
+    def _merge_title_update(self, source_file_path: Path, content: dict[str, str], title: str):
+        updated_content = dict(content)
+        with zipfile.ZipFile(source_file_path, "r") as zipf:
+            for info in zipf.infolist():
+                if not info.filename.lower().endswith(self.OPF_EXTENSION):
+                    continue
+                original = updated_content.get(info.filename)
+                if original is None:
+                    original = self._read_text(zipf, info)
+                soup = BeautifulSoup(str(original), "xml")
+                title_node = soup.find("dc:title") or soup.find("title")
+                if title_node is None:
+                    metadata = soup.find("metadata")
+                    if metadata is None:
+                        continue
+                    title_node = soup.new_tag("dc:title")
+                    metadata.append(title_node)
+                title_node.string = title
+                updated_content[info.filename] = str(soup)
+                break
+        return updated_content
 
     def _merge_layout_updates(self, source_file_path: Path, content: dict[str, str], layout_direction: str):
         """Apply a portable writing-mode override to EPUB XHTML and spine metadata.

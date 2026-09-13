@@ -860,6 +860,8 @@
     "label_category_format_conversion": "フォーマット変換",
     "setting_enable_post_conversion": "翻訳後に出力形式を自動変換 (電子書籍のみ)",
     "setting_enable_export_post_conversion": "「エクスポートのみ」モードで形式変換を有効化",
+    "setting_sync_export_metadata_title": "「エクスポートのみ」モードでメタデータ同期を有効化",
+    "setting_sync_output_metadata_title": "電子書籍のメタデータタイトルをファイル名と同期",
     "setting_fixed_output_format_switch": "固定出力形式 (毎回の確認をスキップ)",
     "setting_fixed_output_format": "出力形式",
     "prompt_select_output_format": "最終出力形式を選択してください",

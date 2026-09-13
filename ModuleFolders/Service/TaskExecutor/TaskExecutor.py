@@ -772,6 +772,7 @@ class TaskExecutor(Base):
             "bilingual_order": config.get('bilingual_text_order','translation_first'),
             "enable_bilingual_output": config.get('enable_bilingual_output', False),
             "epub_layout_mode": config.get('epub_layout_mode', 'off'),
+            "sync_metadata_title": config.get("sync_output_metadata_title", False),
         }
         task_config = TaskConfig()
         task_config.initialize(config)
@@ -1199,6 +1200,7 @@ class TaskExecutor(Base):
                 "bilingual_order": self.config.bilingual_text_order,
                 "enable_bilingual_output": self.config.enable_bilingual_output,
                 "epub_layout_mode": getattr(self.config, 'epub_layout_mode', 'off'),
+                "sync_metadata_title": getattr(self.config, "sync_output_metadata_title", False),
             }
 
             # 写入文件
@@ -1460,6 +1462,7 @@ class TaskExecutor(Base):
                 "bilingual_order": self.config.bilingual_text_order,
                 "enable_bilingual_output": self.config.enable_bilingual_output,
                 "epub_layout_mode": getattr(self.config, 'epub_layout_mode', 'off'),
+                "sync_metadata_title": getattr(self.config, "sync_output_metadata_title", False),
             }
 
             # 写入文件

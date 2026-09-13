@@ -158,6 +158,7 @@ class FileOutputer:
                     "horizontal_to_vertical": "vertical",
                 }.get(config.get("epub_layout_mode", "off"), "unchanged"),
                 "interface_language": config.get("interface_language", "zh_CN"),
+                "sync_metadata_title": config.get("sync_metadata_title", False),
             }
             base_args.update(kwargs)
             return OutputConfig(**base_args)

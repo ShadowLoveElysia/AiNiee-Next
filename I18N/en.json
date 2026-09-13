@@ -894,6 +894,8 @@
     "label_category_format_conversion": "Format Conversion",
     "setting_enable_post_conversion": "Auto-convert output format after translation (E-book only)",
     "setting_enable_export_post_conversion": "Enable format conversion during export-only mode",
+    "setting_sync_export_metadata_title": "Enable metadata sync during export-only mode",
+    "setting_sync_output_metadata_title": "Sync ebook metadata title with the source filename",
     "setting_fixed_output_format_switch": "Fixed output format (skip asking each time)",
     "setting_fixed_output_format": "Output Format",
     "prompt_select_output_format": "Select final output format",

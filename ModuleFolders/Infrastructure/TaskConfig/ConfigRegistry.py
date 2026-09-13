@@ -1330,6 +1330,24 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="sync_output_metadata_title",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_sync_output_metadata_title",
+    category="output"
+))
+
+register_config(ConfigItem(
+    key="sync_export_metadata_title",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_sync_export_metadata_title",
+    category="output"
+))
+
+register_config(ConfigItem(
     key="fixed_output_format_switch",
     default=False,
     level=ConfigLevel.USER,

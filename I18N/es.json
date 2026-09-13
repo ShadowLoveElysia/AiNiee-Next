@@ -904,6 +904,8 @@
     "label_category_format_conversion": "Conversión de formato",
     "setting_enable_post_conversion": "Convertir automáticamente el formato de salida tras traducir (solo ebooks)",
     "setting_enable_export_post_conversion": "Activar la conversión de formato en el modo de solo exportación",
+    "setting_sync_export_metadata_title": "Activar la sincronización de metadatos en modo de solo exportación",
+    "setting_sync_output_metadata_title": "Sincronizar el título de metadatos con el nombre del archivo",
     "setting_fixed_output_format_switch": "Formato de salida fijo (no preguntar cada vez)",
     "setting_fixed_output_format": "Formato de salida",
     "prompt_select_output_format": "Selecciona el formato final de salida",

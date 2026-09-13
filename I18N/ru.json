@@ -904,6 +904,8 @@
     "label_category_format_conversion": "Преобразование формата",
     "setting_enable_post_conversion": "Автоматически преобразовывать формат вывода после перевода (только электронные книги)",
     "setting_enable_export_post_conversion": "Включить преобразование формата в режиме экспорта",
+    "setting_sync_export_metadata_title": "Включить синхронизацию метаданных в режиме экспорта",
+    "setting_sync_output_metadata_title": "Синхронизировать название метаданных с именем файла",
     "setting_fixed_output_format_switch": "Фиксированный формат вывода (не спрашивать каждый раз)",
     "setting_fixed_output_format": "Формат вывода",
     "prompt_select_output_format": "Выберите итоговый формат вывода",

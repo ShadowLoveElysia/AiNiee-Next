@@ -88,6 +88,8 @@ DEFAULT_CONFIG = {
     "cache_save_interval": 8,
     "enable_cache_backup": True,
     "enable_export_post_conversion": False,
+    "sync_output_metadata_title": False,
+    "sync_export_metadata_title": False,
     "enable_auto_restore_ebook": True,
     "japanese_text_quote_style_switch": True,
     "enable_dry_run": False,

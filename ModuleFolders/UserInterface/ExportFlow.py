@@ -107,6 +107,9 @@ class ExportFlow:
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
                     "epub_layout_mode": getattr(config, "epub_layout_mode", "off"),
+                    "sync_metadata_title": bool(
+                        self.host.config.get("sync_export_metadata_title", False)
+                    ),
                 }
                 self.host.file_outputer.output_translated_content(
                     project,
