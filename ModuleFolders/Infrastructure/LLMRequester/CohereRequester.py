@@ -39,7 +39,7 @@ class CohereRequester(Base):
                 p=top_p,
                 presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
-                max_tokens=4096,
+                max_tokens=platform_config.get("max_output_tokens") or 4096,
                 safety_mode="NONE",
             )
 

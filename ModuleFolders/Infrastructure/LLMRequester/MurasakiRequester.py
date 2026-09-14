@@ -29,6 +29,7 @@ class MurasakiRequester(Base):
                 temperature=temperature,
                 frequency_penalty=frequency_penalty,
                 timeout=request_timeout,
+                **({"max_tokens": platform_config["max_output_tokens"]} if platform_config.get("max_output_tokens") is not None else {}),
             )
 
             if not Base.is_task_session_active():

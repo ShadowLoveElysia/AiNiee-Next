@@ -569,6 +569,8 @@ class CLIMenu:
             self._plugin_manager.update_plugins_enable(self.root_config["plugin_enables"])
 
     def save_config(self, save_root=False):
+        if getattr(self, "_runtime_task_active", False):
+            return
         self.root_config = save_effective_config(
             self.config,
             root_config=self.root_config,
@@ -1351,7 +1353,7 @@ class CLIMenu:
                 self._select_polishing_mode()
 
         # Smart suggestion for folders
-        if os.path.isdir(target_path):
+        if os.path.isdir(target_path) and not non_interactive and not web_mode and not from_queue:
             candidates = []
             for ext in ("*.txt", "*.epub"):
                 candidates.extend(glob.glob(os.path.join(target_path, ext)))
@@ -1546,7 +1548,16 @@ class CLIMenu:
         self.stop_requested = False
         self.live_state = [True] # 必须在这里初始化，防止 LogStream 报错
 
+        task_overrides = self.config.get("_task_runtime_overrides", {})
+        if task_overrides:
+            from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import apply_runtime_overrides
+            role = "polish" if task_mode == TaskType.POLISH else "translate"
+            self.config = apply_runtime_overrides(self.config, task_overrides, role)
+
         # 确保 TaskExecutor 的配置与 CLIMenu 的配置同步
+        if getattr(self, "_runtime_task_active", False):
+            from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+            self.task_executor.config = TaskConfig()
         self.task_executor.config.load_config_from_dict(self.config)
         runtime_overrides = getattr(self, "runtime_config_overrides", {})
         if isinstance(runtime_overrides, dict) and runtime_overrides:
@@ -2224,7 +2235,11 @@ class CLIMenu:
 
             # --- Post-Task: Auto AI Proofread ---
             if task_success and task_mode == TaskType.TRANSLATION and self.config.get("enable_auto_proofread", False):
-                if not web_mode and not automation_progress:
+                if web_mode or automation_progress or non_interactive:
+                    if not self.config.get("_workflow_explicit_proofread", False):
+                        from ModuleFolders.Service.Proofreader.AutomationProofread import run_automation_proofread
+                        run_automation_proofread(self.config, opath)
+                else:
                     console.print(f"\n[cyan]自动AI校对已开启，正在执行校对...[/cyan]")
                     try:
                         self._execute_proofread(opath)
@@ -2504,6 +2519,10 @@ def main():
     # 运行策略
     parser.add_argument('-r', '--resume', action='store_true', help=i18n.get('help_resume'))
     parser.add_argument('-y', '--yes', action='store_true', dest='non_interactive', help=i18n.get('help_yes'))
+    parser.add_argument('--runtime-overrides', help='JSON object of per-run settings; omitted fields inherit')
+    parser.add_argument('--step-overrides', help='JSON object of settings by workflow step ID')
+    parser.add_argument('--workflow-file', help='Workflow JSON file to execute with this task')
+    parser.add_argument('--runtime-parameters', action='store_true', help='Print runtime parameter metadata and exit')
     parser.add_argument('--threads', type=int, help="Concurrent thread counts (0 for auto)")
     parser.add_argument('--retry', type=int, help="Max retry counts for failed requests")
     parser.add_argument('--rounds', type=int, help="Max execution rounds")
@@ -2610,6 +2629,11 @@ def main():
     parser.add_argument('--pre-lines', type=int, help="Context lines to include")
 
     args = parser.parse_args()
+    if args.runtime_parameters:
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import runtime_parameter_schema
+        import json as runtime_json
+        print(runtime_json.dumps(runtime_parameter_schema(), ensure_ascii=False))
+        return 0
 
     raw_task = args.task
     raw_task_name = str(raw_task or '').strip().lower()

@@ -120,6 +120,7 @@ class TranslateSkill(Skill):
                 "failover", "threads", "retry", "timeout", "rounds", "pre_lines",
                 "lines_limit", "tokens_limit", "lines", "tokens", "think_depth",
                 "thinking_budget", "polish_mode", "manga", "wait", "wait_timeout",
+                "runtime_overrides", "step_overrides",
                 "task", "run_all_in_one",
             },
             skill_name="translate",
@@ -137,6 +138,8 @@ class TranslateSkill(Skill):
         except SkillPathError as exc:
             return SkillResult.fail(str(exc), exc.code)
         except TaskContractError as exc:
+            return SkillResult.fail(str(exc), "INVALID_TASK")
+        except (ValueError, OSError) as exc:
             return SkillResult.fail(str(exc), "INVALID_TASK")
 
         manager = get_task_manager()

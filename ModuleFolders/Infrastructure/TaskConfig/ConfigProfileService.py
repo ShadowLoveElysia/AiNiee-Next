@@ -234,6 +234,8 @@ def split_effective_config(config: dict, *, prefer_sdk_request_mode: bool = Fals
     rules = {}
     root_updates = {}
     for key, value in (config or {}).items():
+        if key.startswith("_task_runtime") or key.startswith("_runtime_") or key.startswith("_workflow_"):
+            continue
         if key in RULE_PROFILE_KEYS:
             rules[key] = value
         elif key in ROOT_ONLY_KEYS:

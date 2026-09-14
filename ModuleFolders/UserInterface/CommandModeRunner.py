@@ -69,6 +69,8 @@ def normalize_cli_task_args(args) -> TaskSpec:
         "thinking_budget",
         "polish_mode",
         "manga",
+        "runtime_overrides",
+        "step_overrides",
     ):
         setattr(args, field_name, getattr(spec, field_name))
     args.task = spec.task_type
@@ -358,6 +360,10 @@ class CommandModeRunner:
             console.print("[red]Error: --manga currently only supports the translate task.[/red]")
             return 2
 
+        if (getattr(args, "runtime_overrides", None) or getattr(args, "step_overrides", None)
+                or getattr(args, "workflow_file", None)) and not getattr(args, "manga", False):
+            return self._run_configured_workflow(args)
+
         if args.profile:
             self.host.switch_active_profile(args.profile)
 
@@ -406,6 +412,57 @@ class CommandModeRunner:
             return 0
 
         return 0
+
+    def _run_configured_workflow(self, args):
+        import copy
+        import json
+        from ModuleFolders.Infrastructure.Automation.WorkflowRunner import WorkflowRunner
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import merge_runtime_overrides
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV
+
+        if args.task == "queue":
+            from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
+            manager = QueueManager()
+            if args.queue_file:
+                manager.load_tasks(args.queue_file)
+            for task in manager.tasks:
+                if task.status == "waiting":
+                    task.runtime_overrides = merge_runtime_overrides(task.runtime_overrides, args.runtime_overrides)
+                    task.step_overrides.update(copy.deepcopy(args.step_overrides))
+            if not manager.save_tasks():
+                return 2
+            self._run_queue(args)
+            return 0
+        payload = select_task_contract_fields(vars(args))
+        payload["task_type"] = args.task
+        payload["web_mode"] = bool(getattr(args, "web_mode", False))
+        payload.pop("queue_file", None)
+        try:
+            workflow_file = getattr(args, "workflow_file", None)
+            if workflow_file:
+                with open(workflow_file, encoding="utf-8-sig") as reader:
+                    template = json.load(reader)
+                if not isinstance(template, dict):
+                    raise TaskContractError("Workflow file must contain an object")
+                saved_runtime = template.pop("runtime_overrides", {})
+                template.update({key: value for key, value in payload.items() if value is not None and (key not in {"step_overrides", "runtime_overrides"} or value)})
+                template["runtime_defaults"] = saved_runtime
+                payload = template
+            if not payload.get("workflow_steps"):
+                kinds = ["translate", "polish"] if args.task == "all_in_one" else [args.task]
+                payload["workflow_steps"] = [{"id": kind, "type": kind} for kind in kinds]
+            path = os.environ.pop(RUNTIME_SNAPSHOT_ENV, "")
+            if path:
+                try:
+                    with open(path, encoding="utf-8") as reader:
+                        payload["runtime_snapshot"] = json.load(reader)
+                finally:
+                    os.unlink(path)
+            WorkflowRunner(self.host).run(payload)
+            return 0
+        except (ValueError, OSError) as exc:
+            console.print(f"[red]Runtime parameters: {exc}[/red]")
+            return 2
 
     def _apply_config_overrides(self, args):
         if args.source_lang:

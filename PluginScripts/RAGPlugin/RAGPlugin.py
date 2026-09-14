@@ -52,7 +52,7 @@ class RAGPlugin(PluginBase):
         # 合并当前块的所有文本用于搜索，或者只取第一行？为了效率取全量关键词
         combined_text = "\n".join(source_text_dict.values())
         
-        relevant_entries = self.retrieve_context(combined_text, top_k=5)
+        relevant_entries = self.retrieve_context(combined_text, top_k=int(getattr(config, "rag_top_k", 5)))
         
         if not relevant_entries:
             return

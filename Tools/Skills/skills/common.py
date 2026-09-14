@@ -211,6 +211,8 @@ _PARAMETER_DESCRIPTIONS = {
     "think_depth": "Reasoning depth name or integer from 0 to 10000.",
     "thinking_budget": "Thinking token budget.",
     "polish_mode": "Polishing mode for polish or all-in-one tasks.",
+    "runtime_overrides": "Per-run settings object; omitted fields inherit, false and zero are preserved.",
+    "step_overrides": "Settings keyed by stable workflow step ID (translate/polish for built-in tasks).",
 }
 _INTEGER_PARAMETERS = {
     "threads",
@@ -237,6 +239,8 @@ def task_skill_parameters(
     parameters = []
     for name in ("input_path", *_TASK_FIELD_ORDER):
         param_type = "integer" if name in _INTEGER_PARAMETERS else "boolean" if name in _BOOLEAN_PARAMETERS else "string"
+        if name in {"runtime_overrides", "step_overrides"}:
+            param_type = "object"
         parameters.append(
             SkillParameter(
                 name=name,
@@ -292,6 +296,9 @@ def task_subprocess_invocation(spec: TaskSpec) -> tuple[list[str], Dict[str, str
     env.pop(TASK_API_KEY_ENV, None)
     if spec.api_key:
         env[TASK_API_KEY_ENV] = spec.api_key
+    if spec.runtime_overrides or spec.step_overrides:
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV, write_worker_snapshot
+        env[RUNTIME_SNAPSHOT_ENV] = write_worker_snapshot(spec.to_mapping())
     return command, env
 
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ListPlus, Trash2, Play, FileJson, Settings2, FolderOpen, Globe, BookOpen, Layers, Plus, Loader2, Save, X, AlertTriangle, Edit3, ChevronDown, ChevronUp, Cpu, Zap, MessageSquare, Server, GripVertical } from 'lucide-react';
+import { RuntimeParameters, RuntimeSteps } from '../components/RuntimeParameters';
 import { DataService } from '../services/DataService';
 import { nativeConfirm } from '../services/nativeDialog';
 import { useI18n } from '../contexts/I18nContext';
@@ -93,6 +94,8 @@ export const TaskQueue: React.FC = () => {
     // Ensure all fields are explicitly set, even if undefined in original task
     const taskToEdit = queue[index];
     setTaskForm({
+      runtime_overrides: taskToEdit.runtime_overrides || {},
+      step_overrides: taskToEdit.step_overrides || {},
       task_type: taskToEdit.task_type,
       input_path: taskToEdit.input_path,
       output_path: taskToEdit.output_path || '',
@@ -818,6 +821,12 @@ export const TaskQueue: React.FC = () => {
                     </div>
                 </div>
 
+                <div className="max-h-80 overflow-y-auto px-6 py-3 space-y-2">
+                    <RuntimeParameters value={taskForm.runtime_overrides || {}} onChange={runtime_overrides => setTaskForm(previous => ({ ...previous, runtime_overrides }))}
+                        hiddenKeys={['platform', 'model', 'user_thread_counts', 'retry_count', 'request_timeout', 'round_limit', 'pre_line_counts', 'lines_limit', 'tokens_limit', 'think_depth', 'thinking_budget', 'enable_api_failover']} />
+                    <RuntimeSteps value={taskForm.step_overrides || {}} onChange={step_overrides => setTaskForm(previous => ({ ...previous, step_overrides }))}
+                        steps={taskForm.task_type === TaskType.ALL_IN_ONE ? ['translate', 'polish'] : [String(taskForm.task_type || 'translate')]} />
+                </div>
                 <div className="p-6 border-t border-slate-800 flex justify-end gap-3 bg-slate-800/30">
                     <button
                         onClick={() => setShowModal(false)}

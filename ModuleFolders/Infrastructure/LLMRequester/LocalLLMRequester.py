@@ -27,6 +27,9 @@ class LocalLLMRequester(Base):
                 "timeout": request_timeout
             }
 
+            if platform_config.get("max_output_tokens") is not None:
+                base_params["max_tokens"] = platform_config["max_output_tokens"]
+
             # 按需添加参数
             if temperature != 1:
                 base_params.update({
@@ -49,6 +52,9 @@ class LocalLLMRequester(Base):
                     "extra_body": {"enable_thinking": "true"}
                 })
 
+
+            if platform_config.get("runtime_overrides", {}).get("think_switch") is False:
+                base_params["extra_body"] = {"enable_thinking": False}
 
             # 插入系统消息
             if system_prompt:

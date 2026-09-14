@@ -97,7 +97,9 @@ class AsyncLLMRequester(Base):
             tuple: (skip, think, content, prompt_tokens, completion_tokens)
         """
         config = self.load_config()
-        max_retries = 3 if config.get("enable_retry_backoff", True) else 1
+        runtime = platform_config.get("runtime_overrides", {})
+        config.update({key: runtime[key] for key in ("retry_count", "enable_retry_backoff") if key in runtime})
+        max_retries = max(1, int(config.get("retry_count", 3))) if config.get("enable_retry_backoff", True) else 1
         current_retry = 0
         backoff_delay = 2
         signal_hub = get_signal_hub()
@@ -120,15 +122,35 @@ class AsyncLLMRequester(Base):
             try:
                 # 根据平台分发请求
                 if target_platform == "sakura":
-                    result = await self._request_sakura_async(messages, system_prompt, platform_config)
+                    if platform_config.get("runtime_overrides"):
+                        from ModuleFolders.Infrastructure.LLMRequester.SakuraRequester import SakuraRequester
+                        result = await asyncio.to_thread(SakuraRequester().request_sakura, messages, system_prompt, platform_config)
+                    else:
+                        result = await self._request_sakura_async(messages, system_prompt, platform_config)
                 elif target_platform == "murasaki":
-                    result = await self._request_sakura_async(messages, system_prompt, platform_config)
+                    if platform_config.get("runtime_overrides"):
+                        from ModuleFolders.Infrastructure.LLMRequester.MurasakiRequester import MurasakiRequester
+                        result = await asyncio.to_thread(MurasakiRequester().request_murasaki, messages, system_prompt, platform_config)
+                    else:
+                        result = await self._request_sakura_async(messages, system_prompt, platform_config)
                 elif target_platform == "LocalLLM":
-                    result = await self._request_local_async(messages, system_prompt, platform_config)
+                    if platform_config.get("runtime_overrides"):
+                        from ModuleFolders.Infrastructure.LLMRequester.LocalLLMRequester import LocalLLMRequester
+                        result = await asyncio.to_thread(LocalLLMRequester().request_LocalLLM, messages, system_prompt, platform_config)
+                    else:
+                        result = await self._request_local_async(messages, system_prompt, platform_config)
                 elif (target_platform == "google" or (target_platform.startswith("custom_platform_") and api_format == "Google")) and not is_openai_sdk_mode(platform_config):
-                    result = await self._request_google_async(messages, system_prompt, platform_config)
+                    if platform_config.get("runtime_overrides"):
+                        from ModuleFolders.Infrastructure.LLMRequester.GoogleRequester import GoogleRequester
+                        result = await asyncio.to_thread(GoogleRequester().request_google, messages, system_prompt, platform_config)
+                    else:
+                        result = await self._request_google_async(messages, system_prompt, platform_config)
                 elif target_platform == "anthropic" or (target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
-                    result = await self._request_anthropic_async(messages, system_prompt, platform_config)
+                    if platform_config.get("runtime_overrides"):
+                        from ModuleFolders.Infrastructure.LLMRequester.AnthropicRequester import AnthropicRequester
+                        result = await asyncio.to_thread(AnthropicRequester().request_anthropic, messages, system_prompt, platform_config)
+                    else:
+                        result = await self._request_anthropic_async(messages, system_prompt, platform_config)
                 else:
                     # OpenAI 及兼容 API
                     requester = AsyncOpenaiRequester()
@@ -203,9 +225,9 @@ class AsyncLLMRequester(Base):
             api_key = platform_config.get("api_key")
             request_timeout = platform_config.get("request_timeout", 120)
             temperature = platform_config.get("temperature", 1.0)
-            max_tokens = platform_config.get("max_tokens", 4096)
+            max_tokens = platform_config.get("max_output_tokens") or platform_config.get("max_tokens", 4096)
             think_switch = platform_config.get("think_switch", False)
-            think_budget = platform_config.get("think_budget", 10000)
+            think_budget = platform_config.get("thinking_budget", 10000)
 
             # 构建请求体
             request_body = {
@@ -309,6 +331,15 @@ class AsyncLLMRequester(Base):
                     "temperature": temperature,
                 }
             }
+
+            generation = request_body["generationConfig"]
+            generation["topP"] = platform_config.get("top_p", 1.0)
+            if platform_config.get("max_output_tokens") is not None:
+                generation["maxOutputTokens"] = platform_config["max_output_tokens"]
+            if platform_config.get("think_switch"):
+                generation["thinkingConfig"] = {"thinkingBudget": platform_config.get("thinking_budget", -1)}
+            elif platform_config.get("think_switch") is False:
+                generation["thinkingConfig"] = {"thinkingBudget": 0}
 
             if system_prompt:
                 request_body["systemInstruction"] = {

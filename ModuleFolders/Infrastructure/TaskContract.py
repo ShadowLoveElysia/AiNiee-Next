@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import copy
+import json
 from typing import Any, Mapping
+
+from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import (
+    RuntimeOverrideError, normalize_runtime_overrides, normalize_step_overrides,
+    task_runtime_overrides,
+)
 
 
 TASK_API_KEY_ENV = "AINIEE_WEB_TASK_API_KEY"
@@ -40,6 +47,8 @@ QUEUE_TASK_OVERRIDE_FIELDS = (
     "think_depth",
     "thinking_budget",
     "polish_mode",
+    "runtime_overrides",
+    "step_overrides",
 )
 
 _TASK_TYPE_ALIASES = {
@@ -118,6 +127,8 @@ TASK_CONTRACT_INPUT_FIELDS = frozenset(
         "thinking_budget",
         "polish_mode",
         "manga",
+        "runtime_overrides",
+        "step_overrides",
     }
 )
 
@@ -287,6 +298,8 @@ class TaskSpec:
     thinking_budget: int | None = None
     polish_mode: str | None = None
     manga: bool = False
+    runtime_overrides: dict = field(default_factory=dict)
+    step_overrides: dict = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any], *, strict: bool = True) -> "TaskSpec":
@@ -357,6 +370,15 @@ class TaskSpec:
             if normalized_task not in {POLISH, ALL_IN_ONE}:
                 raise TaskContractError("polish_mode is only supported for polish tasks")
 
+        try:
+            runtime_overrides = normalize_runtime_overrides(data.get("runtime_overrides"))
+            step_overrides = normalize_step_overrides(data.get("step_overrides"))
+            task_runtime_overrides({**data, "runtime_overrides": runtime_overrides})
+            if (runtime_overrides or step_overrides) and (manga or normalized_task == EXPORT):
+                raise RuntimeOverrideError("Runtime overrides apply to text translation workflows")
+        except RuntimeOverrideError as exc:
+            raise TaskContractError(str(exc)) from exc
+
         return cls(
             task_type=normalized_task,
             input_path=input_path,
@@ -386,6 +408,8 @@ class TaskSpec:
             ),
             polish_mode=polish_mode,
             manga=manga,
+            runtime_overrides=runtime_overrides,
+            step_overrides=step_overrides,
         )
 
     def to_mapping(
@@ -420,6 +444,8 @@ class TaskSpec:
             "thinking_budget": self.thinking_budget,
             "polish_mode": self.polish_mode,
             "manga": self.manga,
+            "runtime_overrides": copy.deepcopy(self.runtime_overrides),
+            "step_overrides": copy.deepcopy(self.step_overrides),
         }
         if include_api_key:
             result["api_key"] = self.api_key
@@ -484,6 +510,10 @@ def build_cli_args(
     for option, value in value_options:
         if value is not None:
             args.extend([option, str(value)])
+
+    for option, value in (("--runtime-overrides", spec.runtime_overrides), ("--step-overrides", spec.step_overrides)):
+        if value:
+            args.extend([option, json.dumps(value, ensure_ascii=False, separators=(",", ":"))])
 
     if spec.resume:
         args.append("--resume")

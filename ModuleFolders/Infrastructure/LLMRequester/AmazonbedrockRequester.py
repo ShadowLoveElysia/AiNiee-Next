@@ -81,7 +81,7 @@ class AmazonbedrockRequester(Base):
                 temperature=temperature,
                 top_p=top_p,
                 timeout=request_timeout,
-                max_tokens=ModelConfigHelper.get_claude_max_output_tokens(model_name),
+                max_tokens=platform_config.get("max_output_tokens") or ModelConfigHelper.get_claude_max_output_tokens(model_name),
             )
             if not Base.is_task_session_active():
                 return True, "STOPPED", "Task stopped by user", 0, 0
@@ -103,7 +103,7 @@ class AmazonbedrockRequester(Base):
                         temperature=temperature,
                         top_p=top_p,
                         timeout=request_timeout,
-                        max_tokens=ModelConfigHelper.get_claude_max_output_tokens(model_name),
+                        max_tokens=platform_config.get("max_output_tokens") or ModelConfigHelper.get_claude_max_output_tokens(model_name),
                     )
                     if not Base.is_task_session_active():
                         return True, "STOPPED", "Task stopped by user", 0, 0

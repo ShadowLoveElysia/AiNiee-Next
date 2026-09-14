@@ -45,6 +45,8 @@ export enum TaskType {
 }
 
 export interface QueueTaskItem {
+  runtime_overrides?: Record<string, string | number | boolean>;
+  step_overrides?: Record<string, { enabled?: boolean; runtime_overrides?: Record<string, string | number | boolean> }>;
   task_type: TaskType.TRANSLATE | TaskType.POLISH | TaskType.ALL_IN_ONE | 'invalid';
   input_path: string;
   output_path?: string | null;
@@ -92,6 +94,8 @@ export type ThemeType = 'default' | 'elysia' | 'eden' | 'mobius' | 'pardofelis' 
 
 // Payload structure to match ainiee_cli.py arguments
 export interface TaskPayload {
+  runtime_overrides?: Record<string, string | number | boolean>;
+  step_overrides?: Record<string, { enabled?: boolean; runtime_overrides?: Record<string, string | number | boolean> }>;
   task?: TaskType | number;
   task_type?: TaskType | number;
   run_all_in_one?: boolean;

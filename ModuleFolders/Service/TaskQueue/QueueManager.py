@@ -134,7 +134,7 @@ class QueueTaskItem:
                  automation_progress_file=None, automation_worker_pid=None,
                  trigger_file_path=None, trigger_file_name=None, trigger_detected_at=None,
                  series_incremental=False, series_key=None, series_volume=None, extra=None,
-                 task_id=None):
+                 task_id=None, runtime_overrides=None, step_overrides=None):
         spec = TaskSpec.from_mapping(
             {
                 "task_type": task_type,
@@ -162,6 +162,8 @@ class QueueTaskItem:
                 "polish_mode": polish_mode,
                 "resume": resume,
                 "manga": manga,
+                "runtime_overrides": runtime_overrides,
+                "step_overrides": step_overrides,
             }
         )
         queue_fields = spec.to_queue_fields()
@@ -170,6 +172,9 @@ class QueueTaskItem:
             setattr(self, field_name, value)
         self.resume_explicit = bool(resume_explicit) if resume_explicit is not None else None
         self.workflow_steps = workflow_steps or []
+        if not self.workflow_steps and (spec.runtime_overrides or spec.step_overrides):
+            kinds = ["translate", "polish"] if spec.task_type == "all_in_one" else [spec.task_type]
+            self.workflow_steps = [{"id": kind, "type": kind} for kind in kinds]
         self.source = source
         self.rule_id = rule_id
         self.automation_run_id = automation_run_id
@@ -181,7 +186,10 @@ class QueueTaskItem:
         self.series_incremental = bool(series_incremental)
         self.series_key = series_key
         self.series_volume = series_volume
-        self.extra = extra if isinstance(extra, dict) else {}
+        self.extra = copy.deepcopy(extra) if isinstance(extra, dict) else {}
+        if (self.runtime_overrides or self.step_overrides or any(step.get("runtime_overrides") for step in self.workflow_steps)) and "runtime_snapshot" not in self.extra:
+            from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import snapshot_for_task
+            self.extra["runtime_snapshot"] = snapshot_for_task({**spec.to_mapping(), "workflow_steps": self.workflow_steps})
         
         self.status = "waiting" # waiting, workflow, translating, translated, polishing, completed, partial, error, stopped
         self.locked = False  # 是否被锁定（正在执行中不可修改）
@@ -206,6 +214,8 @@ class QueueTaskItem:
             self.resume_explicit is None and self.workflow_steps
         ):
             data.pop("resume", None)
+        if self.extra.get("runtime_snapshot"):
+            data["runtime_snapshot"] = copy.deepcopy(self.extra["runtime_snapshot"])
         return data
 
     def to_persistent_dict(self):
@@ -231,6 +241,7 @@ class QueueTaskItem:
             raise TaskContractError("Queue task item must be an object")
         # 兼容旧数据，剔除运行时字段后传入构造函数
         params = data.copy()
+        params.pop("runtime_snapshot", None)
         if "resume_explicit" not in params:
             params["resume_explicit"] = params.get("resume") is not None
         status = params.pop("status", "waiting")
@@ -616,6 +627,14 @@ class QueueManager(Base):
     def update_task(self, index, task_item):
         if 0 <= index < len(self.tasks):
             try:
+                if task_item.runtime_overrides or task_item.step_overrides:
+                    if not task_item.workflow_steps:
+                        kind = task_item.to_task_spec().task_type
+                        kinds = ["translate", "polish"] if kind == "all_in_one" else [kind]
+                        task_item.workflow_steps = [{"id": name, "type": name} for name in kinds]
+                    if "runtime_snapshot" not in task_item.extra:
+                        from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import snapshot_for_task
+                        task_item.extra["runtime_snapshot"] = snapshot_for_task(task_item.to_task_spec().to_mapping())
                 old_task = self.tasks[index]
                 task_name = os.path.basename(old_task.input_path)
 
@@ -1092,6 +1111,7 @@ class QueueManager(Base):
             if final_status == "partial" and isinstance(final_state, dict):
                 task.extra = getattr(task, "extra", {}) or {}
                 task.extra["partial_step_type"] = final_state.get("step_type") or ""
+                task.extra["partial_step_id"] = final_state.get("step_id") or ""
                 task.extra["partial_step_index"] = final_state.get("step_index") or 0
                 task.extra["partial_message"] = final_state.get("message") or ""
             if final_status == "completed":
@@ -1177,10 +1197,13 @@ class QueueManager(Base):
             task.process_start_time = None
             task.last_activity_time = None
             task.workflow_steps = self._workflow_steps_for_partial_resume(task)
+            remaining_ids = {step.get("id") for step in task.workflow_steps}
+            task.step_overrides = {key: value for key, value in task.step_overrides.items() if key in remaining_ids}
             task.automation_run_id = None
             task.automation_progress_file = None
             task.automation_worker_pid = None
             task.extra = getattr(task, "extra", {}) or {}
+            task.extra.pop("partial_step_id", None)
             task.extra.pop("partial_step_type", None)
             task.extra.pop("partial_step_index", None)
             task.extra.pop("partial_message", None)
@@ -1209,6 +1232,7 @@ class QueueManager(Base):
             task.automation_progress_file = None
             task.automation_worker_pid = None
             task.extra = getattr(task, "extra", {}) or {}
+            task.extra.pop("partial_step_id", None)
             task.extra.pop("partial_step_type", None)
             task.extra.pop("partial_step_index", None)
             task.extra.pop("partial_message", None)
@@ -1229,7 +1253,11 @@ class QueueManager(Base):
             partial_step = str((getattr(task, "extra", {}) or {}).get("partial_step_type") or "").strip().lower()
         except Exception:
             partial_step = ""
-        if partial_step in step_types:
+        partial_id = (getattr(task, "extra", {}) or {}).get("partial_step_id")
+        exact_index = next((index for index, step in enumerate(steps) if step.get("id") == partial_id), None) if partial_id else None
+        if exact_index is not None:
+            resume_steps = steps[exact_index:]
+        elif partial_step in step_types:
             index = step_types.index(partial_step)
             resume_steps = steps[index:]
         elif "translate" in step_types:
@@ -1684,8 +1712,14 @@ class QueueManager(Base):
                 active_rules_profile_name=target_rules_profile,
             )
 
+            if task.extra.get("runtime_snapshot"):
+                from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import restore_runtime_snapshot
+                cli_menu.config = restore_runtime_snapshot(cli_menu.config, task.extra["runtime_snapshot"])
+
             # 2. Apply Fine-grained Overrides
             cfg = cli_menu.config
+            if task.runtime_overrides:
+                cfg["_task_runtime_overrides"] = copy.deepcopy(task.runtime_overrides)
             if task.source_lang: cfg["source_language"] = task.source_lang
             if task.target_lang: cfg["target_language"] = task.target_lang
             if task.project_type: cfg["translation_project"] = task.project_type

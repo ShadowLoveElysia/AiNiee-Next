@@ -38,7 +38,7 @@ class SakuraRequester(Base):
                 temperature=temperature,
                 frequency_penalty=frequency_penalty,
                 timeout=request_timeout,
-                max_tokens=512,
+                max_tokens=platform_config.get("max_output_tokens") or 512,
                 extra_query={
                     "do_sample": True,
                     "num_beams": 1,

@@ -39,15 +39,31 @@ class AnthropicRequester(Base):
         request_timeout = platform_config.get("request_timeout", 60)
         temperature = platform_config.get("temperature", 1.0)
         top_p = platform_config.get("top_p", 1.0)
-        return {
+        params = {
             "model": model_name,
             "system": system_content,
             "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
             "timeout": request_timeout,
-            "max_tokens": ModelConfigHelper.get_claude_max_output_tokens(model_name)
+            "max_tokens": platform_config.get("max_output_tokens") or ModelConfigHelper.get_claude_max_output_tokens(model_name)
         }
+        if platform_config.get("think_switch"):
+            budget = platform_config.get("thinking_budget", -1)
+            if budget == -1:
+                params["thinking"] = {"type": "adaptive"}
+                depth = platform_config.get("think_depth")
+                if depth:
+                    params["output_config"] = {"effort": depth}
+            else:
+                if budget < 1024 or budget >= params["max_tokens"]:
+                    raise ValueError("Anthropic thinking budget must be >= 1024 and below the output limit")
+                params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            params.pop("temperature", None)
+            params.pop("top_p", None)
+        elif platform_config.get("runtime_overrides", {}).get("think_switch") is False:
+            params["thinking"] = {"type": "disabled"}
+        return params
 
     def _parse_response_json(self, response_json: dict) -> tuple[str, str, int, int]:
         response_think = ""

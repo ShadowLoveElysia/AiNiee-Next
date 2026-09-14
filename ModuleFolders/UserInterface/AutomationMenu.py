@@ -455,6 +455,7 @@ class AutomationMenu:
         elif Confirm.ask(self.i18n.get("scheduler_configure_workflow"), default=False):
             workflow_steps, _ = self._prompt_workflow_steps(default_task_type=task_type)
 
+        runtime_overrides = self._edit_runtime_parameters()
         task = ScheduledTask(
             task_id=task_id,
             name=name,
@@ -465,6 +466,7 @@ class AutomationMenu:
             task_type=task_type,
             workflow_steps=workflow_steps,
             run_queue=run_queue,
+            runtime_overrides=runtime_overrides,
         )
 
         if self.scheduler_manager.add_task(task):
@@ -558,7 +560,7 @@ class AutomationMenu:
                 current_steps=task.workflow_steps,
                 current_auto_start=True,
             )
-            self.scheduler_manager.update_task(task.id, workflow_steps=workflow_steps, run_queue=False)
+            self.scheduler_manager.update_task(task.id, workflow_steps=workflow_steps, run_queue=False, runtime_overrides=self._edit_runtime_parameters(getattr(task, "extra", {}).get("runtime_overrides", {})))
             updated = True
 
         if updated:
@@ -952,6 +954,7 @@ class AutomationMenu:
         if series_incremental:
             console.print(f"[yellow]{self.i18n.get('watch_series_order_warning')}[/yellow]")
 
+        runtime_overrides = self._edit_runtime_parameters()
         rule = WatchRule(
             rule_id=rule_id,
             watch_path=watch_path,
@@ -968,6 +971,7 @@ class AutomationMenu:
             trigger_mode=trigger_mode,
             series_incremental=series_incremental,
             watch_target_type=watch_target_type,
+            runtime_overrides=runtime_overrides,
         )
 
         if self.watch_manager.add_rule(rule):
@@ -1012,7 +1016,7 @@ class AutomationMenu:
                 current_steps=rule.workflow_steps,
                 current_auto_start=rule.auto_start,
             )
-            self.watch_manager.update_rule(rule.id, workflow_steps=workflow_steps, auto_start=auto_start)
+            self.watch_manager.update_rule(rule.id, workflow_steps=workflow_steps, auto_start=auto_start, runtime_overrides=self._edit_runtime_parameters(getattr(rule, "extra", {}).get("runtime_overrides", {})))
         elif edit_choice == 3:
             patterns_str = Prompt.ask(self.i18n.get('watch_patterns'), default=", ".join(rule.file_patterns))
             file_patterns = [p.strip() for p in patterns_str.split(",")]
@@ -1611,6 +1615,10 @@ class AutomationMenu:
 
         Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
 
+    def _edit_runtime_parameters(self, current=None):
+        from ModuleFolders.UserInterface.RuntimeParametersMenu import edit_runtime_parameters
+        return edit_runtime_parameters(self.host, current)
+
     def _prompt_workflow_steps(self, default_task_type="translation", current_steps=None, current_auto_start=True):
         """Prompt a queue-managed workflow preset."""
         console.print(f"\n{self.i18n.get('watch_mode')}:")
@@ -1653,12 +1661,18 @@ class AutomationMenu:
         return normalize_workflow_steps(steps, default_task_type, auto_start), auto_start
 
     def _prompt_glossary_step_defaults(self):
+        mode = Prompt.ask(self.i18n.get("runtime_analysis_mode"), choices=["full", "split", "incremental_split"], default="full")
+        percent = IntPrompt.ask(self.i18n.get("workflow_glossary_analysis_percent"), default=100)
+        lines = IntPrompt.ask(self.i18n.get("runtime_analysis_lines"), default=0)
+        if not 1 <= percent <= 100 or lines < 0:
+            raise ValueError("Analysis percent must be 1..100; lines must be >= 0")
         return {
             "type": "extract_glossary",
-            "analysis_mode": "full",
-            "analysis_percent": IntPrompt.ask(self.i18n.get("workflow_glossary_analysis_percent"), default=100),
+            "analysis_mode": mode,
+            "analysis_percent": percent,
+            "analysis_lines": lines or None,
             "min_frequency": IntPrompt.ask(self.i18n.get("workflow_glossary_min_frequency"), default=2),
-            "translate_during_analysis": True,
+            "translate_during_analysis": Confirm.ask(self.i18n.get("runtime_analysis_translate"), default=True),
             "new": True,
             "replace": True,
             "save_mode": "isolated",
@@ -1674,6 +1688,7 @@ class AutomationMenu:
                     console.print(f"  [cyan]{idx}.[/] {self._format_workflow_step(step)}")
             else:
                 console.print(f"  [dim]{self.i18n.get('workflow_no_steps')}[/dim]")
+            console.print(f"  [cyan]E.[/] {self.i18n.get('runtime_parameters_title')}")
             console.print(f"  [cyan]A.[/] {self.i18n.get('workflow_add_step')}")
             console.print(f"  [cyan]R.[/] {self.i18n.get('workflow_remove_last')}")
             console.print(f"  [cyan]D.[/] {self.i18n.get('workflow_remove_step')}")
@@ -1681,10 +1696,15 @@ class AutomationMenu:
             console.print(f"  [cyan]N.[/] {self.i18n.get('workflow_move_step_down')}")
             console.print(f"  [cyan]S.[/] {self.i18n.get('workflow_auto_start')}: {'ON' if auto_start else 'OFF'}")
             console.print(f"  [dim]0. {self.i18n.get('workflow_done')}[/dim]")
-            choice = Prompt.ask(self.i18n.get('prompt_select'), choices=["0", "A", "a", "R", "r", "D", "d", "U", "u", "N", "n", "S", "s"], default="0", show_choices=False)
+            choice = Prompt.ask(self.i18n.get('prompt_select'), choices=["0", "E", "e", "A", "a", "R", "r", "D", "d", "U", "u", "N", "n", "S", "s"], default="0", show_choices=False)
             if choice == "0":
                 break
-            if choice.upper() == "S":
+            if choice.upper() == "E":
+                index = self._prompt_workflow_step_index(steps)
+                if index >= 0:
+                    steps[index]["enabled"] = Confirm.ask(self.i18n.get("label_enabled"), default=steps[index].get("enabled", True))
+                    steps[index]["runtime_overrides"] = self._edit_runtime_parameters(steps[index].get("runtime_overrides"))
+            elif choice.upper() == "S":
                 auto_start = not auto_start
             elif choice.upper() == "R":
                 if steps:
@@ -1746,12 +1766,15 @@ class AutomationMenu:
         table.add_row("[cyan]2.[/]", self.i18n.get("workflow_step_translate"))
         table.add_row("[cyan]3.[/]", self.i18n.get("workflow_step_polish"))
         table.add_row("[cyan]4.[/]", self.i18n.get("workflow_step_all_in_one"))
+        table.add_row("[cyan]5.[/]", self.i18n.get("workflow_step_proofread"))
         console.print(table)
-        choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["1", "2", "3", "4"], default=1, show_choices=False)
+        choice = IntPrompt.ask(self.i18n.get('prompt_select'), choices=["1", "2", "3", "4", "5"], default=1, show_choices=False)
         if choice == 1:
             return self._prompt_glossary_step_defaults()
         if choice == 2:
             return {"type": "translate"}
         if choice == 3:
             return {"type": "polish", "resume": True}
+        if choice == 5:
+            return {"type": "proofread"}
         return {"type": "all_in_one"}

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { RuntimeParameters, RuntimeSteps, RuntimeValues, StepValues } from '../components/RuntimeParameters';
 import { Terminal } from '../components/Terminal';
 import { StatsPanel } from '../components/StatsPanel';
 import { Play, Square, Upload, FileText, ChevronRight, ChevronDown, Terminal as TerminalIcon, Loader2, History, AlertCircle, Sparkles, ListPlus, X } from 'lucide-react';
@@ -29,7 +30,11 @@ const resolveMangaProjectPath = (outputPath?: string, inputPath?: string) => {
 
 export const TaskRunner: React.FC = () => {
   const { t } = useI18n();
-  const { config, taskState, setTaskState } = useGlobal(); // Use persistent global state
+  const { config, taskState, setTaskState } = useGlobal();
+  const runtimeOverrides = taskState.runtimeOverrides || {};
+  const stepOverrides = taskState.stepOverrides || {};
+  const setRuntimeOverrides = (runtimeOverrides: RuntimeValues) => setTaskState(previous => ({ ...previous, runtimeOverrides }));
+  const setStepOverrides = (stepOverrides: StepValues) => setTaskState(previous => ({ ...previous, stepOverrides })); // Use persistent global state
   
   const intervalRef = useRef<any>(null);
   const taskGenerationRef = useRef(0);
@@ -346,6 +351,15 @@ export const TaskRunner: React.FC = () => {
           manga: taskType === TaskType.TRANSLATE && mangaMode
       };
 
+      if (!payload.manga && taskType !== TaskType.EXPORT) {
+          payload.runtime_overrides = runtimeOverrides;
+          const activeSteps = isAllInOne ? ['translate', 'polish'] : [String(taskType)];
+          payload.step_overrides = Object.fromEntries(Object.entries(stepOverrides).filter(([key]) => activeSteps.includes(key)));
+          if (Object.keys(runtimeOverrides).length || Object.keys(payload.step_overrides).length) {
+              for (const key of ['threads', 'retry', 'timeout', 'rounds', 'pre_lines', 'platform', 'model', 'api_url', 'api_key', 'failover', 'think_depth', 'thinking_budget', 'lines', 'tokens'] as const) delete payload[key];
+          }
+      }
+
       // Reset Chart but keep input path
       cursorRef.current = { logs: 0, chart: 0, comparison: 0 };
       setComparisonChannelStatus('waiting');
@@ -409,6 +423,19 @@ export const TaskRunner: React.FC = () => {
       const thinkDepth = config.think_depth ?? platformConfig?.think_depth;
       const thinkingBudget = config.thinking_budget ?? platformConfig?.thinking_budget;
       const parts = ['uv run ainiee_cli.py', previewTask, `"${taskState.customInputPath || ''}"`];
+      if (Object.keys(runtimeOverrides).length || Object.keys(stepOverrides).length) {
+          const steps = previewTask === TaskType.ALL_IN_ONE ? ['translate', 'polish'] : [String(previewTask)];
+          const selectedSteps = Object.fromEntries(Object.entries(stepOverrides).filter(([key]) => steps.includes(key)));
+          const quote = (text: string) => "'" + text.replace(/'/g, "'\"'\"'") + "'";
+          if (config.active_profile) parts.push('--profile', quote(config.active_profile));
+          if (config.active_rules_profile) parts.push('--rules-profile', quote(config.active_rules_profile));
+          parts.push('--runtime-overrides', quote(JSON.stringify(runtimeOverrides)));
+          if (Object.keys(selectedSteps).length) parts.push('--step-overrides', quote(JSON.stringify(selectedSteps)));
+          parts.push('--yes');
+          if (taskState.isResuming) parts.push('--resume');
+          return parts.join(' ');
+      }
+
       
       // Flags
       if (taskState.isResuming) parts.push('-y --resume');
@@ -539,6 +566,10 @@ export const TaskRunner: React.FC = () => {
 
   return (
     <div className="space-y-3 h-[calc(100vh-140px)] flex flex-col">
+      {!mangaMode && taskState.taskType !== TaskType.EXPORT && <div className="max-h-[50vh] overflow-y-auto shrink-0 space-y-2">
+        <RuntimeParameters value={runtimeOverrides} onChange={setRuntimeOverrides} disabled={taskState.isRunning || isStarting} />
+        <RuntimeSteps value={stepOverrides} onChange={setStepOverrides} disabled={taskState.isRunning || isStarting} steps={['translate', 'polish']} />
+      </div>}
       {/* Header Controls */}
       <div className="bg-surface border border-slate-800 p-4 rounded-xl space-y-4">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">

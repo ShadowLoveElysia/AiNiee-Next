@@ -29,10 +29,10 @@ class SystemSkill(Skill):
             parameters=[
                 SkillParameter(
                     name="action",
-                    description="The system action to perform: info, health, version, or ping.",
+                    description="The system action to perform: info, health, version, ping, or runtime_parameters.",
                     type="string",
                     required=True,
-                    enum=["info", "health", "version", "ping"],
+                    enum=["info", "health", "version", "ping", "runtime_parameters"],
                 ),
             ],
             examples=[
@@ -73,6 +73,10 @@ class SystemSkill(Skill):
         action = normalize_skill_action(args, default="info")
         if action is None:
             return SkillResult.fail("action must be a string.", "INVALID_ACTION")
+
+        if action == "runtime_parameters":
+            from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import runtime_parameter_schema
+            return SkillResult.ok({"parameters": runtime_parameter_schema()})
 
         if action == "ping":
             return SkillResult.ok({"pong": True})

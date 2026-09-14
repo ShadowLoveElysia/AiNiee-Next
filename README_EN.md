@@ -357,3 +357,7 @@ If related core modules are referenced, integrated, or reused in later stages, t
   <br>
   Based on the original work by NEKOparapa
 </div>
+
+### Workflow runtime parameters
+
+Workflows accept per-run model, concurrency, context, quality switches, and step overrides while reusing configured interfaces. See [runtime parameter usage](Docs/WORKFLOW_RUNTIME_PARAMETERS.md).

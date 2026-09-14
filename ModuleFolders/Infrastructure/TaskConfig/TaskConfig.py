@@ -326,9 +326,14 @@ class TaskConfig(Base):
             return
 
         self.prompt_dictionary_data = []
+        explicit = getattr(self, "_task_runtime_overrides", {})
         for switch_key in RULE_CHILD_SWITCH_KEYS:
-            setattr(self, switch_key, False)
+            if switch_key not in explicit:
+                setattr(self, switch_key, False)
         for data_key in RULE_RUNTIME_DATA_KEYS:
+            switch_key = data_key.replace("_data", "_switch").replace("_content", "_switch")
+            if explicit.get(switch_key) is True:
+                continue
             empty_value = "" if data_key in ("world_building_content", "writing_style_content") else []
             setattr(self, data_key, empty_value)
 
@@ -371,6 +376,11 @@ class TaskConfig(Base):
 
     # 准备翻译
     def prepare_for_translation(self,mode) -> None:
+        overrides = getattr(self, "_task_runtime_overrides", {})
+        if overrides:
+            from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import apply_runtime_overrides
+            role = "polish" if mode == TaskType.POLISH else "translate"
+            self.load_config_from_dict(apply_runtime_overrides(self.get_vars(), overrides, role))
         self.disable_rule_runtime_payload()
 
         # 获取目标平台
@@ -569,6 +579,8 @@ class TaskConfig(Base):
             "auto_complete": auto_complete,
             "enable_stream_api": enable_stream_api,
             "enable_prompt_caching": enable_prompt_caching,
+            "max_output_tokens": self.platforms.get(target_platform).get("max_output_tokens"),
+            "runtime_overrides": copy.deepcopy(getattr(self, "_task_runtime_overrides", {})),
             "sdk_request_mode": sdk_request_mode,
             "use_openai_sdk": use_openai_sdk
         }

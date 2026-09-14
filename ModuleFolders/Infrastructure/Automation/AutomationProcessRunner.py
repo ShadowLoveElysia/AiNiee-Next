@@ -41,6 +41,9 @@ class AutomationProcessRunner:
         runtime_config["automation_run_id"] = run_id
         runtime_config["automation_progress_file"] = progress_file
         runtime_config["workflow_description"] = describe_workflow_steps(runtime_config.get("workflow_steps") or [])
+        if not runtime_config.get("runtime_snapshot") and (runtime_config.get("runtime_overrides") or runtime_config.get("step_overrides") or any(s.get("runtime_overrides") for s in runtime_config.get("workflow_steps", []))):
+            from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import snapshot_for_task
+            runtime_config["runtime_snapshot"] = snapshot_for_task(runtime_config)
         prepared_config, secret_overlay = split_sensitive_data(runtime_config)
 
         with open(task_config_path, "w", encoding="utf-8") as file:

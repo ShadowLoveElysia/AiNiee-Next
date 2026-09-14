@@ -40,6 +40,9 @@ class DashscopeRequester(Base):
                 "stream": False
             }
 
+            if platform_config.get("max_output_tokens") is not None:
+                base_params["max_tokens"] = platform_config["max_output_tokens"]
+
             # 按需添加参数
             if temperature != 1:
                 base_params.update({

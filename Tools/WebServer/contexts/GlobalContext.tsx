@@ -5,6 +5,8 @@ import { DataService } from '../services/DataService';
 
 // Define the shape of the Task Runner's persistent state
 interface TaskRunnerState {
+  runtimeOverrides?: Record<string, string | number | boolean>;
+  stepOverrides?: Record<string, { enabled?: boolean; runtime_overrides?: Record<string, string | number | boolean> }>;
   logs: LogEntry[];
   stats: TaskStats;
   chartData: ChartDataPoint[];

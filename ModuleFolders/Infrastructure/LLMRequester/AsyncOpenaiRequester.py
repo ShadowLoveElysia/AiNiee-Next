@@ -316,6 +316,10 @@ class AsyncOpenaiRequester(Base):
                 nested=is_deepseek and use_sdk,
             )
 
+            output_limit = platform_config.get("max_output_tokens")
+            if output_limit is not None:
+                request_body["max_tokens"] = output_limit
+
             if temperature != 1:
                 request_body["temperature"] = temperature
             if top_p != 1:
@@ -328,6 +332,10 @@ class AsyncOpenaiRequester(Base):
                 request_body["reasoning_effort"] = think_depth
             if is_deepseek:
                 self._apply_deepseek_compatibility(request_body, platform_config)
+
+            if platform_config.get("runtime_overrides"):
+                from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import apply_openai_runtime_request
+                apply_openai_runtime_request(request_body, platform_config)
 
             if use_sdk:
                 # ===== OpenAI SDK 模式 =====

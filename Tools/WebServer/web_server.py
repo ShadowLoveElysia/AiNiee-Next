@@ -375,6 +375,9 @@ class TaskManager:
                 env.pop(WEB_TASK_API_KEY_ENV, None)
                 if spec.api_key:
                     env[WEB_TASK_API_KEY_ENV] = spec.api_key
+                if spec.runtime_overrides or spec.step_overrides:
+                    from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV, write_worker_snapshot
+                    env[RUNTIME_SNAPSHOT_ENV] = write_worker_snapshot(spec.to_mapping())
                 if self.task_id:
                     env[WEB_TASK_ID_ENV] = self.task_id
                 # 获取当前 WebServer 的运行地址
@@ -701,6 +704,8 @@ class QueueTaskItem(BaseModel):
     failover: Optional[bool] = None
     resume: Optional[bool] = False
     polish_mode: Optional[str] = None
+    runtime_overrides: Optional[Dict[str, Any]] = None
+    step_overrides: Optional[Dict[str, Any]] = None
     status: Optional[str] = "waiting"
 
     def to_task_spec(self) -> TaskSpec:
@@ -739,6 +744,8 @@ class QueueTaskUpdate(BaseModel):
     failover: Optional[bool] = None
     resume: Optional[bool] = None
     polish_mode: Optional[str] = None
+    runtime_overrides: Optional[Dict[str, Any]] = None
+    step_overrides: Optional[Dict[str, Any]] = None
 
 class QueueMoveRequest(BaseModel):
     to_index: int
@@ -789,6 +796,8 @@ class TaskPayload(BaseModel):
     lines_limit: Optional[int] = None
     tokens_limit: Optional[int] = None
     polish_mode: Optional[str] = None
+    runtime_overrides: Optional[Dict[str, Any]] = None
+    step_overrides: Optional[Dict[str, Any]] = None
     manga: Optional[bool] = False
 
     @model_validator(mode="after")
@@ -1295,6 +1304,12 @@ def _missing_prompt_selections(task: str, config: Dict[str, Any]) -> List[str]:
         if not _is_prompt_selection_valid(config.get("polishing_prompt_selection"), {10001}):
             missing.append("polishing")
     return missing
+
+
+@app.get("/api/task/runtime-parameters")
+async def get_runtime_parameters():
+    from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import runtime_parameter_schema
+    return {"parameters": runtime_parameter_schema()}
 
 
 @app.get("/api/config")
@@ -3065,7 +3080,23 @@ async def run_task(payload: TaskPayload):
 
     spec = payload.to_task_spec()
     active_config = _load_active_config_payload()
-    missing_prompts = _missing_prompt_selections(spec.task_type, active_config)
+    if spec.runtime_overrides or spec.step_overrides:
+        from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import load_effective_config
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import apply_runtime_overrides, merge_runtime_overrides
+        try:
+            active_config = load_effective_config(active_profile_name=spec.profile, active_rules_profile_name=spec.rules_profile, create_missing=False)
+            missing_prompts = []
+            roles = ["translate", "polish"] if spec.task_type == "all_in_one" else [spec.task_type]
+            for role in roles:
+                step = spec.step_overrides.get(role, {})
+                if step.get("enabled") is False:
+                    continue
+                effective = apply_runtime_overrides(active_config, merge_runtime_overrides(spec.runtime_overrides, step.get("runtime_overrides")), role)
+                missing_prompts.extend(_missing_prompt_selections(role, effective))
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        missing_prompts = _missing_prompt_selections(spec.task_type, active_config)
     if missing_prompts:
         labels = {
             "translation": _web_tr(

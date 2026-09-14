@@ -28,6 +28,13 @@ from ModuleFolders.Infrastructure.RequestLimiter.RequestLimiter import RequestLi
 from ModuleFolders.Service.TaskExecutor.TranslatorUtil import get_source_language_for_file
 
 
+def _runtime_rounds(config):
+    current = 0
+    while current <= config.round_limit:
+        yield current
+        current += 1
+
+
 def _safe_int(value, default=0):
     try:
         return int(value)
@@ -377,6 +384,23 @@ class TaskExecutor(Base):
 
             return references
 
+    def _execute_polishing_async(self, tasks_list):
+        """异步调度润色单元，保留润色专用的解析和写回逻辑。"""
+        import asyncio
+
+        async def execute():
+            gate = asyncio.Semaphore(max(1, self.config.actual_thread_counts))
+            async def run(task):
+                async with gate:
+                    if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                        return
+                    result = await asyncio.to_thread(self._gated_run, task)
+                    future = concurrent.futures.Future()
+                    future.set_result(result)
+                    self.task_done_callback(future)
+            await asyncio.gather(*(run(task) for task in tasks_list))
+        asyncio.run(execute())
+
     def _execute_tasks_async(self, tasks_list):
         """异步执行模式：使用 aiohttp 处理高并发请求"""
         import asyncio
@@ -710,7 +734,16 @@ class TaskExecutor(Base):
             elif self.current_mode == TaskType.POLISH:
                 self.config.api_settings["polish"] = new_api
 
-            # Re-prepare configuration (updates base_url, keys, models, etc.)
+            # 故障转移采用备用接口默认模型，同时保留本次质量参数。
+            runtime = dict(getattr(self.config, "_task_runtime_overrides", {}))
+            if runtime:
+                runtime["platform"] = new_api
+                runtime.pop("model", None)
+                self.config._task_runtime_overrides = runtime
+                self.config._runtime_selected_interface = ""
+            self.config.model = ""
+            self.config.base_url = ""
+            self.config.api_key = ""
             self.config.prepare_for_translation(self.current_mode)
 
             # Update limiter with new limits
@@ -925,6 +958,7 @@ class TaskExecutor(Base):
             self.config.prepare_for_translation(TaskType.TRANSLATION)
 
             if getattr(self.config, "translation_consistency_enhancement", False):
+                self.config.actual_thread_counts = 1
                 if getattr(self.config, "enable_async_mode", False):
                     self.warning("翻译一致性增强模式将关闭异步执行，改为同步单线程顺序处理 ...")
                     self.config.enable_async_mode = False
@@ -981,7 +1015,7 @@ class TaskExecutor(Base):
             self.emit(Base.EVENT.TASK_UPDATE, self._with_filter_progress_info(self.project_status_data.to_dict()))
 
             # 根据最大轮次循环
-            for current_round in range(self.config.round_limit + 1):
+            for current_round in _runtime_rounds(self.config):
                 # 检测是否需要停止任务
                 if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
                     # 循环次数比实际最大轮次要多一轮，当触发停止翻译的事件时，最后都会从这里退出任务
@@ -1003,7 +1037,11 @@ class TaskExecutor(Base):
                 if item_count_status_untranslated > 0:
                     if self.config.enable_smart_round_limit and current_round == self.config.round_limit:
                         # 动态增加 round_limit
-                        self.config.round_limit = int(self.config.round_limit * self.config.smart_round_limit_multiplier)
+                        maximum = max(self.config.round_limit, int(getattr(self.config, "smart_round_max_limit", 10)))
+                        if self.config.round_limit >= maximum:
+                            self.warning("Smart round limit reached; remaining items stay available for resume.")
+                            break
+                        self.config.round_limit = min(maximum, int(self.config.round_limit * self.config.smart_round_limit_multiplier))
                         self.warning(f"已达到最大翻译轮次，但仍有未翻译文本。智能轮次限制已将最大轮次增加到 {self.config.round_limit} ...")
                         # 不中断循环，继续进行翻译
                     elif not self.config.enable_smart_round_limit and current_round == self.config.round_limit:
@@ -1056,7 +1094,8 @@ class TaskExecutor(Base):
                     language_stats = self.cache_manager.project.get_file(file_path).language_stats # 获取该文件的语言检测数据
                     file_source_lang = get_source_language_for_file(self.config.source_language,self.config.target_language,language_stats)
 
-                    task = TranslatorTask(self.config, self.plugin_manager, self.request_limiter, file_source_lang)  # 实例化
+                    task = TranslatorTask(self.config, self.plugin_manager, self.request_limiter, file_source_lang)
+                    task._runtime_rag_project = self.cache_manager.project  # 实例化
                     task.task_id = f"{current_round + 1:02d}-{i:03d}"
                     task.task_session_id = Base.current_task_session()
                     task.file_path_full = file_path
@@ -1149,8 +1188,8 @@ class TaskExecutor(Base):
                     # 重置并发计数器，防止上一轮异常退出后卡死
                     with self._concurrency_lock:
                         self._current_active = 0
-                    # 开始执行翻译任务,构建异步线程池 (使用 100 高限额，由 gated_run 实际控制并发)
-                    self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = 100, thread_name_prefix = "translator")
+                    # 线程池容量与本次有效并发一致。
+                    self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = max(1, self.config.actual_thread_counts), thread_name_prefix = "translator")
                     try:
                         with self.executor as executor:
                             for task in tasks_list:
@@ -1308,7 +1347,7 @@ class TaskExecutor(Base):
 
 
             # 根据最大轮次循环
-            for current_round in range(self.config.round_limit + 1):
+            for current_round in _runtime_rounds(self.config):
                 # 检测是否需要停止任务
                 if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
                     # 循环次数比实际最大轮次要多一轮，当触发停止翻译的事件时，最后都会从这里退出任务
@@ -1334,7 +1373,11 @@ class TaskExecutor(Base):
                 if item_count_status_unpolishd > 0:
                     if self.config.enable_smart_round_limit and current_round == self.config.round_limit:
                         # 动态增加 round_limit
-                        self.config.round_limit = int(self.config.round_limit * self.config.smart_round_limit_multiplier)
+                        maximum = max(self.config.round_limit, int(getattr(self.config, "smart_round_max_limit", 10)))
+                        if self.config.round_limit >= maximum:
+                            self.warning("Smart round limit reached; remaining items stay available for resume.")
+                            break
+                        self.config.round_limit = min(maximum, int(self.config.round_limit * self.config.smart_round_limit_multiplier))
                         self.warning(f"已达到最大任务轮次，但仍有未润色文本。智能轮次限制已将最大轮次增加到 {self.config.round_limit} ...")
                         # 不中断循环，继续进行润色
                     elif not self.config.enable_smart_round_limit and current_round == self.config.round_limit:
@@ -1432,20 +1475,23 @@ class TaskExecutor(Base):
                         return None
                     self.print("")
 
-                # 重置并发计数器，防止上一轮异常退出后卡死
-                with self._concurrency_lock:
-                    self._current_active = 0
-                # 开始执行润色务,构建异步线程池 (使用 100 高限额，由 gated_run 实际控制并发)
-                self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = 100, thread_name_prefix = "translator")
-                try:
-                    with self.executor as executor:
-                        for task in tasks_list:
-                            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
-                                break
-                            future = executor.submit(self._gated_run, task)
-                            future.add_done_callback(self.task_done_callback)  # 为future对象添加一个回调函数，当任务完成时会被调用，更新数据
-                finally:
-                    self.executor = None
+                if getattr(self.config, "enable_async_mode", False):
+                    self._execute_polishing_async(tasks_list)
+                else:
+                    # 重置并发计数器，防止上一轮异常退出后卡死
+                    with self._concurrency_lock:
+                        self._current_active = 0
+                    # 线程池容量与本次有效并发一致。
+                    self.executor = concurrent.futures.ThreadPoolExecutor(max_workers = max(1, self.config.actual_thread_counts), thread_name_prefix = "translator")
+                    try:
+                        with self.executor as executor:
+                            for task in tasks_list:
+                                if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                                    break
+                                future = executor.submit(self._gated_run, task)
+                                future.add_done_callback(self.task_done_callback)  # 为future对象添加一个回调函数，当任务完成时会被调用，更新数据
+                    finally:
+                        self.executor = None
 
             # Ensure latest progress is persisted before post-processing/output.
             if not Base.is_task_session_active():

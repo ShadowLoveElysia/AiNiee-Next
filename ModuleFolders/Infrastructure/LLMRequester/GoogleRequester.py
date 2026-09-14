@@ -112,7 +112,7 @@ class GoogleRequester(Base):
 
             # 构建基础配置
             gen_config = types.GenerateContentConfig(
-                max_output_tokens=ModelConfigHelper.get_google_max_output_tokens(model_name),
+                max_output_tokens=platform_config.get("max_output_tokens") or ModelConfigHelper.get_google_max_output_tokens(model_name),
                 temperature=temperature,
                 top_p=top_p,
                 safety_settings=[
@@ -131,6 +131,9 @@ class GoogleRequester(Base):
                     include_thoughts=True,
                     thinking_budget=thinking_budget
                 )
+
+            elif platform_config.get("runtime_overrides", {}).get("think_switch") is False:
+                gen_config.thinking_config = types.ThinkingConfig(thinking_budget=0)
 
             # 生成文本内容
             generate_params = {

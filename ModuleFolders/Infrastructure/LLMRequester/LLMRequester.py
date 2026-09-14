@@ -57,7 +57,9 @@ class LLMRequester:
 
         config = Base().load_config()
 
-        configured_retries = int(config.get("retry_count", 3) or 3)
+        runtime = platform_config.get("runtime_overrides", {})
+        config.update({key: runtime[key] for key in ("retry_count", "enable_retry_backoff") if key in runtime})
+        configured_retries = max(1, int(config.get("retry_count", 3)))
         retry_enabled = config.get("enable_retry_backoff", True)
         max_retries = configured_retries if retry_enabled else 1
         current_retry = 0

@@ -379,3 +379,7 @@ UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi
   <br>
   Based on the original work by NEKOparapa
 </div>
+
+### 工作流运行参数
+
+自动化工作流支持本次模型、并发、上下文、质量开关和步骤参数覆盖，复用已有接口配置。用法与继承规则见 [工作流运行参数](Docs/WORKFLOW_RUNTIME_PARAMETERS.md)。

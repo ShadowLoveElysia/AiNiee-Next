@@ -86,6 +86,7 @@ EXACT_ROUTE_PURPOSES = {
     "/api/queue": "Read or modify queue tasks.",
     "/api/queue/raw": "Read or replace the raw queue JSON document.",
     "/api/task/run": "Start a translation / polish / export task.",
+    "/api/task/runtime-parameters": "List runtime override fields, types, ranges and dependencies.",
     "/api/task/stop": "Stop the current running task.",
     "/api/task/status": "Read live task status, logs, and metrics.",
     "/api/files/upload": "Upload a local file to the project staging area.",

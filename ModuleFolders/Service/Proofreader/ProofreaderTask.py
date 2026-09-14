@@ -93,7 +93,7 @@ class ProofreaderTask(Base):
 
         # 术语表
         glossary = getattr(self.config, 'prompt_dictionary_data', [])
-        if glossary:
+        if glossary and getattr(self.config, "prompt_dictionary_switch", False):
             glossary_str = "\n".join([
                 f"- {item.get('src', '')} → {item.get('dst', '')}"
                 for item in glossary[:50]

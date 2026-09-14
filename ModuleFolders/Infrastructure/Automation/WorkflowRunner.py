@@ -23,6 +23,10 @@ from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     sanitize_profile_name,
 )
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import (
+    apply_runtime_overrides, task_runtime_overrides, normalize_runtime_overrides,
+    merge_runtime_overrides,
+)
 from ModuleFolders.Infrastructure.TaskContract import (
     QUEUE_TASK_TYPES,
     TASK_CONTRACT_INPUT_FIELDS,
@@ -73,6 +77,10 @@ AUTOMATION_TASK_METADATA_FIELDS = frozenset(
         "trigger_type",
         "workflow_description",
         "workflow_steps",
+        "runtime_defaults",
+        "schema_version",
+        "runtime_snapshot",
+        "web_mode",
     }
 )
 
@@ -84,6 +92,7 @@ WORKFLOW_STEP_LABELS = {
     "all_in_one": "Translation + polishing",
     "queue": "Add to queue",
     "run_queue": "Run queue",
+    "proofread": "AI proofreading",
 }
 
 
@@ -115,8 +124,12 @@ _WORKFLOW_STEP_FIELDS = {
     "all_in_one": _WORKFLOW_TASK_FIELDS,
     "queue": _WORKFLOW_TASK_FIELDS,
     "run_queue": frozenset({"type"}),
+    "proofread": _WORKFLOW_TASK_FIELDS,
     "extract_glossary": _WORKFLOW_GLOSSARY_FIELDS,
 }
+
+for _step_kind in _WORKFLOW_STEP_FIELDS:
+    _WORKFLOW_STEP_FIELDS[_step_kind] = _WORKFLOW_STEP_FIELDS[_step_kind] | {"id", "enabled", "runtime_overrides"}
 
 
 class AutomationPartialCompletion(RuntimeError):
@@ -168,6 +181,8 @@ def normalize_workflow_steps(
             step_type = "extract_glossary"
         elif step_type in {"add_to_queue", "queue"}:
             step_type = "queue"
+        elif step_type == "proofread":
+            pass
         elif step_type in {"start_queue", "run_queue"}:
             step_type = "run_queue"
         else:
@@ -182,9 +197,24 @@ def normalize_workflow_steps(
             )
         if step_type == "queue":
             prepared["task_type"] = task_type_to_step_type(prepared.get("task_type", task_type))
+        if "enabled" in prepared and not isinstance(prepared["enabled"], bool):
+            raise TaskContractError("Workflow step enabled must be boolean")
+        if "runtime_overrides" in prepared:
+            prepared["runtime_overrides"] = normalize_runtime_overrides(prepared["runtime_overrides"])
+        if "id" not in prepared:
+            number = len(normalized_steps) + 1
+            while any(previous["id"] == f"{step_type}-{number}" for previous in normalized_steps):
+                number += 1
+            prepared["id"] = f"{step_type}-{number}"
+        if not isinstance(prepared["id"], str) or not prepared["id"].strip():
+            raise TaskContractError("Workflow step ID must be a nonempty string")
+        if any(previous["id"] == prepared["id"] for previous in normalized_steps):
+            raise TaskContractError(f"Duplicate workflow step ID: {prepared['id']}")
         normalized_steps.append(prepared)
 
-    return normalized_steps or default_workflow_steps(task_type, auto_start)
+    if not normalized_steps:
+        return normalize_workflow_steps(default_workflow_steps(task_type, auto_start), task_type, auto_start)
+    return normalized_steps
 
 
 def workflow_step_label(step_type: str, i18n=None) -> str:
@@ -233,6 +263,28 @@ class WorkflowRunner:
             task_config.get("auto_start", True),
         )
         steps = self._prepare_series_glossary_steps(steps, task_config)
+        expanded = []
+        overrides_by_id = dict(task_config.get("step_overrides") or {})
+        for step in steps:
+            if step["type"] != "all_in_one":
+                expanded.append(step)
+                continue
+            parent = overrides_by_id.pop(step["id"], {})
+            for kind in ("translate", "polish"):
+                child = dict(step, type=kind, id=f"{step['id']}.{kind}")
+                if kind == "polish":
+                    child.setdefault("resume", True)
+                else:
+                    child.pop("polish_mode", None)
+                if parent:
+                    own = overrides_by_id.get(child["id"], {})
+                    overrides_by_id[child["id"]] = {
+                        **parent, **own,
+                        "runtime_overrides": merge_runtime_overrides(parent.get("runtime_overrides"), own.get("runtime_overrides")),
+                    }
+                expanded.append(child)
+        steps = expanded
+        task_config["step_overrides"] = overrides_by_id
 
         original_active_profile = getattr(self.host, "active_profile_name", "default")
         original_rules_profile = getattr(self.host, "active_rules_profile_name", "default")
@@ -242,18 +294,44 @@ class WorkflowRunner:
             getattr(self.host, "runtime_config_overrides", {})
         )
         workflow_context: Dict[str, Any] = {}
+        previous_runtime_active = getattr(self.host, "_runtime_task_active", False)
+        self.host._runtime_task_active = True
 
         try:
             self._apply_profile_context(task_config)
+            self.host.config["_workflow_explicit_proofread"] = any(step["type"] == "proofread" for step in steps)
+            known_ids = {step["id"] for step in steps}
+            unknown_ids = set(task_config.get("step_overrides") or {}) - known_ids
+            if unknown_ids:
+                raise TaskContractError(f"Unknown workflow step IDs: {sorted(unknown_ids)}")
 
             for index, step in enumerate(steps, 1):
                 step = self._with_task_defaults(step, task_config)
                 step = self._with_workflow_context(step, workflow_context)
+                specific = (task_config.get("step_overrides") or {}).get(step["id"], {})
+                step["runtime_overrides"] = merge_runtime_overrides(
+                    task_config.get("runtime_defaults"), task_config.get("runtime_overrides"),
+                    step.get("runtime_overrides"), specific.get("runtime_overrides"),
+                )
+                step["enabled"] = specific.get("enabled", step.get("enabled", True))
                 step_type = step.get("type")
+                if not step["enabled"]:
+                    self._log("info", f"Workflow step {step['id']}: skipped")
+                    if self.progress_reporter:
+                        self.progress_reporter.update(step_id=step["id"], step_status="skipped")
+                    continue
                 self._report_step(index, len(steps), step_type)
                 self._log("info", f"Workflow step {index}/{len(steps)}: {step_type}")
                 if step_type == "extract_glossary":
-                    self._run_glossary_step(input_path, step, task_config, workflow_context)
+                    previous_step_config = copy.deepcopy(self.host.config)
+                    try:
+                        self.host.config = apply_runtime_overrides(self.host.config, step["runtime_overrides"], step_type)
+                        glossary_task = dict(task_config, runtime_overrides=step["runtime_overrides"])
+                        self._run_glossary_step(input_path, step, glossary_task, workflow_context)
+                    finally:
+                        self.host.config = previous_step_config
+                elif step_type == "proofread":
+                    self._run_proofread_step(input_path, step, task_config)
                 elif step_type == "translate":
                     self._run_task_step(
                         TaskType.TRANSLATION,
@@ -281,6 +359,7 @@ class WorkflowRunner:
 
             return True
         finally:
+            self.host._runtime_task_active = previous_runtime_active
             self.host.active_profile_name = original_active_profile
             self.host.active_rules_profile_name = original_rules_profile
             self.host.root_config = original_root_config
@@ -308,8 +387,11 @@ class WorkflowRunner:
                 f"Task type {spec.task_type!r} is not supported by automation workflows"
             )
         normalized = dict(task_config)
+        normalized["runtime_defaults"] = normalize_runtime_overrides(task_config.get("runtime_defaults"))
         normalized.update(spec.to_mapping(include_none=True, include_api_key=True))
         normalized["task_type"] = spec.task_type
+        normalized.pop("task", None)
+        normalized.pop("run_all_in_one", None)
         if not resume_was_provided:
             normalized.pop("resume", None)
         return normalized
@@ -357,7 +439,15 @@ class WorkflowRunner:
                 active_profile_name=profile or getattr(self.host, "active_profile_name", None),
                 active_rules_profile_name=rules_profile or getattr(self.host, "active_rules_profile_name", None),
             )
-        self._apply_task_overrides(task_config)
+        self._restore_runtime_snapshot(task_config)
+        initial = dict(task_config, runtime_overrides={})
+        self._apply_task_overrides(initial)
+
+    def _restore_runtime_snapshot(self, task_config):
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import restore_runtime_snapshot
+        snapshot = task_config.get("runtime_snapshot")
+        if snapshot:
+            self.host.config = restore_runtime_snapshot(self.host.config, snapshot)
 
     def _apply_task_overrides(self, task_config: dict):
         cfg = getattr(self.host, "config", {})
@@ -424,6 +514,13 @@ class WorkflowRunner:
             self.host.runtime_config_overrides = runtime_overrides
 
         self._apply_dynamic_glossary_context(task_config)
+        overrides = task_runtime_overrides(task_config)
+        self.host.config = apply_runtime_overrides(cfg, overrides, task_config.get("task_type", "translate"))
+        if task_config.get("api_url"):
+            self.host.config["base_url"] = task_config["api_url"]
+        if task_config.get("api_key"):
+            self.host.config["api_key"] = task_config["api_key"]
+
 
     def _apply_dynamic_glossary_context(self, task_config: dict):
         cfg = getattr(self.host, "config", {})
@@ -890,6 +987,11 @@ class WorkflowRunner:
 
         task_payload = select_task_contract_fields(task_config or {})
         task_payload.update(select_task_contract_fields(step))
+        # 步骤显式设置优先于任务的旧式顶层参数。
+        from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import LEGACY_ALIASES
+        for old_key, new_key in {**LEGACY_ALIASES, "platform": "platform", "model": "model", "think_depth": "think_depth", "thinking_budget": "thinking_budget", "lines_limit": "lines_limit", "tokens_limit": "tokens_limit"}.items():
+            if new_key in step.get("runtime_overrides", {}) and old_key not in step:
+                task_payload.pop(old_key, None)
         task_payload["task_type"] = contract_task_type or task_type_to_step_type(task_type)
         task_payload["input_path"] = input_path
         task_payload["resume"] = resume
@@ -911,9 +1013,27 @@ class WorkflowRunner:
                     active_profile_name=step_spec.profile or previous_active_profile,
                     active_rules_profile_name=step_spec.rules_profile or previous_rules_profile,
                 )
-            self._apply_task_overrides(
-                step_spec.to_mapping(include_none=True, include_api_key=True)
-            )
+            series_values = {key: copy.deepcopy(self.host.config[key]) for key in ("dynamic_glossary_series", "dynamic_glossary_volume", "dynamic_glossary_volume_map") if key in self.host.config}
+            self._restore_runtime_snapshot(task_config or {})
+            self.host.config.update(series_values)
+            saved_step = ((task_config or {}).get("runtime_snapshot") or {}).get("step_configs", {}).get(step.get("id")) or ((task_config or {}).get("runtime_snapshot") or {}).get("step_configs", {}).get(str(step.get("id", "")).rsplit(".", 1)[0])
+            if saved_step:
+                from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import restore_runtime_snapshot
+                self.host.config = restore_runtime_snapshot(self.host.config, saved_step)
+            prompt_snapshot = ((task_config or {}).get("runtime_snapshot") or {}).get("step_prompts", {}).get(step.get("id"), {})
+            for prompt_key in ("translation_prompt_selection", "polishing_prompt_selection"):
+                if prompt_key in prompt_snapshot:
+                    self.host.config[prompt_key] = copy.deepcopy(prompt_snapshot[prompt_key])
+            if not saved_step and step_spec.rules_profile and step_spec.rules_profile != (task_config or {}).get("rules_profile"):
+                from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import load_effective_config, RULE_PROFILE_KEYS
+                rules = load_effective_config(active_rules_profile_name=step_spec.rules_profile, create_missing=False)
+                self.host.config.update({key: copy.deepcopy(rules[key]) for key in RULE_PROFILE_KEYS if key in rules})
+            self.host.config["_workflow_explicit_proofread"] = any(s.get("type") == "proofread" for s in (task_config or {}).get("workflow_steps", []))
+            step_payload = step_spec.to_mapping(include_none=True, include_api_key=True)
+            step_payload["task_type"] = "polish" if task_type == TaskType.POLISH else "translate"
+            self._apply_task_overrides(step_payload)
+            if self.progress_reporter:
+                self.progress_reporter.update(runtime_parameters=step_spec.runtime_overrides, step_id=step.get("id", ""), step_status="running")
 
             output_path = self._resolve_step_output_path(input_path, step)
             if output_path:
@@ -925,11 +1045,14 @@ class WorkflowRunner:
                 target_path=input_path,
                 continue_status=step_spec.resume,
                 non_interactive=True,
+                web_mode=bool((task_config or {}).get("web_mode", False)),
                 from_queue=True,
                 skip_preflight=True,
                 save_runtime_config=False,
                 automation_progress=bool(self.progress_reporter),
             )
+            if ok:
+                self._last_output_path = self.host.config.get("label_output_path")
         finally:
             self.host.active_profile_name = previous_active_profile
             self.host.active_rules_profile_name = previous_rules_profile
@@ -946,6 +1069,14 @@ class WorkflowRunner:
         partial_message = self._partial_message_from_reporter()
         if partial_message:
             raise AutomationPartialCompletion(partial_message)
+
+    def _run_proofread_step(self, input_path, step, task_config):
+        from ModuleFolders.Service.Proofreader.AutomationProofread import run_automation_proofread
+        config = apply_runtime_overrides(self.host.config, step.get("runtime_overrides", {}), "proofread")
+        output_path = self._resolve_step_output_path(input_path, step) or getattr(self, "_last_output_path", None) or config.get("label_output_path")
+        if not output_path:
+            output_path = self.host.auto_generate_output_path(input_path)
+        run_automation_proofread(config, output_path)
 
     def _run_all_in_one_step(self, input_path: str, step: dict, task_config: dict = None):
         resume_explicit = "resume" in step or "resume" in (task_config or {})

@@ -251,7 +251,15 @@ class TranslatorTask(Base):
             "previous_text_list": self.previous_text_list,
             "rag_context": "" # 插件可以填充此字段
         }
-        self.plugin_manager.broadcast_event("build_rag_context", self.config, rag_context_data)
+        rag_enabled = getattr(self.config, "rag_enabled", None)
+        if rag_enabled is True:
+            from PluginScripts.RAGPlugin.RAGPlugin import RAGPlugin
+            plugin = RAGPlugin()
+            plugin.load()
+            plugin.project_cache = getattr(self, "_runtime_rag_project", None)
+            plugin.on_event("build_rag_context", self.config, rag_context_data)
+        elif rag_enabled is not False:
+            self.plugin_manager.broadcast_event("build_rag_context", self.config, rag_context_data)
         self.rag_context = rag_context_data.get("rag_context", "")
 
         # 各种替换步骤，译前替换，提取首尾与占位中间代码
