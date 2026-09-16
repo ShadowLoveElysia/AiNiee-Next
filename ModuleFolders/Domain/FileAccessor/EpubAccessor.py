@@ -336,6 +336,11 @@ class EpubAccessor:
         html_language: str = "",
         layout_direction: str = "unchanged",
         metadata_title: str = "",
+        reader_font_control: bool = False,
+        sync_chapter_titles: bool = False,
+        translated_fragments: dict = None,
+        series_name: str = "",
+        series_volume: str = "",
     ):
         if html_language:
             content = self._merge_language_updates(source_file_path, content, html_language)
@@ -343,6 +348,28 @@ class EpubAccessor:
             content = self._merge_layout_updates(source_file_path, content, layout_direction)
         if metadata_title:
             content = self._merge_title_update(source_file_path, content, metadata_title)
+        if reader_font_control or sync_chapter_titles or (series_name and series_volume):
+            from ModuleFolders.Domain.FileAccessor.EpubUtilities import (
+                release_reader_fonts, sync_navigation, update_series_metadata,
+            )
+            content = dict(content)
+            with zipfile.ZipFile(source_file_path, 'r') as zipf:
+                originals = {
+                    info.filename: self._read_text(zipf, info)
+                    for info in zipf.infolist()
+                    if info.filename.lower().endswith(('.css', '.xhtml', '.html', '.htm', '.xht', '.ncx', '.opf'))
+                }
+                documents = {**originals, **content}
+                if sync_chapter_titles:
+                    content.update(sync_navigation(documents, originals, translated_fragments or {}))
+                if reader_font_control:
+                    for filename, original in documents.items():
+                        if filename.lower().endswith(('.css', '.xhtml', '.html', '.htm', '.xht')):
+                            content[filename] = release_reader_fonts(filename, content.get(filename, original))
+                if series_name and series_volume:
+                    opf = self._find_opf_file(zipf)
+                    if opf and opf in documents:
+                        content[opf] = update_series_metadata(content.get(opf, documents[opf]), series_name, series_volume)
         normalized_content = {
             filename: self._normalize_output_text(filename, file_content)
             for filename, file_content in content.items()

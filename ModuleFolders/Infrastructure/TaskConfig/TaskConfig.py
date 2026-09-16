@@ -158,6 +158,14 @@ class TaskConfig(Base):
         self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
         self.epub_language_update_mode = "auto"
         self.epub_layout_mode = "off"
+        self.epub_reader_font_control = False
+        self.epub_sync_chapter_titles = True
+        self.ebook_series_enabled = False
+        self.ebook_fill_series_metadata = True
+        self.ebook_series_name = ""
+        self.ebook_apply_name_template = True
+        self.ebook_name_template = "X 第N卷"
+        self.enable_batch_auto_merge_ebook = False
         self.polishing_mode_selection = POLISH_TRANSLATED_TEXT # NEW: 润色模式选择
         self.polishing_pre_line_counts = 2 # NEW: 润色时获取上文的行数
         self.proofread_report_mode = "archive"

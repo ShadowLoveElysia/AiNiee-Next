@@ -640,99 +640,35 @@ class CLIMenu:
         save_root_config(self.root_config)
 
     def _auto_merge_batch_ebooks(self, merge_input_dir, merge_output_dir, merge_name, allow_non_series_prompt=True):
-        """批量目录任务完成后，自动调用批量电子书整合脚本进行合并。"""
-        import collections
+        """Merge the current batch outputs with the configured ebook naming rule."""
+        from ModuleFolders.Domain.FileOutputer.BatchEbookMerger import merge_batch_ebooks
 
+        log = getattr(getattr(self, "ui", None), "log", console.print)
         conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
         if not os.path.isfile(conv_script):
-            self.ui.log(f"[dim]{i18n.get('msg_batch_merge_script_missing')}[/dim]")
+            log(f"[dim]{i18n.get('msg_batch_merge_script_missing')}[/dim]")
             return False
-
-        supported_extensions = (
-            '.pdf', '.cbz', '.cbr', '.epub', '.mobi', '.azw3', '.docx', '.txt',
-            '.kepub', '.fb2', '.lit', '.lrf', '.pdb', '.pmlz', '.rb', '.rtf',
-            '.tcr', '.txtz', '.htmlz'
-        )
-        try:
-            merge_candidates = [
-                f for f in os.listdir(merge_input_dir)
-                if os.path.isfile(os.path.join(merge_input_dir, f)) and f.lower().endswith(supported_extensions)
-            ]
-        except Exception as e:
-            self.ui.log(i18n.get("msg_batch_merge_failed").format(str(e)))
+        records = getattr(self.file_outputer, "last_output_files", [])
+        if len(records) < 2:
+            log(f"[dim]{i18n.get('msg_batch_merge_not_enough_files')}[/dim]")
             return False
-
-        if len(merge_candidates) < 2:
-            self.ui.log(f"[dim]{i18n.get('msg_batch_merge_not_enough_files')}[/dim]")
-            return False
-
-        keyword_counter = collections.Counter()
-        for file_name in merge_candidates:
-            stem = os.path.splitext(file_name)[0]
-            stem = re.sub(r"(?i)(?:_translated|\.translated)$", "", stem).strip()
-
-            while True:
-                old_stem = stem
-                # 只按“同名 + 末尾数字序号”思路去掉尾巴，如：作品名 01 / 作品名-02 / 作品名(003)
-                stem = re.sub(r"[\s._\-]*[（(【\[]?\d{1,4}[】\])）]?$", "", stem).strip()
-                stem = re.sub(r"[\s._\-]+$", "", stem).strip()
-                if stem == old_stem:
-                    break
-
-            keyword = re.sub(r"[\s._\-]+", " ", stem).strip()
-            if len(keyword) >= 2:
-                keyword_counter[keyword] += 1
-
-        detected_keywords = keyword_counter.most_common(3)
-        top_count = detected_keywords[0][1] if detected_keywords else 0
-        threshold = max(2, int(len(merge_candidates) * 0.6 + 0.5))
-        is_series_like = top_count >= threshold
-
-        if not is_series_like and allow_non_series_prompt:
-            keyword_text = ", ".join([f"{k} x{v}" for k, v in detected_keywords]) if detected_keywords else i18n.get("label_none")
-            self.ui.log(f"[yellow]{i18n.get('msg_batch_merge_non_series_detected').format(keyword_text)}[/yellow]")
+        if not self.config.get("ebook_series_enabled", False) and len({item.series for _, item in records}) > 1 and allow_non_series_prompt:
             if not Confirm.ask(i18n.get("prompt_batch_merge_disable_for_non_series"), default=False):
-                self.ui.log(f"[yellow]{i18n.get('msg_batch_merge_auto_disabled')}[/yellow]")
                 return False
-
-        self.ui.log(i18n.get("msg_batch_merge_start").format(merge_name))
-        cmd = [
-            "uv", "run", conv_script,
-            "-p", merge_input_dir,
-            "-f", "epub",
-            "-m", "novel",
-            "-op", merge_output_dir,
-            "-o", merge_name,
-            "-t", merge_name,
-            "-l", get_calibre_lang_code(current_lang),
-            "--auto-merge",
-            "--AiNiee",
-        ]
-
+        log(i18n.get("msg_batch_merge_start").format(merge_name))
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                merged_name = f"{merge_name}.epub"
-                merged_path = os.path.join(merge_output_dir, merged_name)
-                if os.path.exists(merged_path):
-                    self.ui.log(i18n.get("msg_batch_merge_success").format(os.path.basename(merged_path)))
-                else:
-                    self.ui.log(i18n.get("msg_batch_merge_success").format(merged_name))
-                return True
-
-            err_detail = (result.stderr or result.stdout or "").strip()
-            if err_detail:
-                err_detail = err_detail.splitlines()[-1][:240]
-            else:
-                err_detail = "Unknown error"
-            self.ui.log(i18n.get("msg_batch_merge_failed").format(err_detail))
-        except FileNotFoundError as e:
-            missing_cmd = e.filename or str(e)
-            self.ui.log(i18n.get("msg_batch_merge_failed").format(f"Command not found: {missing_cmd}"))
-        except Exception as e:
-            self.ui.log(i18n.get("msg_batch_merge_failed").format(str(e)))
-
-        return False
+            results = merge_batch_ebooks(
+                records, merge_output_dir, merge_name, self.config, conv_script,
+                get_calibre_lang_code(current_lang),
+            )
+            for path in results:
+                log(i18n.get("msg_batch_merge_success").format(path.name))
+            if not results:
+                log(f"[dim]{i18n.get('msg_batch_merge_not_enough_files')}[/dim]")
+            return bool(results)
+        except Exception as exc:
+            log(i18n.get("msg_batch_merge_failed").format(str(exc)))
+            return False
 
     def signal_handler(self, sig, frame):
         if self.task_running:
@@ -2174,6 +2110,7 @@ class CLIMenu:
                 and task_mode == TaskType.TRANSLATION
                 and is_batch_folder_mode
                 and self.config.get("enable_batch_auto_merge_ebook", False)
+                and not _task_has_missing_items()
             ):
                 merge_name = f"{batch_folder_name}_AiNiee_Merged" if batch_folder_name else "AiNiee_Merged"
                 self._auto_merge_batch_ebooks(

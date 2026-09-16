@@ -118,6 +118,11 @@ class ExportFlow:
                     output_config,
                     config,
                 )
+                if os.path.isdir(target_path) and self.host.config.get("enable_batch_auto_merge_ebook", False):
+                    merge = getattr(self.host, "_auto_merge_batch_ebooks", None)
+                    if merge:
+                        merge(output_path, output_path, os.path.basename(target_path) + "_AiNiee_Merged",
+                              allow_non_series_prompt=not non_interactive)
                 self._convert_output_format(output_path, target_path, non_interactive)
 
             console.print(f"\n[green]✓ {self.i18n.get('msg_export_completed')}[/green]")

@@ -1558,7 +1558,7 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                         processedToc.append(griseoEpub.Link(newHref, item.title, bookPrefix + (item.uid or '')))
                     elif isinstance(item, griseoEpub.Section):
                         oldHref = item.href
-                        newHref = None
+                        newHref = ''
                         if oldHref:
                             parsedHref = urllib.parse.urlsplit(oldHref)
                             newHref = oldHref
@@ -1568,7 +1568,7 @@ def mergeEpubsSmart(sourceDirectory, outputFilePath, bookTitle, languageCode, co
                                     encodedBaseHref = urllib.parse.quote(newBaseHref, safe='/-._~')
                                     newHref = urllib.parse.urlunsplit(('', '', encodedBaseHref, parsedHref.query, parsedHref.fragment))
                                 elif useConservativeMerge:
-                                    newHref = None
+                                    newHref = ''
                         processedToc.append(griseoEpub.Section(item.title, newHref))
                 return processedToc
             if flat_merge:

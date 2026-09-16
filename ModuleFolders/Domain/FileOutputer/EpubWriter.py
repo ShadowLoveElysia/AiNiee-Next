@@ -1,5 +1,4 @@
 import re
-from itertools import groupby
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +16,7 @@ from ModuleFolders.Domain.FileOutputer.BaseWriter import (
     BilingualOrder,
 )
 from ModuleFolders.Domain.FileOutputer.JapaneseQuoteNormalizer import normalize_japanese_quotes
+from ModuleFolders.Domain.FileOutputer.EbookNaming import identify_ebook, output_book_name, series_metadata_enabled
 
 
 class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
@@ -65,11 +65,11 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
     ):
         content = self.file_accessor.read_content(source_file_path)
 
-        translated_item_dict = {
-            k: list(v)
-            for k, v in groupby(cache_file.items, key=lambda x: x.require_extra("item_id"))
-        }
+        translated_item_dict = {}
+        for item in cache_file.items:
+            translated_item_dict.setdefault(item.require_extra("item_id"), []).append(item)
         translation_content = {}
+        translated_fragments = {}
         for item_id, item_filename, html_content in content:
             if item_id not in translated_item_dict:
                 translation_content[item_filename] = html_content
@@ -81,15 +81,24 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
                     original_html = item.require_extra("original_html")
                     translated_text = item.final_text
                     new_html = translate_html_tag(original_html, translated_text)
+                    if original_html in modified_html_content:
+                        translated_fragments.setdefault(item_filename, []).append((original_html, translated_text))
                     modified_html_content = modified_html_content.replace(original_html, new_html, 1)
             translation_content[item_filename] = modified_html_content
+        identity = identify_ebook(source_file_path, self.output_config.ebook_series_name)
+        book_title = output_book_name(source_file_path, vars(self.output_config))
         self.file_accessor.write_content(
             translation_content,
             translation_file_path,
             source_file_path,
             html_language=self._resolve_epub_language(),
             layout_direction=getattr(self.output_config, "epub_layout_direction", "unchanged"),
-            metadata_title=(source_file_path.stem if getattr(self.output_config, "sync_metadata_title", False) else ""),
+            metadata_title=book_title or (source_file_path.stem if self.output_config.sync_metadata_title else ""),
+            reader_font_control=self.output_config.epub_reader_font_control,
+            sync_chapter_titles=self.output_config.epub_sync_chapter_titles,
+            translated_fragments=translated_fragments,
+            series_name=identity.series if series_metadata_enabled(vars(self.output_config)) else "",
+            series_volume=identity.volume,
         )
 
     def _resolve_epub_language(self):

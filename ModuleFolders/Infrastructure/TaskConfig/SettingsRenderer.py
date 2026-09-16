@@ -138,7 +138,7 @@ class SettingsMenuBuilder:
         self.i18n = i18n
         self.menu_items = []  # [(id, key, item)]
 
-    def build_menu_items(self):
+    def build_menu_items(self, submenu=""):
         """构建菜单项列表，按分类组织，高级在前，一般项目设置永远在底部。"""
         self.menu_items = []
         idx = 1
@@ -165,7 +165,7 @@ class SettingsMenuBuilder:
         for category, category_i18n in category_order:
             category_items = []
             for key, item in CONFIG_REGISTRY.items():
-                if item.category == category and is_user_visible(key):
+                if item.category == category and item.submenu == submenu and is_user_visible(key):
                     category_items.append((key, item))
 
             if category_items:

@@ -27,6 +27,7 @@ from ModuleFolders.Domain.FileOutputer.PoWriter import PoWriter
 from ModuleFolders.Domain.FileOutputer.AssWriter import AssWriter
 from ModuleFolders.Domain.FileOutputer.CsvWriter import CsvWriter
 from ModuleFolders.Domain.FileOutputer.PptxWriter import PptxWriter
+from ModuleFolders.Domain.FileOutputer.EbookNaming import UTILITY_DEFAULTS
 
 # Optional Writers
 try:
@@ -41,6 +42,7 @@ class FileOutputer:
 
     def __init__(self):
         self.writer_factory_dict = {}
+        self.last_output_files = []
         self._register_system_writer()
 
     def register_writer(self, writer_class: Type[BaseTranslationWriter], **init_kwargs):
@@ -91,6 +93,10 @@ class FileOutputer:
         :param output_config: 输出配置
         """
         
+        self.last_output_files = []
+        output_config = dict(output_config)
+        for key, default in UTILITY_DEFAULTS.items():
+            output_config.setdefault(key, getattr(task_config, key, default))
         project_type = cache_data.project_type
         if project_type not in self.writer_factory_dict:
             # 如果找不到对应的写入器，尝试使用自动判断
@@ -111,7 +117,7 @@ class FileOutputer:
                 source_directory = input_path_obj
 
             writer = DirectoryWriter(writer_factory)
-            writer.write_translation_directory(cache_data, source_directory, Path(output_path), task_config)
+            self.last_output_files = writer.write_translation_directory(cache_data, source_directory, Path(output_path), task_config)
         else:
             raise ValueError(f"未找到对应的项目写入器: {project_type}")
 
@@ -149,6 +155,7 @@ class FileOutputer:
         # 创建基础的 OutputConfig，包含新的配置项
         def create_output_config(**kwargs):
             base_args = {
+                **{key: config.get(key, default) for key, default in UTILITY_DEFAULTS.items()},
                 "bilingual_order": bilingual_order,
                 "input_root": input_path,
                 "epub_language_update_mode": config.get("epub_language_update_mode", "auto"),

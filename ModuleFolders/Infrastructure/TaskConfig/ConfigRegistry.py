@@ -52,6 +52,7 @@ class ConfigItem:
     depends_on: Optional[str] = None            # 依赖的配置项
     category: str = "general"                   # 配置分类
     online_only: bool = False                   # 仅在线API支持
+    submenu: str = ""
 
 
 # ============================================================
@@ -499,6 +500,44 @@ register_config(ConfigItem(
     choices=["off", "vertical_to_horizontal", "horizontal_to_vertical"],
     category="utility"
 ))
+
+register_config(ConfigItem(
+    key="ebook_series_enabled",
+    default=False,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_ebook_series_enabled",
+    i18n_desc_key="setting_ebook_series_enabled_desc",
+    category="utility",
+))
+
+register_config(ConfigItem(
+    key="ebook_series_settings",
+    default=None,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.DICT,
+    i18n_key="setting_ebook_series_settings",
+    category="utility",
+))
+
+for _ebook_key, _ebook_default, _ebook_type in (
+    ("epub_reader_font_control", False, ConfigType.BOOL),
+    ("epub_sync_chapter_titles", True, ConfigType.BOOL),
+    ("ebook_fill_series_metadata", True, ConfigType.BOOL),
+    ("ebook_series_name", "", ConfigType.STRING),
+    ("ebook_apply_name_template", True, ConfigType.BOOL),
+    ("ebook_name_template", "X 第N卷", ConfigType.STRING),
+):
+    register_config(ConfigItem(
+        key=_ebook_key,
+        default=_ebook_default,
+        level=ConfigLevel.USER,
+        config_type=_ebook_type,
+        i18n_key=f"setting_{_ebook_key}",
+        i18n_desc_key=f"setting_{_ebook_key}_desc",
+        category="utility",
+        submenu="ebook_series_settings" if _ebook_key.startswith("ebook_") else "",
+    ))
 
 # --- 提示词功能开关 (USER) ---
 register_config(ConfigItem(
@@ -1087,11 +1126,11 @@ register_config(ConfigItem(
 register_config(ConfigItem(
     key="enable_batch_auto_merge_ebook",
     default=False,
-    level=ConfigLevel.ADVANCED,
+    level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="setting_enable_batch_auto_merge_ebook",
     i18n_desc_key="setting_enable_batch_auto_merge_ebook_desc",
-    category="advanced"
+    category="utility"
 ))
 
 register_config(ConfigItem(
@@ -1335,7 +1374,7 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="setting_sync_output_metadata_title",
-    category="output"
+    category="utility"
 ))
 
 register_config(ConfigItem(
@@ -1344,7 +1383,7 @@ register_config(ConfigItem(
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="setting_sync_export_metadata_title",
-    category="output"
+    category="utility"
 ))
 
 register_config(ConfigItem(

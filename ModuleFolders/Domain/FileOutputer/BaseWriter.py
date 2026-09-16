@@ -45,6 +45,13 @@ class OutputConfig:
     epub_layout_direction: str = "unchanged"
     interface_language: str = "zh_CN"
     sync_metadata_title: bool = False
+    epub_reader_font_control: bool = False
+    epub_sync_chapter_titles: bool = True
+    ebook_series_enabled: bool = False
+    ebook_fill_series_metadata: bool = True
+    ebook_series_name: str = ""
+    ebook_apply_name_template: bool = True
+    ebook_name_template: str = "X 第N卷"
 
     def __post_init__(self):
         if self.translated_config is None:
