@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 from ModuleFolders.Domain.FileAccessor.EpubAccessor import EpubAccessor
+from ModuleFolders.Domain.FileOutputer.EbookOptions import resolve_epub_language
 from ModuleFolders.Domain.FileOutputer.EbookNaming import (
     EbookIdentity, naming_enabled, render_ebook_name, safe_book_name, series_metadata_enabled, volume_range,
 )
@@ -79,9 +80,16 @@ def merge_batch_ebooks(records, output_dir, fallback_name, settings, script_path
             ready = staging / 'ready.epub'
             EpubAccessor().write_content(
                 {}, ready, merged, metadata_title=title,
+                html_language=resolve_epub_language(settings),
+                layout_direction={'vertical_to_horizontal': 'horizontal', 'horizontal_to_vertical': 'vertical'}.get(settings.get('epub_layout_mode'), 'unchanged'),
                 reader_font_control=bool(settings.get('epub_reader_font_control', False)),
                 series_name=identity.series if series_metadata_enabled(settings) else '',
                 series_volume=identity.volume,
+                paragraph_preset=settings.get('epub_paragraph_preset', 'off'),
+                repair_links=settings.get('epub_repair_links', False),
+                optimize_images=settings.get('ebook_optimize_images', False),
+                image_format=settings.get('ebook_image_format', 'preserve'),
+                image_quality=settings.get('ebook_image_quality', 80),
             )
             # Exclusive creation preserves previous collections and individual volumes.
             with ready.open('rb') as source, final.open('xb') as target:

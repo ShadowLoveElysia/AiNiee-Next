@@ -31,6 +31,16 @@ class DirectoryWriter:
         outputs = []
         planned_paths = set()
         with self.create_writer() as writer:
+            reserved_epubs = set()
+            for storage_path in project.files:
+                if Path(storage_path).suffix.lower() == '.epub':
+                    source = source_directory / storage_path
+                    stem = output_book_name(source, vars(writer.output_config)) or Path(storage_path).stem
+                    for mode in BaseTranslationWriter.TranslationMode:
+                        if writer.can_write(mode):
+                            output = getattr(writer.output_config, mode.config_attr)
+                            destination = (translation_directory or output.output_root) / Path(storage_path).with_name(stem + output.name_suffix + '.epub')
+                            reserved_epubs.add(str(destination.resolve()).casefold())
             # 判断输入路径是目录还是文件
             is_source_a_directory = source_directory.is_dir()
             
@@ -66,7 +76,19 @@ class DirectoryWriter:
                         # 执行写入
                         write_translation_file(translation_file_path, file_items, source_file_path, task_config)
                         if translation_mode == BaseTranslationWriter.TranslationMode.TRANSLATED and translation_file_path.is_file():
-                            outputs.append((translation_file_path, identify_ebook(source_file_path, writer.output_config.ebook_series_name)))
+                            artifact = translation_file_path
+                            if writer.output_config.txt_generate_epub and source_file_path.suffix.lower() == '.txt':
+                                from ModuleFolders.Domain.FileOutputer.TxtEpubBuilder import build_txt_epub
+                                artifact = translation_file_path.with_suffix('.epub')
+                                number = 2
+                                while artifact.exists() or str(artifact.resolve()).casefold() in reserved_epubs | planned_paths:
+                                    artifact = translation_file_path.with_name(f'{translation_file_path.stem} ({number}).epub')
+                                    number += 1
+                                encoding = file_items.encoding if getattr(task_config, 'keep_original_encoding', True) else 'utf-8'
+                                text = translation_file_path.read_text(encoding=encoding)
+                                build_txt_epub(text, source_file_path, artifact, vars(writer.output_config))
+                                planned_paths.add(str(artifact.resolve()).casefold())
+                            outputs.append((artifact, identify_ebook(source_file_path, writer.output_config.ebook_series_name)))
         # 释放Ainiee配置实例
         return outputs
 

@@ -408,6 +408,24 @@ register_config(ConfigItem(
     category="output"
 ))
 
+for _export_key, _export_default, _export_type, _export_choices, _export_category, _export_dependency in (
+    ("epub_language_follow_source", "interface", ConfigType.CHOICE, ["interface", "target"], "output", None),
+    ("epub_paragraph_preset", "off", ConfigType.CHOICE, ["off", "indent", "spaced", "reader"], "utility", None),
+    ("epub_repair_links", False, ConfigType.BOOL, [], "utility", None),
+    ("txt_generate_epub", False, ConfigType.BOOL, [], "utility", None),
+    ("ebook_optimize_images", False, ConfigType.BOOL, [], "output", None),
+    ("ebook_image_format", "preserve", ConfigType.CHOICE, ["preserve", "webp"], "output", "ebook_optimize_images"),
+    ("ebook_image_quality", 80, ConfigType.INT, [], "output", "ebook_optimize_images"),
+):
+    register_config(ConfigItem(
+        key=_export_key, default=_export_default, level=ConfigLevel.USER,
+        config_type=_export_type, choices=_export_choices,
+        i18n_key=f"setting_{_export_key}", i18n_desc_key=f"setting_{_export_key}_desc",
+        category=_export_category, depends_on=_export_dependency,
+        min_value=1 if _export_key == "ebook_image_quality" else None,
+        max_value=100 if _export_key == "ebook_image_quality" else None,
+    ))
+
 # --- 功能开关 (USER) ---
 register_config(ConfigItem(
     key="auto_set_output_path",

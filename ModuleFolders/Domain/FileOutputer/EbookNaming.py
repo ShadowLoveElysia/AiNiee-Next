@@ -56,7 +56,7 @@ def identify_ebook(path, series_override='', suffix=''):
     patterns = (
         rf'^(.*?)\s*第\s*({number})\s*[卷巻册冊部集](?:\s+.*)?$',
         rf'^(.*?)\s*({number})\s*[卷巻册冊](?:\s+.*)?$',
-        r'^(.*?)\s*(?i:vol(?:ume)?|book)\.?\s*(\d+(?:\.\d+)?)(?:\s+.*)?$',
+        r'^(.+?)\s+(?i:vol(?:ume)?|book)\.?\s*(\d+(?:\.\d+)?)(?:\s+.*)?$',
         r'^(.*?)[\s._\-\[(]*(\d+(?:\.\d+)?)[\])]?$'
     )
     for pattern in patterns:

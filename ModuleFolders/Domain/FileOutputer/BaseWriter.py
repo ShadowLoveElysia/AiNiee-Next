@@ -44,6 +44,15 @@ class OutputConfig:
     # Optional EPUB writing-mode override.  ``unchanged`` preserves the source.
     epub_layout_direction: str = "unchanged"
     interface_language: str = "zh_CN"
+    target_language: str = "Chinese"
+    source_language: str = "auto"
+    epub_language_follow_source: str = "interface"
+    epub_paragraph_preset: str = "off"
+    epub_repair_links: bool = False
+    ebook_optimize_images: bool = False
+    ebook_image_format: str = "preserve"
+    ebook_image_quality: int = 80
+    txt_generate_epub: bool = False
     sync_metadata_title: bool = False
     epub_reader_font_control: bool = False
     epub_sync_chapter_titles: bool = True

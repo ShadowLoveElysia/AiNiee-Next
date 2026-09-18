@@ -28,6 +28,7 @@ from ModuleFolders.Domain.FileOutputer.AssWriter import AssWriter
 from ModuleFolders.Domain.FileOutputer.CsvWriter import CsvWriter
 from ModuleFolders.Domain.FileOutputer.PptxWriter import PptxWriter
 from ModuleFolders.Domain.FileOutputer.EbookNaming import UTILITY_DEFAULTS
+from ModuleFolders.Domain.FileOutputer.EbookOptions import EXPORT_DEFAULTS
 
 # Optional Writers
 try:
@@ -95,7 +96,9 @@ class FileOutputer:
         
         self.last_output_files = []
         output_config = dict(output_config)
-        for key, default in UTILITY_DEFAULTS.items():
+        for key, default in {**UTILITY_DEFAULTS, **EXPORT_DEFAULTS,
+                             "epub_language_update_mode": "auto", "interface_language": "zh_CN",
+                             "target_language": "Chinese", "source_language": "auto"}.items():
             output_config.setdefault(key, getattr(task_config, key, default))
         project_type = cache_data.project_type
         if project_type not in self.writer_factory_dict:
@@ -156,6 +159,9 @@ class FileOutputer:
         def create_output_config(**kwargs):
             base_args = {
                 **{key: config.get(key, default) for key, default in UTILITY_DEFAULTS.items()},
+                **{key: config.get(key, default) for key, default in EXPORT_DEFAULTS.items()},
+                "target_language": config.get("target_language", "Chinese"),
+                "source_language": config.get("source_language", "auto"),
                 "bilingual_order": bilingual_order,
                 "input_root": input_path,
                 "epub_language_update_mode": config.get("epub_language_update_mode", "auto"),

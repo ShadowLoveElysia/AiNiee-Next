@@ -341,6 +341,11 @@ class EpubAccessor:
         translated_fragments: dict = None,
         series_name: str = "",
         series_volume: str = "",
+        paragraph_preset: str = "off",
+        repair_links: bool = False,
+        optimize_images: bool = False,
+        image_format: str = "preserve",
+        image_quality: int = 80,
     ):
         if html_language:
             content = self._merge_language_updates(source_file_path, content, html_language)
@@ -374,7 +379,15 @@ class EpubAccessor:
             filename: self._normalize_output_text(filename, file_content)
             for filename, file_content in content.items()
         }
-        ZipUtil.replace_in_zip_file(source_file_path, write_file_path, normalized_content)
+        if paragraph_preset != "off" or repair_links or optimize_images:
+            from ModuleFolders.Domain.FileAccessor.EpubPostProcessor import write_processed_epub
+            write_processed_epub(
+                source_file_path, write_file_path, normalized_content,
+                paragraph=paragraph_preset, repair=repair_links, optimize=optimize_images,
+                image_format=image_format, image_quality=image_quality,
+            )
+        else:
+            ZipUtil.replace_in_zip_file(source_file_path, write_file_path, normalized_content)
 
     def _merge_title_update(self, source_file_path: Path, content: dict[str, str], title: str):
         updated_content = dict(content)

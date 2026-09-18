@@ -157,6 +157,13 @@ class TaskConfig(Base):
         self.enable_bilingual_output = False # NEW: 是否启用双语输出
         self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
         self.epub_language_update_mode = "auto"
+        self.epub_language_follow_source = "interface"
+        self.epub_paragraph_preset = "off"
+        self.epub_repair_links = False
+        self.ebook_optimize_images = False
+        self.ebook_image_format = "preserve"
+        self.ebook_image_quality = 80
+        self.txt_generate_epub = False
         self.epub_layout_mode = "off"
         self.epub_reader_font_control = False
         self.epub_sync_chapter_titles = True

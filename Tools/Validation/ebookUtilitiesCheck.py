@@ -153,7 +153,9 @@ class EpubUtilityTests(unittest.TestCase):
             writer.writer_factory_dict = {'Epub': EpubWriter}
             writer.last_output_files = []
             settings = {**UTILITY_DEFAULTS, 'ebook_series_enabled': True, 'epub_reader_font_control': True,
-                        'enable_batch_auto_merge_ebook': True, 'output_filename_suffix': ''}
+                        'enable_batch_auto_merge_ebook': True, 'output_filename_suffix': '',
+                        'epub_language_follow_source': 'target', 'target_language': 'English',
+                        'interface_language': 'ja', 'epub_paragraph_preset': 'indent', 'epub_repair_links': True}
             host = SimpleNamespace(config=settings, cache_manager=Mock(), file_outputer=writer,
                                    task_executor=SimpleNamespace(config=TaskConfig()),
                                    i18n=SimpleNamespace(get=lambda key: key), _auto_merge_batch_ebooks=Mock())
@@ -168,6 +170,9 @@ class EpubUtilityTests(unittest.TestCase):
             with zipfile.ZipFile(result) as archive:
                 self.assertIn('译后章节', archive.read('OEBPS/nav.xhtml').decode())
                 self.assertNotIn('font-size', archive.read('OEBPS/style.css').decode())
+                page = BeautifulSoup(archive.read('OEBPS/chapter.xhtml'), 'xml')
+                self.assertEqual(page.html['lang'], 'en')
+                self.assertIn('text-indent:2em', page.p['style'])
             host._auto_merge_batch_ebooks.assert_called_once()
 
     def test_navigation_handles_encoded_paths_and_ruby(self):

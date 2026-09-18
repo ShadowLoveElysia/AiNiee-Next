@@ -17,19 +17,10 @@ from ModuleFolders.Domain.FileOutputer.BaseWriter import (
 )
 from ModuleFolders.Domain.FileOutputer.JapaneseQuoteNormalizer import normalize_japanese_quotes
 from ModuleFolders.Domain.FileOutputer.EbookNaming import identify_ebook, output_book_name, series_metadata_enabled
+from ModuleFolders.Domain.FileOutputer.EbookOptions import language_tag, resolve_epub_language
 
 
 class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
-    EPUB_LANGUAGE_MAP = {
-        "zh_CN": "zh-CN",
-        "zh_CNTW": "zh-TW",
-        "ja": "ja",
-        "en": "en",
-        "ko": "ko",
-        "ru": "ru",
-        "es": "es",
-    }
-
     def __init__(self, output_config: OutputConfig):
         super().__init__(output_config)
         self.file_accessor = EpubAccessor()
@@ -99,15 +90,15 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
             translated_fragments=translated_fragments,
             series_name=identity.series if series_metadata_enabled(vars(self.output_config)) else "",
             series_volume=identity.volume,
+            paragraph_preset=self.output_config.epub_paragraph_preset,
+            repair_links=self.output_config.epub_repair_links,
+            optimize_images=self.output_config.ebook_optimize_images,
+            image_format=self.output_config.ebook_image_format,
+            image_quality=self.output_config.ebook_image_quality,
         )
 
     def _resolve_epub_language(self):
-        mode = str(getattr(self.output_config, "epub_language_update_mode", "auto") or "auto")
-        if mode == "disabled":
-            return ""
-        if mode == "auto":
-            mode = str(getattr(self.output_config, "interface_language", "zh_CN") or "zh_CN")
-        return self.EPUB_LANGUAGE_MAP.get(mode, mode)
+        return resolve_epub_language(vars(self.output_config))
 
     # 译文版本
     def _rebuild_translated_tag(self, original_html, translated_text):
@@ -164,6 +155,8 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
         # 1. 创建全新的译文标签
         trans_tag = soup.new_tag(original_tag.name, attrs=original_tag.attrs.copy())
         trans_tag.string = processed_trans
+        if self._resolve_epub_language():
+            trans_tag['lang'] = trans_tag['xml:lang'] = self._resolve_epub_language()
 
         # 2. 创建一个全新的、带样式的原文标签，而不是在原始标签上就地修改。
         #    这是为了避免 BeautifulSoup 的副作用导致原始标签内容丢失。
@@ -178,6 +171,9 @@ class EpubWriter(BaseBilingualWriter, BaseTranslatedWriter):
         styled_attrs['style'] = existing_style + new_style
         
         orig_styled_tag = soup.new_tag(original_tag.name, attrs=styled_attrs)
+        original_language = language_tag(self.output_config.source_language)
+        if self._resolve_epub_language() and original_language:
+            orig_styled_tag['lang'] = orig_styled_tag['xml:lang'] = original_language
         
         # 3. 将原始标签的完整内容（包括文本和所有子标签）复制到新的带样式标签中。
         if original_tag.contents:

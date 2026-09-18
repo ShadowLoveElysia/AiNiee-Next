@@ -32,6 +32,14 @@ def prompt_label(text) -> str:
     return str(text).strip().rstrip(":：").strip()
 
 
+def choice_label(key, value, i18n):
+    for label_key in (f"choice_{key}_{value}", f"choice_{value}"):
+        label = i18n.get(label_key)
+        if label and label != label_key:
+            return label
+    return str(value)
+
+
 def format_config_value(key: str, value, config: dict, i18n=None) -> str:
     """根据配置类型格式化显示值"""
     item = get_config_item(key)
@@ -62,9 +70,7 @@ def format_config_value(key: str, value, config: dict, i18n=None) -> str:
             return str(display) if display else ""
         # 选项类型需要翻译
         if i18n and value:
-            translated = i18n.get(f"choice_{value}")
-            # 如果翻译结果等于键名本身，说明没有找到翻译，使用原值
-            return translated if translated != f"choice_{value}" else str(value)
+            return choice_label(key, value, i18n)
         return str(value) if value else ""
     else:
         return str(value) if value else ""
@@ -440,9 +446,7 @@ class SettingsMenuBuilder:
         table = Table(show_header=False, show_lines=False)
         for idx, choice in enumerate(item.choices, 1):
             # 尝试翻译选项
-            display = self.i18n.get(f"choice_{choice}")
-            if display == f"choice_{choice}":
-                display = choice
+            display = choice_label(key, choice, self.i18n)
             marker = "[green]●[/green]" if choice == current else " "
             table.add_row(f"[cyan]{idx}.[/cyan]", display, marker)
 
