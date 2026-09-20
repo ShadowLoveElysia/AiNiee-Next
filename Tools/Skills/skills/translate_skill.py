@@ -116,6 +116,7 @@ class TranslateSkill(Skill):
             {
                 "action", "task_type", "input_path", "output_path", "profile",
                 "rules_profile", "source_lang", "target_lang", "project_type",
+                "execution_mode",
                 "resume", "queue_file", "platform", "model", "api_url", "api_key",
                 "failover", "threads", "retry", "timeout", "rounds", "pre_lines",
                 "lines_limit", "tokens_limit", "lines", "tokens", "think_depth",
@@ -134,6 +135,13 @@ class TranslateSkill(Skill):
 
         try:
             spec = task_spec_from_skill_args(args)
+            if getattr(spec, "execution_mode", "default_api") == "external_agent":
+                return SkillResult.ok(
+                    get_task_manager().create_waiting_task(
+                        task_type="translate",
+                        request=args,
+                    )
+                )
             cli_args, env = task_subprocess_invocation(spec)
         except SkillPathError as exc:
             return SkillResult.fail(str(exc), exc.code)

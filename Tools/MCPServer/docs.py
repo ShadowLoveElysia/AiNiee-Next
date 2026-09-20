@@ -100,6 +100,22 @@ AGENT_TOOL_DESCRIPTIONS = [
         "tool_name": "agent_status",
         "purpose": "Read one or all active external Agent connection leases.",
     },
+    {
+        "tool_name": "agent_prepare_project",
+        "purpose": "Create a controlled project and translation batch ledger without writing cache or output.",
+    },
+    {
+        "tool_name": "agent_claim_batch",
+        "purpose": "Claim one translation batch for the registered Agent session.",
+    },
+    {
+        "tool_name": "agent_submit_translation_batch",
+        "purpose": "Submit a structured batch with source hash, revision, and idempotency checks.",
+    },
+    {
+        "tool_name": "agent_release_batch",
+        "purpose": "Release a claimed batch after disconnect without accepting results.",
+    },
 ]
 
 EXACT_ROUTE_PURPOSES = {

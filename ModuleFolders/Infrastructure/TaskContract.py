@@ -25,6 +25,7 @@ CANONICAL_TASK_TYPES = (TRANSLATE, POLISH, ALL_IN_ONE, EXPORT, QUEUE)
 QUEUE_TASK_TYPES = (TRANSLATE, POLISH, ALL_IN_ONE)
 QUEUE_TASK_OVERRIDE_FIELDS = (
     "input_path",
+    "execution_mode",
     "output_path",
     "profile",
     "rules_profile",
@@ -94,11 +95,13 @@ _POLISH_MODE_ALIASES = {
     "source-text-polish": "source_text_polish",
     "original": "source_text_polish",
 }
+_EXECUTION_MODES = {"default_api", "external_agent"}
 
 TASK_CONTRACT_INPUT_FIELDS = frozenset(
     {
         "task",
         "task_type",
+        "execution_mode",
         "run_all_in_one",
         "input_path",
         "output_path",
@@ -268,11 +271,33 @@ def _think_depth(value: Any) -> str | int | None:
     raise TaskContractError(f"Unsupported think_depth: {value!r}")
 
 
+def _execution_mode(value: Any) -> str:
+    """Normalize the task execution backend while preserving legacy defaults."""
+    if value is None:
+        return "default_api"
+    if not isinstance(value, str):
+        raise TaskContractError("execution_mode must be one of: default_api, external_agent")
+    normalized = value.strip().lower()
+    if not normalized:
+        return "default_api"
+    normalized = {
+        "api": "default_api",
+        "default": "default_api",
+        "standard": "default_api",
+        "agent": "external_agent",
+        "external": "external_agent",
+    }.get(normalized, normalized)
+    if normalized not in _EXECUTION_MODES:
+        raise TaskContractError(f"Unsupported execution_mode: {value!r}")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class TaskSpec:
     """一次任务的不可变覆盖参数，不包含队列运行状态。"""
 
     task_type: str
+    execution_mode: str = "default_api"
     input_path: str | None = None
     output_path: str | None = None
     profile: str | None = None
@@ -381,6 +406,7 @@ class TaskSpec:
 
         return cls(
             task_type=normalized_task,
+            execution_mode=_execution_mode(data.get("execution_mode")),
             input_path=input_path,
             output_path=_optional_string(data.get("output_path"), "output_path", preserve=True),
             profile=_optional_string(data.get("profile"), "profile"),
@@ -420,6 +446,7 @@ class TaskSpec:
     ) -> dict[str, Any]:
         result = {
             "task_type": self.task_type,
+            "execution_mode": self.execution_mode,
             "input_path": self.input_path,
             "output_path": self.output_path,
             "profile": self.profile,
@@ -510,6 +537,9 @@ def build_cli_args(
     for option, value in value_options:
         if value is not None:
             args.extend([option, str(value)])
+
+    if spec.execution_mode != "default_api":
+        args.extend(["--execution-mode", spec.execution_mode])
 
     for option, value in (("--runtime-overrides", spec.runtime_overrides), ("--step-overrides", spec.step_overrides)):
         if value:

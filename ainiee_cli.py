@@ -1231,7 +1231,16 @@ class CLIMenu:
             f"{self._polishing_mode_label(selected_mode)}[/cyan]"
         )
 
-    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False, skip_prompt_validation=False, save_runtime_config=True, skip_preflight=False, automation_progress=False):
+    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False, skip_prompt_validation=False, save_runtime_config=True, skip_preflight=False, automation_progress=False, execution_mode=None):
+        if execution_mode is None:
+            execution_mode = self.config.get("translation_execution_mode", "default_api")
+        if str(execution_mode or "default_api").strip().lower() == "external_agent":
+            message = "External Agent execution is waiting for an Agent session; API translation was not started."
+            if getattr(self, "ui", None) is not None:
+                self.ui.log(message)
+            else:
+                console.print(f"[yellow]{message}[/yellow]")
+            return False
         # 如果是非交互模式，直接跳过菜单
         if target_path is None:
             last_path = self.config.get("label_input_path")
@@ -2497,6 +2506,7 @@ def main():
     parser.add_argument('-s', '--source', dest='source_lang', help=i18n.get('help_source'))
     parser.add_argument('-t', '--target', dest='target_lang', help=i18n.get('help_target'))
     parser.add_argument('--type', dest='project_type', help="Project type (Txt, Epub, MTool, RenPy, etc.)")
+    parser.add_argument('--execution-mode', choices=['default_api', 'external_agent'], default=None, help='Task execution backend.')
 
     # 运行策略
     parser.add_argument('-r', '--resume', action='store_true', help=i18n.get('help_resume'))

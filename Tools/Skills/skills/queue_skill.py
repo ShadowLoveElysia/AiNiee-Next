@@ -365,6 +365,13 @@ class QueueSkill(Skill):
                         "queue_file": args.get("queue_file"),
                     }
                 )
+                if spec.execution_mode == "external_agent":
+                    return SkillResult.ok(
+                        get_task_manager().create_waiting_task(
+                            task_type="queue",
+                            request=args,
+                        )
+                    )
                 cli_args, env = task_subprocess_invocation(spec)
                 command = [sys.executable, *cli_args]
                 wait_options = validate_wait_options(args)

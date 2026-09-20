@@ -53,6 +53,48 @@ class TaskContractTests(unittest.TestCase):
         )
         self.assertEqual(legacy, canonical)
 
+    def test_execution_mode_defaults_for_legacy_payloads_and_round_trips(self):
+        legacy = TaskSpec.from_mapping(
+            {"task": "translate", "input_path": "input.txt"}
+        )
+        external = TaskSpec.from_mapping(
+            {
+                "task_type": "translate",
+                "input_path": "input.txt",
+                "execution_mode": "external_agent",
+            }
+        )
+
+        self.assertEqual(legacy.execution_mode, "default_api")
+        self.assertEqual(external.execution_mode, "external_agent")
+        self.assertEqual(
+            external.to_mapping(include_none=True)["execution_mode"],
+            "external_agent",
+        )
+
+        queue = TaskSpec.from_mapping(external.to_queue_fields())
+        self.assertEqual(queue.execution_mode, "external_agent")
+        self.assertEqual(queue.to_mapping(include_none=True), external.to_mapping(include_none=True))
+
+    def test_unknown_execution_mode_is_rejected(self):
+        with self.assertRaises(TaskContractError):
+            TaskSpec.from_mapping(
+                {
+                    "task_type": "translate",
+                    "input_path": "input.txt",
+                    "execution_mode": "unknown",
+                }
+            )
+
+    def test_queue_item_preserves_execution_mode(self):
+        queue_module = self._import_with_rapidjson(
+            "ModuleFolders.Service.TaskQueue.QueueManager"
+        )
+        item = queue_module.QueueTaskItem(
+            "translate", "input.txt", execution_mode="external_agent"
+        )
+        self.assertEqual(item.to_task_spec().execution_mode, "external_agent")
+
     def test_invalid_task_and_conflicting_all_in_one_are_rejected(self):
         with self.assertRaises(TaskContractError):
             TaskSpec.from_mapping({"task": "unknown", "input_path": "input.txt"})

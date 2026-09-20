@@ -682,6 +682,7 @@ class QueueTaskItem(BaseModel):
 
     task_type: str | int
     input_path: str
+    execution_mode: Optional[str] = "default_api"
     output_path: Optional[str] = None
     profile: Optional[str] = None
     rules_profile: Optional[str] = None
@@ -722,6 +723,7 @@ class QueueTaskUpdate(BaseModel):
 
     task_type: Optional[str | int] = None
     input_path: Optional[str] = None
+    execution_mode: Optional[str] = None
     output_path: Optional[str] = None
     profile: Optional[str] = None
     rules_profile: Optional[str] = None
@@ -767,6 +769,7 @@ class TaskPayload(BaseModel):
     task_type: Optional[str | int] = None
     run_all_in_one: Optional[bool] = None
     input_path: Optional[str] = None
+    execution_mode: Optional[str] = None
     output_path: Optional[str] = None
     project_type: Optional[str] = None
     resume: Optional[bool] = False

@@ -80,6 +80,10 @@ _mcp_security_notice
 
 推荐调用顺序：`agent_register` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
+外部 Agent 翻译原型顺序：`agent_register` → `agent_prepare_project` →
+`agent_claim_batch` → `agent_submit_translation_batch`。提交只写入受控批次账本，
+不会直接写入 AiNiee 缓存或最终输出；断线时使用 `agent_release_batch`，不要重用过期 session。
+
 ## Calling Patterns
 
 AiNiee CLI MCP 默认不再把每个 Web API 路由都注册成独立 `api_*` 工具，以减少 LLM 工具发现上下文。默认调用流程是：

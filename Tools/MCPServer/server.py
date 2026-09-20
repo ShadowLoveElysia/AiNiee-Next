@@ -24,6 +24,10 @@ PROFILES_PATH = os.path.join(RESOURCE_ROOT, "profiles")
 
 from Tools.MCPServer.runtime import inspect_mcp_runtime
 from Tools.MCPServer.agent_session import get_external_agent_session_registry
+from ModuleFolders.Service.Agent.ExternalAgentBatch import (
+    ExternalAgentBatchError,
+    get_external_agent_batch_service,
+)
 from Tools.MCPServer.docs import (
     build_security_policy,
     build_tool_category_index,
@@ -931,6 +935,76 @@ def _build_mcp_app(
     def agent_status(session_id: Optional[str] = None) -> Dict[str, Any]:
         result = AGENT_SESSION_REGISTRY.status(session_id)
         return result if isinstance(result, dict) else {"session_id": session_id, "state": "missing"}
+
+    def _require_external_agent_session(session_id: str) -> None:
+        record = AGENT_SESSION_REGISTRY.status(session_id)
+        if not isinstance(record, dict) or record.get("state") != "registered":
+            raise ValueError("Agent session is not registered or has expired.")
+
+    @_mcp_tool(
+        mcp,
+        "Prepare a controlled external-Agent translation project.",
+        "Reads only the selected input file and creates a durable batch ledger; it never writes the cache or final output.",
+    )
+    def agent_prepare_project(
+        input_path: str,
+        task_id: str,
+        session_id: str,
+        execution_mode: str = "external_agent",
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_batch_service().prepare_project(
+                input_path, task_id, session_id, execution_mode
+            )
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Claim the next external-Agent translation batch.",
+        "Only one Agent session can claim a batch at a time.",
+    )
+    def agent_claim_batch(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_batch_service().claim_batch(task_id, session_id)
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Submit one structured external-Agent translation batch.",
+        "Validates source hash, revision, item indices and idempotency; it does not write AiNiee cache or output files.",
+    )
+    def agent_submit_translation_batch(
+        task_id: str,
+        session_id: str,
+        batch_id: str,
+        source_hash: str,
+        revision: int,
+        idempotency_key: str,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_batch_service().submit_translation_batch(
+                task_id, session_id, batch_id, source_hash, revision, idempotency_key, items
+            )
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Release a claimed external-Agent batch after a disconnect.",
+        "Releases the claim without accepting translations.",
+    )
+    def agent_release_batch(task_id: str, session_id: str, batch_id: str) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_batch_service().release_batch(task_id, session_id, batch_id)
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
 
     # Keep the remaining Web/API tools below this point.
     @_mcp_tool(

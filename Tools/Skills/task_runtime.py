@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - POSIX has no msvcrt
     msvcrt = None
 
 
-ACTIVE_STATUSES = frozenset({"starting", "running", "stopping"})
+ACTIVE_STATUSES = frozenset({"starting", "running", "stopping", "waiting_for_agent"})
 TERMINAL_STATUSES = frozenset({"completed", "failed", "stopped", "orphaned"})
 _MAX_OUTPUT_CHARS = 4000
 _MAX_RECORDS = 128
@@ -314,6 +314,42 @@ class SkillTaskManager:
             self._persist_locked()
         return self._public_record(record)
 
+    def create_waiting_task(
+        self,
+        *,
+        task_type: str,
+        request: Mapping[str, Any] | None = None,
+        reason: str = "agent_session_required",
+    ) -> Dict[str, Any]:
+        """Persist an external-Agent task without starting an API subprocess."""
+        now = _utc_timestamp()
+        record = {
+            "task_id": str(uuid.uuid4()),
+            "task_type": str(task_type),
+            "status": "waiting_for_agent",
+            "running": True,
+            "created_at": now,
+            "updated_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "pid": None,
+            "exit_code": None,
+            "cancel_requested": False,
+            "error": None,
+            "stdout": "",
+            "stderr": "",
+            "request": self._safe_request(request),
+            "timeout_seconds": None,
+            "execution_mode": "external_agent",
+            "reason": str(reason),
+        }
+        with self._lock:
+            self._records[record["task_id"]] = record
+            self._events[record["task_id"]] = threading.Event()
+            self._trim_locked()
+        self._persist_locked()
+        return self._public_record(record)
+
     def get(self, task_id: str) -> Dict[str, Any] | None:
         with self._lock:
             record = self._records.get(str(task_id or ""))
@@ -357,6 +393,8 @@ class SkillTaskManager:
             event = self._events.setdefault(key, threading.Event())
             if self._records[key].get("status") in TERMINAL_STATUSES:
                 return self._public_record(self._records[key])
+            if self._records[key].get("status") == "waiting_for_agent":
+                return self._public_record(self._records[key])
 
         event.wait(timeout=wait_timeout)
         return self.get(key)
@@ -371,6 +409,7 @@ class SkillTaskManager:
                 return None
             if record.get("status") in TERMINAL_STATUSES:
                 return self._public_record(record)
+            was_waiting_for_agent = record.get("status") == "waiting_for_agent"
             record["cancel_requested"] = True
             record["status"] = "stopping"
             self._touch(record)
@@ -390,6 +429,8 @@ class SkillTaskManager:
             self._terminate_pid(pid)
             if pid_was_alive:
                 self._start_remote_reaper(key, pid)
+            elif was_waiting_for_agent:
+                self._finish_remote_stop(key)
         return self.get(key)
 
     def _start_remote_reaper(self, task_id: str, pid: Any) -> None:

@@ -189,6 +189,7 @@ def validate_wait_options(
 
 _PARAMETER_DESCRIPTIONS = {
     "input_path": "Path to the input file or directory.",
+    "execution_mode": "Task execution backend: default_api or external_agent.",
     "output_path": "Output directory path.",
     "profile": "Configuration profile name.",
     "rules_profile": "Rules profile name.",

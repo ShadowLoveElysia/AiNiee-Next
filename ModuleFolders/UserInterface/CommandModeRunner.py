@@ -48,6 +48,7 @@ def normalize_cli_task_args(args) -> TaskSpec:
 
     for field_name in (
         "input_path",
+        "execution_mode",
         "output_path",
         "profile",
         "rules_profile",
@@ -370,6 +371,13 @@ class CommandModeRunner:
         if args.rules_profile:
             self.host.switch_active_rules_profile(args.rules_profile)
 
+        if getattr(args, "execution_mode", None) is None:
+            args.execution_mode = str(
+                self.host.config.get("translation_execution_mode", "default_api")
+                or "default_api"
+            )
+            normalize_cli_task_args(args)
+
         self._apply_config_overrides(args)
         self.host.save_config()
 
@@ -390,16 +398,17 @@ class CommandModeRunner:
             if getattr(args, "manga", False):
                 return self._run_manga(args)
             if args.task == "all_in_one":
-                self._run_all_in_one(args)
+                started = self._run_all_in_one(args)
             else:
-                self.host.run_task(
+                started = self.host.run_task(
                     task_map[args.task],
                     target_path=args.input_path,
                     continue_status=args.resume,
                     non_interactive=args.non_interactive,
                     web_mode=args.web_mode,
+                    execution_mode=args.execution_mode,
                 )
-            return 0
+            return 0 if started is not False else 3
 
         if args.task == "export":
             if not args.input_path:

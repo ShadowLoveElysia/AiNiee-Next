@@ -125,6 +125,7 @@ def _queue_backup_path(queue_path):
 class QueueTaskItem:
     def __init__(self, task_type, input_path, output_path=None, profile=None, rules_profile=None, 
                  source_lang=None, target_lang=None, project_type=None,
+                 execution_mode="default_api",
                  platform=None, api_url=None, api_key=None, model=None, 
                  threads=None, retry=None, timeout=None, rounds=None, 
                  pre_lines=None, lines_limit=None, tokens_limit=None, 
@@ -145,6 +146,7 @@ class QueueTaskItem:
                 "source_lang": source_lang,
                 "target_lang": target_lang,
                 "project_type": project_type,
+                "execution_mode": execution_mode,
                 "platform": platform,
                 "api_url": api_url,
                 "api_key": api_key,
@@ -1048,6 +1050,9 @@ class QueueManager(Base):
             if self._task_has_workflow(task):
                 continue
             if not task.locked and task.status in allowed_statuses:
+                if getattr(task, "execution_mode", "default_api") == "external_agent":
+                    task.status = "waiting_for_agent"
+                    continue
                 return i, task
         return None, None
 
@@ -1794,8 +1799,12 @@ class QueueManager(Base):
                 from_queue=True,
                 skip_prompt_validation=skip_prompt_validation,
                 save_runtime_config=False,
+                execution_mode=getattr(task, "execution_mode", "default_api"),
             )
             if not task_ok:
+                if getattr(task, "execution_mode", "default_api") == "external_agent":
+                    task.status = "waiting_for_agent"
+                    return False
                 raise RuntimeError("Task blocked before start.")
             
             if Base.work_status != Base.STATUS.STOPING:
