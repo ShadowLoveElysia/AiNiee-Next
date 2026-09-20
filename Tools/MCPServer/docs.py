@@ -21,6 +21,11 @@ Recommended first steps for any LLM client:
 4. Call `get_mcp_tool_catalog(category="<needed-category>")`
 5. Then use `call_web_api` or `upload_file`
 
+External Agent clients should then call `agent_register` and keep the returned
+lease alive with `agent_heartbeat`. The registry describes connection state only;
+all project and task mutations remain behind domain tools and the deterministic
+AiNiee data plane.
+
 ## Security Policy
 
 - Use MCP tools only for LLM-driven AiNiee operations. Do not mix MCP tool calls with direct Web UI, localhost, LAN WebServer, or MCP HTTP requests.
@@ -44,6 +49,8 @@ SECTION_ALIASES = {
     "security": "Security Policy",
     "security_policy": "Security Policy",
     "core_tools": "Core Tools",
+    "external_agent": "External Agent",
+    "agent": "External Agent",
     "calling_patterns": "Calling Patterns",
     "validation": "Validation Checklist",
     "validation_checklist": "Validation Checklist",
@@ -73,7 +80,27 @@ CATEGORY_DESCRIPTIONS = {
     "draft": "Draft editor data for glossary, exclusion, character, world, style, and examples.",
     "cache": "Cache status, load, item update, and search operations.",
     "manga": "Manga project, page, model, pipeline, editor, and export operations.",
+    "external_agent": "External Agent connection registration and lease status.",
 }
+
+AGENT_TOOL_DESCRIPTIONS = [
+    {
+        "tool_name": "agent_register",
+        "purpose": "Register an external Agent and receive a renewable connection lease.",
+    },
+    {
+        "tool_name": "agent_heartbeat",
+        "purpose": "Renew an external Agent connection lease.",
+    },
+    {
+        "tool_name": "agent_unregister",
+        "purpose": "End an external Agent connection lease.",
+    },
+    {
+        "tool_name": "agent_status",
+        "purpose": "Read one or all active external Agent connection leases.",
+    },
+]
 
 EXACT_ROUTE_PURPOSES = {
     "/api/config": "Read or save the active profile configuration.",
@@ -232,6 +259,16 @@ def build_tool_category_index(
         _build_category_index_item(group_name, group_routes)
         for group_name, group_routes in route_groups.items()
     ]
+    categories.append(
+        {
+            "category": "external_agent",
+            "description": CATEGORY_DESCRIPTIONS["external_agent"],
+            "endpoint_count": len(AGENT_TOOL_DESCRIPTIONS),
+            "methods": ["MCP TOOL"],
+            "sample_routes": [item["tool_name"] for item in AGENT_TOOL_DESCRIPTIONS],
+            "detail_call": "get_mcp_tool_catalog(category='external_agent')",
+        }
+    )
 
     result = _build_catalog_header(
         catalog_mode="category_index",
@@ -272,6 +309,29 @@ def build_tool_catalog(
             route_tools_exposed=route_tools_exposed,
         )
 
+    if normalized_category == "external_agent":
+        result = _build_catalog_header(
+            catalog_mode="category_detail",
+            route_tools_exposed=route_tools_exposed,
+        )
+        result.update(
+            {
+                "usage": "Use agent_register first, then renew its lease with agent_heartbeat.",
+                "category_count": 1,
+                "endpoint_count": len(AGENT_TOOL_DESCRIPTIONS),
+                "route_tool_count": 0,
+                "categories": [
+                    {
+                        "category": "external_agent",
+                        "description": CATEGORY_DESCRIPTIONS["external_agent"],
+                        "endpoint_count": len(AGENT_TOOL_DESCRIPTIONS),
+                        "endpoints": [dict(item) for item in AGENT_TOOL_DESCRIPTIONS],
+                    }
+                ],
+            }
+        )
+        return result
+
     if normalized_category not in ("all", "*") and normalized_category not in route_groups:
         result = build_tool_category_index(
             routes,
@@ -305,6 +365,16 @@ def build_tool_catalog(
                 "description": CATEGORY_DESCRIPTIONS.get(group_name, "Route group."),
                 "endpoint_count": len(endpoints),
                 "endpoints": endpoints,
+            }
+        )
+
+    if normalized_category in ("all", "*"):
+        categories.append(
+            {
+                "category": "external_agent",
+                "description": CATEGORY_DESCRIPTIONS["external_agent"],
+                "endpoint_count": len(AGENT_TOOL_DESCRIPTIONS),
+                "endpoints": [dict(item) for item in AGENT_TOOL_DESCRIPTIONS],
             }
         )
 
@@ -377,7 +447,9 @@ def get_server_instructions_text() -> str:
         "If you need more guidance, read get_mcp_usage_manual(). Treat "
         f"{MCP_SECRET_PLACEHOLDER} as a redacted placeholder, not a usable "
         "secret, and ask the user for a second confirmation before changing MCP "
-        "host or port settings."
+        "host or port settings. When an external Agent connects, call "
+        "agent_register first and renew its lease with agent_heartbeat; use "
+        "agent_status to inspect connection state."
     )
 
 
@@ -452,7 +524,7 @@ def _describe_route(path: str, method: str) -> str:
 
 
 def _build_core_tool_descriptions(route_tools_exposed: bool) -> List[Dict[str, str]]:
-    tools = [
+    tools = [*AGENT_TOOL_DESCRIPTIONS,
         {
             "tool_name": "get_mcp_usage_manual",
             "purpose": "Read the built-in MCP usage manual. Call this first if the client cannot inspect repo files.",

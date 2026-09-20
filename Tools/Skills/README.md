@@ -71,13 +71,13 @@ curl http://127.0.0.1:8766/health
 
 返回：
 ```json
-{"status": "ok", "service": "ainiee-skills", "skills_count": 6}
+{"status": "ok", "service": "ainiee-skills", "skills_count": 7}
 ```
 
 ### 不启动服务检查运行环境
 
 在完整依赖尚未安装、或当前环境禁止监听端口时，可以先运行无 socket
-探测。它会检查 Skills 文件、标准库 HTTP 支持和六个生产 Skill 的导入状态，
+探测。它会检查 Skills 文件、标准库 HTTP 支持和七个生产 Skill 的导入状态，
 并输出 JSON：
 
 ```bash
@@ -105,6 +105,22 @@ curl http://127.0.0.1:8766/skills
 | `queue` | queue | 管理项目内置任务队列（`Resource/queue_tasks.json`） |
 | `profile` | config | 管理配置方案（新建/切换/删除，自动限制在 profiles 目录内） |
 | `file` | files | 文件发现与暂存 |
+| `agent_session` | agent | 外部 Agent 会话注册、心跳、状态和断开 |
+
+### 外部 Agent 会话
+
+`agent_session` 管理外部 Agent 的短期租约，且与 `X-AiNiee-Skills-Auth`
+鉴权令牌完全分离。注册必须携带用户确认字段；会话过期后应重新注册。
+Skills 只保存会话元数据，不接收 API key、MCP token 或其他提供商密钥。
+
+```bash
+curl -X POST http://127.0.0.1:8766/skills/agent_session \
+  -H "Content-Type: application/json" \
+  -H "X-AiNiee-Skills-Auth: your-token" \
+  -d '{"action":"register","agent_instance_id":"desktop-1", "client_name":"WorkBuddy", "supported_modes":["external_agent"], "capabilities":["translation","proofread"], "user_confirmed_external_processing":true}'
+```
+
+随后使用返回的 `session_id` 和 `agent_instance_id` 调用 `heartbeat`；任务运行期间应定期续租。`status` 可查询单个会话或返回当前进程中的会话摘要，`unregister` 会结束租约并保留脱敏审计快照。
 
 ## API 参考
 
@@ -209,7 +225,8 @@ Tools/Skills/
     ├── translate_skill.py # 翻译任务执行
     ├── queue_skill.py     # 任务队列管理
     ├── profile_skill.py   # 配置方案管理
-    └── file_skill.py      # 文件操作
+    ├── file_skill.py      # 文件操作
+    └── agent_skill.py     # 外部 Agent 会话租约
 ```
 
 ## 执行模式与任务生命周期

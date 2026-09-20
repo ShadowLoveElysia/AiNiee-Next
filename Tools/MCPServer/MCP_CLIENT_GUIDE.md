@@ -12,6 +12,10 @@ AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools �
 4. 按任务需要调用 `get_mcp_tool_catalog(category="...")`
 5. 再通过 `call_web_api` 或 `upload_file` 调用具体能力
 
+外部 Agent 接入后，应先调用 `agent_register` 获取连接租约，并在租约到期前调用
+`agent_heartbeat`。断开时调用 `agent_unregister`；可用 `agent_status` 查询单个或全部连接。
+这些工具只管理进程内连接状态，不授予 Agent 直接修改缓存、队列、源文件或输出文件的权限。
+
 如果客户端只展示工具名和工具说明，不展示仓库文件，也应优先使用上面的说明工具，而不是猜参数结构或一次性读取全量端点目录。
 
 ## First Steps
@@ -66,6 +70,15 @@ _mcp_security_notice
 - `list_web_api_routes`: 返回轻量级路由索引，可传 `category` 只看单类路由
 - `call_web_api`: 受控 MCP 代理调用入口，用于调用分类目录里的 `/api/*` 端点
 - `upload_file`: 通过 MCP 上传本地文件到 WebServer
+
+外部 Agent 连接工具：
+
+- `agent_register`: 注册 Agent，返回 `session_id` 和租约到期时间
+- `agent_heartbeat`: 使用 `session_id` 续租
+- `agent_unregister`: 主动释放连接租约
+- `agent_status`: 查询连接状态
+
+推荐调用顺序：`agent_register` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
 ## Calling Patterns
 

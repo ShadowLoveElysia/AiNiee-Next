@@ -24,6 +24,8 @@ from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     deep_merge,
     load_json_file,
     load_master_preset,
+    PROFILE_ORIGIN_KEY,
+    profile_origin_for_new_profile,
     resolve_profile_path,
     sanitize_profile_name,
     split_effective_config,
@@ -331,6 +333,7 @@ class WebRuntimeBridge:
         if os.path.exists(base_path):
             preset = deep_merge(preset, load_json_file(base_path, {}))
         preset, _, _ = split_effective_config(preset)
+        preset[PROFILE_ORIGIN_KEY] = profile_origin_for_new_profile(self.host.config)
 
         atomic_write_json(new_path, preset)
 

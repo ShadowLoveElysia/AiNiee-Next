@@ -195,6 +195,48 @@ register_config(ConfigItem(
     category="project_general"
 ))
 
+register_config(ConfigItem(
+    key="external_agent_onboarding",
+    default=True,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.BOOL,
+    i18n_key="setting_external_agent_onboarding",
+    i18n_desc_key="setting_external_agent_onboarding_desc",
+    category="project_general"
+))
+
+register_config(ConfigItem(
+    key="external_agent_onboarding_status",
+    default="pending",
+    level=ConfigLevel.SYSTEM,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_external_agent_onboarding_status",
+    i18n_desc_key="setting_external_agent_onboarding_status_desc",
+    choices=["pending", "declined", "accepted"],
+    category="project_general"
+))
+
+register_config(ConfigItem(
+    key="translation_execution_mode",
+    default="default_api",
+    level=ConfigLevel.USER,
+    config_type=ConfigType.CHOICE,
+    i18n_key="setting_translation_execution_mode",
+    i18n_desc_key="setting_translation_execution_mode_desc",
+    choices=["default_api", "external_agent"],
+    category="project_general"
+))
+
+register_config(ConfigItem(
+    key="external_agent_mcp_guide",
+    default={},
+    level=ConfigLevel.USER,
+    config_type=ConfigType.DICT,
+    i18n_key="setting_external_agent_mcp_guide",
+    i18n_desc_key="setting_external_agent_mcp_guide_desc",
+    category="project_general"
+))
+
 # --- 翻译核心配置 (USER) ---
 register_config(ConfigItem(
     key="lines_limit",

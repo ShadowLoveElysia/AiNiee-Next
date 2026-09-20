@@ -75,6 +75,8 @@ from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     load_master_preset,
     load_root_config,
     normalize_rules_payload,
+    PROFILE_ORIGIN_KEY,
+    profile_origin_for_new_profile,
     resolve_profile_path,
     save_effective_config,
     save_root_config,
@@ -2942,6 +2944,9 @@ async def create_profile(request: ProfileCreateRequest):
         if os.path.exists(base_path):
             final_config = deep_merge(final_config, load_json_file(base_path, {}))
         settings_only, _, _ = split_effective_config(final_config)
+        settings_only[PROFILE_ORIGIN_KEY] = profile_origin_for_new_profile(
+            load_effective_config(create_missing=False)
+        )
         atomic_write_json(new_path, settings_only)
 
         _profiles_cache = None # Invalidate cache

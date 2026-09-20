@@ -25,6 +25,7 @@ REQUIRED_SKILL_FILES = (
     "skills/queue_skill.py",
     "skills/profile_skill.py",
     "skills/file_skill.py",
+    "skills/agent_skill.py",
 )
 
 

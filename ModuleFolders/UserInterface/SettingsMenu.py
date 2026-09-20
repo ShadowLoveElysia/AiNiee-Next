@@ -61,11 +61,15 @@ class SettingsMenu:
             if key == "ebook_series_settings":
                 self._show_ebook_series_settings()
                 continue
+            if key == "external_agent_mcp_guide":
+                self._show_external_agent_mcp_guide()
+                continue
 
             new_value = builder.handle_input(key, item, console)
             if new_value is not None:
                 self.host.config[key] = new_value
-                self.host.save_config()
+                # Onboarding flags are project-level root state, not Profile settings.
+                self.host.save_config(save_root=key == "external_agent_onboarding")
                 if key == "interface_language":
                     self.host.apply_interface_language(new_value)
                 if key == "enable_operation_logging":
@@ -73,6 +77,24 @@ class SettingsMenu:
                         self.host.operation_logger.enable()
                     else:
                         self.host.operation_logger.disable()
+
+    def _show_external_agent_mcp_guide(self):
+        from ModuleFolders.Service.Agent.ExternalAgentOnboarding import external_agent_prompt
+
+        self.host.display_banner()
+        console.print(Panel(
+            external_agent_prompt(),
+            title=self.i18n.get("external_agent_onboarding_prompt_title"),
+            border_style="green",
+            expand=False,
+        ))
+        console.print(Panel(
+            self.i18n.get("external_agent_mcp_guide_steps"),
+            title=self.i18n.get("setting_external_agent_mcp_guide"),
+            border_style="cyan",
+            expand=False,
+        ))
+        console.input(f"\n{self.i18n.get('prompt_press_enter_continue')}")
 
     def _show_ebook_series_settings(self):
         from ModuleFolders.Domain.FileOutputer.EbookNaming import EbookIdentity, render_ebook_name

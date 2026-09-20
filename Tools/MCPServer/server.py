@@ -23,6 +23,7 @@ ROOT_CONFIG_FILE = os.path.join(RESOURCE_ROOT, "config.json")
 PROFILES_PATH = os.path.join(RESOURCE_ROOT, "profiles")
 
 from Tools.MCPServer.runtime import inspect_mcp_runtime
+from Tools.MCPServer.agent_session import get_external_agent_session_registry
 from Tools.MCPServer.docs import (
     build_security_policy,
     build_tool_category_index,
@@ -113,6 +114,16 @@ DEFAULT_REGISTER_ROUTE_TOOLS = (
     os.environ.get("AINIEE_MCP_REGISTER_ROUTE_TOOLS", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
+
+# Connection leases are process-local by design.  They describe which external
+# Agent is connected; they never contain project data, task state, or secrets.
+AGENT_SESSION_REGISTRY = get_external_agent_session_registry()
+
+
+def _external_agent_onboarding_accepted() -> bool:
+    """Require an explicit project-level acceptance before registering an Agent."""
+    root = _safe_load_json(ROOT_CONFIG_FILE)
+    return root.get("external_agent_onboarding_status") == "accepted"
 
 
 def _is_loopback_bind_host(host: str) -> bool:
@@ -847,6 +858,81 @@ def _build_mcp_app(
     def get_mcp_validation_checklist() -> Dict[str, Any]:
         return build_validation_checklist()
 
+    @_mcp_tool(
+        mcp,
+        "Register an external Agent connection and receive a renewable session lease.",
+        (
+            "Call this when an external Agent begins using AiNiee. The returned session_id "
+            "is required for heartbeat and unregister. Registration records connection metadata only."
+        ),
+    )
+    def agent_register(
+        agent_instance_id: str,
+        protocol_version: str = "1",
+        client_name: str = "",
+        client_version: str = "",
+        capabilities: Optional[List[str]] = None,
+        supported_modes: Optional[List[str]] = None,
+        transport: str = "mcp",
+        requested_lease_seconds: Optional[int] = None,
+        user_confirmed_external_processing: bool = False,
+    ) -> Dict[str, Any]:
+        if not _external_agent_onboarding_accepted():
+            raise ValueError(
+                "External Agent onboarding has not been accepted by the user. "
+                "Complete the AiNiee onboarding flow before registering a session."
+            )
+        return AGENT_SESSION_REGISTRY.register(
+            {
+                "protocol_version": protocol_version,
+                "agent_instance_id": agent_instance_id,
+                "client_name": client_name,
+                "client_version": client_version,
+                "capabilities": capabilities or [],
+                "supported_modes": supported_modes or [],
+                "transport": transport,
+                "requested_lease_seconds": requested_lease_seconds,
+                "user_confirmed_external_processing": user_confirmed_external_processing,
+            }
+        )
+
+    @_mcp_tool(
+        mcp,
+        "Renew an external Agent connection lease.",
+        "Send the session_id and agent_instance_id returned by agent_register.",
+    )
+    def agent_heartbeat(session_id: str, agent_instance_id: str) -> Dict[str, Any]:
+        return AGENT_SESSION_REGISTRY.heartbeat(
+            session_id,
+            agent_instance_id=agent_instance_id,
+        )
+
+    @_mcp_tool(
+        mcp,
+        "End an external Agent connection lease.",
+        "Use the session_id and agent_instance_id returned by agent_register.",
+    )
+    def agent_unregister(
+        session_id: str,
+        agent_instance_id: str,
+        reason: str = "client_shutdown",
+    ) -> Dict[str, Any]:
+        return AGENT_SESSION_REGISTRY.unregister(
+            session_id,
+            agent_instance_id=agent_instance_id,
+            reason=reason,
+        )
+
+    @_mcp_tool(
+        mcp,
+        "Read connected external Agent session status.",
+        "Pass session_id for one lease, or omit it to list all active leases.",
+    )
+    def agent_status(session_id: Optional[str] = None) -> Dict[str, Any]:
+        result = AGENT_SESSION_REGISTRY.status(session_id)
+        return result if isinstance(result, dict) else {"session_id": session_id, "state": "missing"}
+
+    # Keep the remaining Web/API tools below this point.
     @_mcp_tool(
         mcp,
         "List public WebServer API routes exposed through MCP. Pass category for a compact group.",

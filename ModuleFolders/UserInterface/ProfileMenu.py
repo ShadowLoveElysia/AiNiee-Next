@@ -15,6 +15,8 @@ from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     deep_merge,
     load_json_file,
     load_master_preset,
+    PROFILE_ORIGIN_KEY,
+    profile_origin_for_new_profile,
     resolve_profile_path,
     split_effective_config,
 )
@@ -107,6 +109,7 @@ class ProfileMenu:
             else:
                 base_config = deep_merge(preset, self.host.config)
             settings_only, _, _ = split_effective_config(base_config)
+            settings_only[PROFILE_ORIGIN_KEY] = profile_origin_for_new_profile(self.host.config)
             atomic_write_json(new_path, settings_only)
             console.print(f"[green]{self.i18n.get('msg_profile_created').format(new_name)}[/green]")
         else:

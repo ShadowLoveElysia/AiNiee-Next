@@ -60,6 +60,11 @@ from ModuleFolders.Infrastructure.TaskConfig.PolishingMode import (
     normalize_polishing_mode,
     polishing_mode_i18n_key,
 )
+from ModuleFolders.Service.Agent.ExternalAgentOnboarding import (
+    apply_onboarding_decision,
+    external_agent_prompt,
+    ONBOARDING_PENDING,
+)
 from ModuleFolders.Infrastructure.TaskContract import (
     TASK_API_KEY_ENV,
     TaskContractError,
@@ -775,6 +780,8 @@ class CLIMenu:
         if not self.root_config.get("wizard_completed"):
             self.run_wizard()
 
+        self._maybe_offer_external_agent_onboarding()
+
         self._maybe_start_background_prewarm()
 
         # 启动时自动检查更新
@@ -797,6 +804,44 @@ class CLIMenu:
             if self._show_grouped_main_menu():
                 continue
             return
+
+    def _maybe_offer_external_agent_onboarding(self):
+        """Ask once whether the user wants external Agent/MCP onboarding."""
+        if not self.root_config.get("external_agent_onboarding", True):
+            return
+        status = self.root_config.get(
+            "external_agent_onboarding_status",
+            self.config.get("external_agent_onboarding_status", ONBOARDING_PENDING),
+        )
+        if status != ONBOARDING_PENDING:
+            return
+
+        self.display_banner()
+        console.print(Panel(
+            i18n.get("external_agent_onboarding_intro"),
+            title=i18n.get("external_agent_onboarding_title"),
+            border_style="cyan",
+            expand=False,
+        ))
+        accepted = Confirm.ask(
+            i18n.get("external_agent_onboarding_confirm"),
+            default=False,
+        )
+        apply_onboarding_decision(self.root_config, accepted=accepted)
+        self.config["external_agent_onboarding"] = False
+        self.config["external_agent_onboarding_status"] = self.root_config[
+            "external_agent_onboarding_status"
+        ]
+        self.save_config(save_root=True)
+        if accepted:
+            console.print(Panel(
+                external_agent_prompt(),
+                title=i18n.get("external_agent_onboarding_prompt_title"),
+                border_style="green",
+                expand=False,
+            ))
+        else:
+            console.print(f"[dim]{i18n.get('external_agent_onboarding_declined')}[/dim]")
 
     def _menu_label(self, menu_key: str) -> str:
         label = i18n.get(f"menu_{menu_key}")

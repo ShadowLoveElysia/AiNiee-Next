@@ -7,6 +7,7 @@ from Tools.Skills.skills.translate_skill import TranslateSkill
 from Tools.Skills.skills.queue_skill import QueueSkill
 from Tools.Skills.skills.profile_skill import ProfileSkill
 from Tools.Skills.skills.file_skill import FileSkill
+from Tools.Skills.skills.agent_skill import AgentSkill
 
 
 def build_registry() -> SkillRegistry:
@@ -18,4 +19,5 @@ def build_registry() -> SkillRegistry:
     registry.register(QueueSkill())
     registry.register(ProfileSkill())
     registry.register(FileSkill())
+    registry.register(AgentSkill())
     return registry

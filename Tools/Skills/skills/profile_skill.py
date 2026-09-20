@@ -20,6 +20,11 @@ from Tools.Skills.skills.common import (
     resolve_profile_path,
     save_root_config,
 )
+from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
+    PROFILE_ORIGIN_KEY,
+    load_effective_config,
+    profile_origin_for_new_profile,
+)
 
 
 class ProfileSkill(Skill):
@@ -161,12 +166,20 @@ class ProfileSkill(Skill):
             if os.path.isfile(base_path):
                 try:
                     base_data = load_dict_json(base_path)
+                    base_data[PROFILE_ORIGIN_KEY] = profile_origin_for_new_profile(
+                        load_effective_config(create_missing=False)
+                    )
                     atomic_write_json(profile_path, base_data or {})
                 except Exception as e:
                     return SkillResult.fail(f"Failed to create profile: {e}", "CREATE_ERROR")
             else:
                 try:
-                    atomic_write_json(profile_path, {})
+                    profile_data = {
+                        PROFILE_ORIGIN_KEY: profile_origin_for_new_profile(
+                            load_effective_config(create_missing=False)
+                        )
+                    }
+                    atomic_write_json(profile_path, profile_data)
                 except Exception as e:
                     return SkillResult.fail(f"Failed to create profile: {e}", "CREATE_ERROR")
 

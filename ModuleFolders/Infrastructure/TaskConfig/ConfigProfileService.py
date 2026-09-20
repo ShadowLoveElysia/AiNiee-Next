@@ -41,6 +41,11 @@ RULE_SWITCH_KEYS = (
 
 RULE_PROFILE_KEYS = RULE_DATA_KEYS + RULE_SWITCH_KEYS
 
+PROFILE_ORIGIN_KEY = "profile_origin"
+PROFILE_ORIGIN_MANUAL = "manual"
+PROFILE_ORIGIN_EXTERNAL_AGENT = "external_agent_guided"
+PROFILE_METADATA_KEYS = {PROFILE_ORIGIN_KEY}
+
 ROOT_ONLY_KEYS = {
     "active_profile",
     "active_rules_profile",
@@ -48,9 +53,18 @@ ROOT_ONLY_KEYS = {
     "recent_projects",
     "plugin_enables",
     "stream_api_cache",
+    "external_agent_onboarding",
+    "external_agent_onboarding_status",
 }
 
 _CONFIG_LOCK = threading.RLock()
+
+
+def profile_origin_for_new_profile(config: dict | None) -> str:
+    """Return provenance for a newly created profile without copying base metadata."""
+    if isinstance(config, dict) and config.get("external_agent_onboarding_status") == "accepted":
+        return PROFILE_ORIGIN_EXTERNAL_AGENT
+    return PROFILE_ORIGIN_MANUAL
 
 
 def atomic_write_json(path: str, data: dict) -> None:
@@ -236,6 +250,8 @@ def split_effective_config(config: dict, *, prefer_sdk_request_mode: bool = Fals
     for key, value in (config or {}).items():
         if key.startswith("_task_runtime") or key.startswith("_runtime_") or key.startswith("_workflow_"):
             continue
+        if key in PROFILE_METADATA_KEYS:
+            continue
         if key in RULE_PROFILE_KEYS:
             rules[key] = value
         elif key in ROOT_ONLY_KEYS:
@@ -282,6 +298,8 @@ def load_effective_config(
                 profile_config = {}
 
         effective = deep_merge(base_config, profile_config)
+        # Profile provenance is file metadata, not an editable runtime setting.
+        effective.pop(PROFILE_ORIGIN_KEY, None)
 
         if rules_profile_name == "None":
             effective = deep_merge(effective, default_rules_payload())
