@@ -138,7 +138,7 @@ class ExternalAgentBatchService:
 
     @staticmethod
     def _batch_hash(items: Sequence[Mapping[str, Any]]) -> str:
-        return _sha256(_canonical([{"index": int(x["index"]), "source": str(x["source"])} for x in items]))
+        return _sha256(_canonical([{"index": int(x["index"]), "source": str(x.get("source", x.get("source_text", "")))} for x in items]))
 
     def prepare_project(self, input_path: str | Path, task_id: str, session_id: str, execution_mode: str) -> dict[str, Any]:
         task_id = _safe_id(task_id, "task_id")
@@ -168,19 +168,78 @@ class ExternalAgentBatchService:
             self._write(state)
             return self._project_view(state)
 
+    def prepare_cache_project(self, cache_path: str | Path, task_id: str, session_id: str, execution_mode: str) -> dict[str, Any]:
+        """Prepare batches from a host-generated cache manifest.
+
+        Cache locators remain opaque to the Agent; the manifest service owns
+        path validation and cache revision calculation.
+        """
+        from ModuleFolders.Service.Agent.ExternalAgentCacheManifest import ExternalAgentCacheManifestService
+
+        task_id = _safe_id(task_id, "task_id")
+        session_id = _safe_id(session_id, "session_id")
+        if execution_mode != "external_agent":
+            raise ExternalAgentBatchError("external Agent batches require external_agent mode", "EXECUTION_MODE_REQUIRED")
+        manifest = ExternalAgentCacheManifestService(self.project_root).build(cache_path)
+        manifest_items = []
+        for index, item in enumerate(item for file in manifest["files"] for item in file["items"]):
+            entry = dict(item)
+            entry["index"] = index
+            manifest_items.append(entry)
+        batches = []
+        for start in range(0, len(manifest_items), self.batch_size):
+            batch_items = manifest_items[start : start + self.batch_size]
+            batches.append({
+                "batch_id": f"batch_{len(batches) + 1:06d}", "index": len(batches), "status": "pending",
+                "revision": None, "source_hash": self._batch_hash(batch_items), "items": batch_items,
+            })
+        with self._lock:
+            if self._task_path(task_id).exists():
+                raise ExternalAgentBatchError("task already exists", "TASK_ALREADY_EXISTS")
+            now = self._clock()
+            state = {
+                "schema": SCHEMA, "task_id": task_id, "session_id": session_id,
+                "execution_mode": execution_mode, "cache_path_name": manifest["cache_path_name"],
+                "cache_path": str(Path(cache_path).expanduser().resolve()),
+                "cache_revision": manifest["cache_revision"], "manifest_hash": manifest["manifest_hash"],
+                "source_hash": manifest["manifest_hash"], "source_size": manifest["item_count"],
+                "revision": 1, "status": "ready" if batches else "completed",
+                "batch_size": self.batch_size, "total_batches": len(batches), "created_at": now,
+                "updated_at": now, "batches": batches,
+            }
+            self._write(state)
+            return self._project_view(state)
+
+    def cache_path_for_writer(self, task_id: str, session_id: str) -> str:
+        with self._lock:
+            state = self._read(task_id)
+            self._validate_session(state, session_id)
+            cache_path = state.get("cache_path")
+            if not isinstance(cache_path, str) or not cache_path:
+                raise ExternalAgentBatchError("task is not cache-backed", "CACHE_MANIFEST_REQUIRED")
+            return cache_path
+
     @staticmethod
     def _project_view(state: Mapping[str, Any]) -> dict[str, Any]:
+        submitted_batches = sum(x.get("status") in {"submitted", "committed"} for x in state["batches"])
+        committed_batches = sum(x.get("status") == "committed" for x in state["batches"])
         return {
             "schema": state["schema"], "task_id": state["task_id"], "execution_mode": state["execution_mode"],
             "source_hash": state["source_hash"], "source_size": state["source_size"], "revision": state["revision"],
             "status": state["status"], "total_batches": state["total_batches"],
-            "completed_batches": sum(x.get("status") == "submitted" for x in state["batches"]),
+            # ``submitted`` means only that the result passed validation and
+            # was staged.  A project is complete only after the deterministic
+            # writer has committed every batch.
+            "submitted_batches": submitted_batches,
+            "committed_batches": committed_batches,
+            "completed_batches": committed_batches,
         }
 
     @staticmethod
     def _batch_view(batch: Mapping[str, Any]) -> dict[str, Any]:
         return {"batch_id": batch["batch_id"], "index": batch["index"], "status": batch["status"],
-                "revision": batch["revision"], "source_hash": batch["source_hash"], "items": deepcopy(batch["items"])}
+                "revision": batch["revision"], "source_hash": batch["source_hash"], "items": deepcopy(batch["items"]),
+                "writer_lease_id": batch.get("writer_lease_id"), "cache_revision": batch.get("cache_revision")}
 
     def claim_batch(self, task_id: str, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -225,18 +284,29 @@ class ExternalAgentBatchService:
         if not isinstance(items, list):
             raise ExternalAgentBatchError("items must be an array", "INVALID_RESULT_ITEMS")
         expected_by_index = {x["index"]: x for x in expected}
+        expected_by_item_id = {x.get("item_id"): x for x in expected if x.get("item_id")}
         seen: set[int] = set(); result = []
         for item in items:
             if not isinstance(item, Mapping):
                 raise ExternalAgentBatchError("each item must be an object", "INVALID_RESULT_ITEMS")
             index = item.get("index")
+            if index is None and item.get("item_id") in expected_by_item_id:
+                index = expected_by_item_id[item["item_id"]]["index"]
             if isinstance(index, bool) or not isinstance(index, int) or index not in expected_by_index or index in seen:
                 raise ExternalAgentBatchError("result item index does not match claimed batch", "INVALID_RESULT_ITEMS")
             if not isinstance(item.get("translation"), str):
                 raise ExternalAgentBatchError("translation must be a string", "INVALID_RESULT_ITEMS")
-            if "source" in item and item["source"] != expected_by_index[index]["source"]:
+            expected_source = expected_by_index[index].get("source", expected_by_index[index].get("source_text", ""))
+            if "source" in item and item["source"] != expected_source:
                 raise ExternalAgentBatchError("result source does not match claimed batch", "SOURCE_MISMATCH")
-            seen.add(index); result.append({"index": index, "translation": item["translation"]})
+            expected_item = expected_by_index[index]
+            if item.get("item_id") and item.get("item_id") != expected_item.get("item_id"):
+                raise ExternalAgentBatchError("result item_id does not match claimed batch", "ITEM_ID_MISMATCH")
+            result_item = {"index": index, "translation": item["translation"]}
+            for key in ("item_id", "storage_path", "file_id", "text_index", "source_text", "source_hash", "current_line_hash", "cache_revision"):
+                if key in expected_item:
+                    result_item[key] = expected_item[key]
+            seen.add(index); result.append(result_item)
         if seen != set(expected_by_index):
             raise ExternalAgentBatchError("result does not contain every claimed item", "INVALID_RESULT_ITEMS")
         return sorted(result, key=lambda x: x["index"])
@@ -278,7 +348,7 @@ class ExternalAgentBatchService:
             batch.update({"status": "submitted", "idempotency_key": idempotency_key, "result_fingerprint": fingerprint,
                           "submitted_at": self._clock(), "submission": submission})
             state["revision"] = revision + 1
-            state["status"] = "completed" if all(x["status"] == "submitted" for x in state["batches"]) else "ready"
+            state["status"] = "awaiting_commit" if all(x["status"] == "submitted" for x in state["batches"]) else "ready"
             state["updated_at"] = self._clock(); self._write(state)
             return deepcopy(submission)
 
@@ -287,6 +357,49 @@ class ExternalAgentBatchService:
             state = self._read(task_id)
             if session_id is not None: self._validate_session(state, session_id)
             return self._project_view(state)
+
+    def get_ledger(self, task_id: str, session_id: str | None = None) -> dict[str, Any]:
+        """Return a session-authorized ledger snapshot for result staging."""
+        with self._lock:
+            state = self._read(task_id)
+            if session_id is not None:
+                self._validate_session(state, session_id)
+            return deepcopy(state)
+
+    def mark_batch_committed(
+        self,
+        task_id: str,
+        session_id: str,
+        batch_id: str,
+        writer_lease_id: str,
+        commit_result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Finalize ledger state only after the deterministic writer succeeds."""
+        with self._lock:
+            state = self._read(task_id)
+            self._validate_session(state, session_id)
+            batch = next((item for item in state["batches"] if item.get("batch_id") == batch_id), None)
+            if batch is None:
+                raise ExternalAgentBatchError("batch does not exist", "BATCH_NOT_FOUND")
+            if batch.get("status") == "committed":
+                return {"status": "committed", "task": self._project_view(state), "batch": self._batch_view(batch)}
+            if batch.get("status") != "submitted":
+                raise ExternalAgentBatchError("batch is not submitted", "BATCH_NOT_SUBMITTED")
+            if not isinstance(writer_lease_id, str) or not writer_lease_id:
+                raise ExternalAgentBatchError("writer lease is required", "WRITER_LEASE_REQUIRED")
+            if not isinstance(commit_result, Mapping) or commit_result.get("status") != "persisted":
+                raise ExternalAgentBatchError("writer commit result is invalid", "WRITER_COMMIT_INVALID")
+            batch.update({
+                "status": "committed",
+                "writer_lease_id": writer_lease_id,
+                "cache_revision": commit_result.get("cache_revision"),
+                "backup_path_recorded": bool(commit_result.get("backup_path")),
+                "committed_at": self._clock(),
+            })
+            state["status"] = "completed" if all(item.get("status") == "committed" for item in state["batches"]) else "ready"
+            state["updated_at"] = self._clock()
+            self._write(state)
+            return {"status": "committed", "task": self._project_view(state), "batch": self._batch_view(batch)}
 
 
 _DEFAULT_SERVICE: ExternalAgentBatchService | None = None

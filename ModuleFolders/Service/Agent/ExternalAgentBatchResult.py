@@ -149,9 +149,12 @@ class ExternalAgentBatchResultService:
             index = item.get("index")
             if isinstance(index, bool) or not isinstance(index, int) or index in seen:
                 raise ExternalAgentBatchResultError("ledger item index is invalid", "LEDGER_INVALID")
-            source = _as_text(item.get("source"), "source")
+            source = _as_text(item.get("source", item.get("source_text")), "source")
             seen.add(index)
-            items.append({"index": index, "source": source})
+            entry = dict(item)
+            entry["index"] = index
+            entry["source"] = source
+            items.append(entry)
         return sorted(items, key=lambda item: item["index"])
 
     @staticmethod
@@ -189,7 +192,12 @@ class ExternalAgentBatchResultService:
                     "translation placeholders do not match source", "PLACEHOLDER_MISMATCH"
                 )
             seen.add(index)
-            accepted.append({"index": index, "source": source, "translation": translation})
+            accepted_item = {
+                key: value for key, value in expected_by_index[index].items()
+                if key in {"index", "source", "source_text", "item_id", "file_id", "storage_path", "text_index", "source_hash", "current_line_hash", "cache_revision"}
+            }
+            accepted_item.update({"index": index, "source": source, "translation": translation})
+            accepted.append(accepted_item)
         if seen != set(expected_by_index):
             raise ExternalAgentBatchResultError("result does not contain every ledger item", "INVALID_RESULT_ITEMS")
         return sorted(accepted, key=lambda item: item["index"])

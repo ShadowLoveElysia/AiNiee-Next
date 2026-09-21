@@ -28,6 +28,9 @@ from ModuleFolders.Service.Agent.ExternalAgentBatch import (
     ExternalAgentBatchError,
     get_external_agent_batch_service,
 )
+from ModuleFolders.Service.Agent.ExternalAgentBatchResult import get_external_agent_batch_result_service
+from ModuleFolders.Service.Agent.ExternalAgentBatchWriter import ExternalAgentBatchWriter, ExternalAgentBatchWriterError
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import get_external_agent_writer_lease_registry
 from Tools.MCPServer.docs import (
     build_security_policy,
     build_tool_category_index,
@@ -962,6 +965,26 @@ def _build_mcp_app(
 
     @_mcp_tool(
         mcp,
+        "Prepare external-Agent batches from a controlled AiNiee cache manifest.",
+        "Use this only when a real AinieeCacheData.json exists; returned items contain opaque cache locators and cache revision.",
+    )
+    def agent_prepare_cache_project(
+        cache_path: str,
+        task_id: str,
+        session_id: str,
+        execution_mode: str = "external_agent",
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_batch_service().prepare_cache_project(
+                cache_path, task_id, session_id, execution_mode
+            )
+        except (ExternalAgentBatchError, ValueError) as exc:
+            code = getattr(exc, "code", "CACHE_MANIFEST_INVALID")
+            raise ValueError(f"{code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
         "Claim the next external-Agent translation batch.",
         "Only one Agent session can claim a batch at a time.",
     )
@@ -988,11 +1011,23 @@ def _build_mcp_app(
     ) -> Dict[str, Any]:
         _require_external_agent_session(session_id)
         try:
-            return get_external_agent_batch_service().submit_translation_batch(
+            batch_service = get_external_agent_batch_service()
+            result = batch_service.submit_translation_batch(
                 task_id, session_id, batch_id, source_hash, revision, idempotency_key, items
             )
+            ledger = batch_service.get_ledger(task_id, session_id)
+            staged = get_external_agent_batch_result_service().validate_and_stage(
+                ledger,
+                result,
+                idempotency_key=idempotency_key,
+            )
+            result["staging_status"] = "replayed" if staged.get("replayed") else "staged"
+            result["staged_result_hash"] = staged.get("result_hash")
+            return result
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @_mcp_tool(
         mcp,
@@ -1005,6 +1040,60 @@ def _build_mcp_app(
             return get_external_agent_batch_service().release_batch(task_id, session_id, batch_id)
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Acquire a short-lived writer lease for a cache-backed Agent task.",
+        "A task has at most one writer lease; the lease is separate from the MCP and Agent session IDs.",
+    )
+    def agent_acquire_writer_lease(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_external_agent_writer_lease_registry().acquire(task_id, session_id)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @_mcp_tool(
+        mcp,
+        "Commit one staged cache-backed Agent batch through the deterministic writer.",
+        "Requires a valid writer lease and staged items containing opaque cache locators and cache revision.",
+    )
+    def agent_commit_cache_batch(
+        task_id: str,
+        session_id: str,
+        writer_lease_id: str,
+        batch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        if not isinstance(batch_id, str) or not batch_id.strip():
+            raise ValueError("BATCH_ID_REQUIRED: batch_id is required for commit")
+        leases = get_external_agent_writer_lease_registry()
+        if not leases.validate(writer_lease_id, task_id, session_id):
+            raise ValueError("WRITER_LEASE_UNAUTHORIZED: writer lease is invalid or expired")
+        writer = ExternalAgentBatchWriter(
+            PROJECT_ROOT,
+            writer_lease_validator=lambda record, lease: leases.validate(lease, task_id, session_id),
+        )
+        try:
+            cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
+            staged_result = get_external_agent_batch_result_service().read_staged(task_id)
+            result = writer.apply_staged_result(
+                cache_path,
+                staged_result,
+                writer_lease_id=writer_lease_id,
+                batch_id=batch_id,
+            )
+            ledger_result = get_external_agent_batch_service().mark_batch_committed(
+                task_id, session_id, batch_id, writer_lease_id, result
+            )
+            leases.release(writer_lease_id, task_id, session_id)
+            result["ledger"] = ledger_result
+            return result
+        except ExternalAgentBatchWriterError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+        except ValueError as exc:
+            code = getattr(exc, "code", None)
+            raise ValueError(f"{code}: {exc}" if code else str(exc)) from exc
 
     # Keep the remaining Web/API tools below this point.
     @_mcp_tool(

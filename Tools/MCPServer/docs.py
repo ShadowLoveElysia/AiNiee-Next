@@ -105,6 +105,10 @@ AGENT_TOOL_DESCRIPTIONS = [
         "purpose": "Create a controlled project and translation batch ledger without writing cache or output.",
     },
     {
+        "tool_name": "agent_prepare_cache_project",
+        "purpose": "Create batches from a host-generated cache manifest with opaque item locators and cache revision.",
+    },
+    {
         "tool_name": "agent_claim_batch",
         "purpose": "Claim one translation batch for the registered Agent session.",
     },
@@ -115,6 +119,14 @@ AGENT_TOOL_DESCRIPTIONS = [
     {
         "tool_name": "agent_release_batch",
         "purpose": "Release a claimed batch after disconnect without accepting results.",
+    },
+    {
+        "tool_name": "agent_acquire_writer_lease",
+        "purpose": "Acquire a short-lived task writer lease for deterministic cache commit.",
+    },
+    {
+        "tool_name": "agent_commit_cache_batch",
+        "purpose": "Commit a staged cache-backed batch through the guarded deterministic writer.",
     },
 ]
 

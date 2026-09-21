@@ -83,6 +83,11 @@ _mcp_security_notice
 外部 Agent 翻译原型顺序：`agent_register` → `agent_prepare_project` →
 `agent_claim_batch` → `agent_submit_translation_batch`。提交只写入受控批次账本，
 不会直接写入 AiNiee 缓存或最终输出；断线时使用 `agent_release_batch`，不要重用过期 session。
+如果要基于已有 AiNiee 缓存继续翻译，使用 `agent_prepare_cache_project`；它会返回服务端生成的
+opaque item locator 和 cache revision，Agent 不得自行构造 storage_path 或 text_index。
+正式写回还必须先调用 `agent_acquire_writer_lease`，再调用 `agent_commit_cache_batch`。
+提交时只需传任务、批次和 writer lease；缓存路径与 staged 结果由 AiNiee 服务端绑定和读取。
+没有 writer lease、cache revision 或 opaque locator 时，结果只能停留在 staging，不能写入正式缓存。
 
 ## Calling Patterns
 
