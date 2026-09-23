@@ -23,6 +23,8 @@ from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.table import Table
 from rich.live import Live
 
+from ModuleFolders.UserInterface.UIHelpers import open_temporary_text
+
 warnings.filterwarnings('ignore')
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -780,6 +782,7 @@ class CLIMenu:
         if not self.root_config.get("wizard_completed"):
             self.run_wizard()
 
+        # Offer the Agent/manual choice as part of the first-run flow.
         self._maybe_offer_external_agent_onboarding()
 
         self._maybe_start_background_prewarm()
@@ -823,10 +826,12 @@ class CLIMenu:
             border_style="cyan",
             expand=False,
         ))
-        accepted = Confirm.ask(
+        choice = IntPrompt.ask(
             i18n.get("external_agent_onboarding_confirm"),
-            default=False,
+            choices=["1", "2"],
+            show_choices=False,
         )
+        accepted = choice == 1
         apply_onboarding_decision(self.root_config, accepted=accepted)
         self.config["external_agent_onboarding"] = False
         self.config["external_agent_onboarding_status"] = self.root_config[
@@ -834,15 +839,19 @@ class CLIMenu:
         ]
         self.save_config(save_root=True)
         if accepted:
-            console.print(f"[dim]{i18n.get('external_agent_prompt_copy_hint')}[/dim]")
-            console.print(Panel(
-                external_agent_prompt(self._external_agent_prompt_context()),
-                title=i18n.get("external_agent_onboarding_prompt_title"),
-                border_style="green",
-                expand=False,
-            ))
+            self._open_external_agent_prompt()
         else:
             console.print(f"[dim]{i18n.get('external_agent_onboarding_declined')}[/dim]")
+
+    def _open_external_agent_prompt(self):
+        """Open the localized handoff in a disposable text editor window."""
+        console.print(f"[dim]{i18n.get('external_agent_prompt_copy_hint')}[/dim]")
+        time.sleep(3)
+        if not open_temporary_text(
+            external_agent_prompt(self._external_agent_prompt_context()),
+            prefix="ainiee-agent-prompt-",
+        ):
+            console.print(f"[yellow]{i18n.get('external_agent_prompt_open_failed')}[/yellow]")
 
     def _external_agent_prompt_context(self):
         """Collect the current path snapshot shown in the Agent handoff."""

@@ -1,6 +1,6 @@
 # AiNiee Skills — 轻量级 AI 工具调用框架
 
-一套轻量的、**不依赖 MCP** 的 AiNiee 交互框架。Skills 通过简洁的 REST/JSON 接口暴露核心功能，无需 MCP 协议、FastAPI 或 uvicorn。
+一套独立的、**不依赖 MCP** 的 AiNiee 备用交互服务。`Tools/Skills/` 通过简洁的 REST/JSON 接口暴露核心功能，无需 MCP 协议、FastAPI 或 uvicorn。根目录 `SKILL.md` 是 Agent 使用规则文件，不是本服务，也不是 MCP 的替代工具。
 
 ## 为什么用 Skills 而不是 MCP？
 

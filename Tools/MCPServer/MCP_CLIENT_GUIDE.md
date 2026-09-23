@@ -2,7 +2,7 @@
 
 ## Overview
 
-AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools 暴露出来，让不支持读项目文件的 LLM 客户端也能直接操作项目，同时避免在 MCP 工具发现阶段一次性注入全部端点。
+AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools 暴露出来，让不支持读项目文件的 LLM 客户端也能直接操作项目，同时避免在 MCP 工具发现阶段一次性注入全部端点。根目录 `SKILL.md` 只是必须遵循的使用规则文件，不是 MCP 或 `Tools/Skills/` 服务，不能作为执行通道或降级选项。
 
 推荐任意 LLM 客户端在首次连接后按下面顺序执行：
 
@@ -28,7 +28,7 @@ MCP 代理调用 `POST /api/task/external-agent-mode`；它只覆盖这一次任
 不会修改 `translation_execution_mode`、Profile 或其他项目设置。不要通过 `/api/config`
 把全局模式改成外部 Agent 来启动任务。
 
-如果客户端只展示工具名和工具说明，不展示仓库文件，也应优先使用上面的说明工具，而不是猜参数结构或一次性读取全量端点目录。
+如果客户端只展示工具名和工具说明，不展示仓库文件，也应优先使用上面的说明工具，而不是猜参数结构或一次性读取全量端点目录。原生 MCP 工具是首选执行通道；`Tools/Skills/` 是独立的 REST/JSON 备用服务，只有用户明确选择或原生 MCP 确实无法挂载时才使用。
 
 ## First Steps
 

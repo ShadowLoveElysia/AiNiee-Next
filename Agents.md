@@ -13,7 +13,7 @@ AiNiee-Next 是一个跨平台的批量翻译与文本处理工具，CLI/TUI 是
 - 配置与自动化：多 Profile、规则 Profile、Glossary、Prompt、插件、可排序任务队列、费用/时间估算、Web 监控和诊断报告。
 - 模型与平台：兼容多种在线 API、中转服务和本地模型；具体平台、模型、API 地址和密钥由用户在 Profile 或运行参数中配置。
 
-核心数据面仍由 AiNiee 的确定性翻译引擎负责：分块、并发、缓存、限流、重试、恢复、格式检查和输出写入。MCP 与 Skills 只是外部控制层；LLM 不应直接改写缓存、队列内部状态或已有输出文件。
+核心数据面仍由 AiNiee 的确定性翻译引擎负责：分块、并发、缓存、限流、重试、恢复、格式检查和输出写入。MCP 与 `Tools/Skills/` 服务只是外部控制层；根目录 `SKILL.md` 是使用规则文件，不是工具或服务。LLM 不应直接改写缓存、队列内部状态或已有输出文件。
 
 ## 可用入口
 
@@ -22,7 +22,7 @@ AiNiee-Next 是一个跨平台的批量翻译与文本处理工具，CLI/TUI 是
 | CLI/TUI | 本地交互或脚本批量翻译 | `uv run ainiee_cli.py translate INPUT -o OUTPUT -s Japanese -t Chinese --resume --yes` |
 | Web | 浏览器监控、配置、队列和插件管理 | `uv run ainiee_cli.py`，在菜单选择 Web Server（默认 `127.0.0.1:8000`） |
 | MCP | 标准 MCP 工具协议，供支持 MCP 的 LLM 客户端调用 | `uv run ainiee_cli.py mcp --mcp-transport stdio` |
-| Skills | 精选 REST/JSON 技能，也可 CLI 或 Python 直调 | `python Tools/Skills/server.py --port 8766` |
+| Tools/Skills 服务 | 精选 REST/JSON 接口，也可 CLI 或 Python 直调 | `python Tools/Skills/server.py --port 8766` |
 
 ## MCP 接入
 
@@ -138,11 +138,11 @@ python Tools/Skills/cli.py check
 
 ## 用户许可下的自动接入流程
 
-当用户说“接入 AiNiee”“把这个项目加到我的 MCP/Skills 客户端”或给出等价许可时，LLM 可以按以下流程自动完成：
+当用户说“接入 AiNiee”“把这个项目加到我的 MCP 或 Tools/Skills 服务客户端”或给出等价许可时，LLM 可以按以下流程自动完成：
 
 1. 确认当前客户端支持 MCP stdio、MCP HTTP、Skills HTTP 或本地命令中的哪一种，并解析项目绝对路径。
 2. 向用户说明将要启动的命令、需要安装的依赖、监听地址和可能修改的客户端配置；等待明确许可后再执行安装、启动或写配置。
-3. 优先选择 stdio launcher；若客户端只支持 URL，则启动 streamable-http；若客户端不支持 MCP，再使用 Skills HTTP 或 Skills CLI。
+3. 优先选择原生 MCP stdio launcher；若客户端只支持 URL，则启动 streamable-http；只有原生 MCP 确实不可用且用户明确允许备用服务时，才使用 `Tools/Skills/` HTTP 或 CLI。
 4. 运行 `--check`/健康检查，连接后先读取 MCP 手册与安全策略，或先请求 `GET /skills` 获取技能元数据。
 5. 将连接名称、命令、参数、URL、令牌来源和启动超时写入客户端原生配置。令牌使用环境变量或客户端密钥存储，不写进仓库文件。
 6. 仅在用户另行确认具体操作后启动翻译、润色、队列任务、配置写入或 Profile 删除；完成后返回 task_id、状态和输出路径。

@@ -2,10 +2,14 @@
 设置菜单模块
 从 ainiee_cli.py 分离
 """
+import time
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import IntPrompt
 from rich.markup import escape
+
+from ModuleFolders.UserInterface.UIHelpers import open_temporary_text
 
 
 console = Console()
@@ -83,12 +87,12 @@ class SettingsMenu:
 
         self.host.display_banner()
         console.print(f"[dim]{self.i18n.get('external_agent_prompt_copy_hint')}[/dim]")
-        console.print(Panel(
+        time.sleep(3)
+        if not open_temporary_text(
             external_agent_prompt(self.host._external_agent_prompt_context()),
-            title=self.i18n.get("external_agent_onboarding_prompt_title"),
-            border_style="green",
-            expand=False,
-        ))
+            prefix="ainiee-agent-prompt-",
+        ):
+            console.print(f"[yellow]{self.i18n.get('external_agent_prompt_open_failed')}[/yellow]")
         console.print(Panel(
             self.i18n.get("external_agent_mcp_guide_steps"),
             title=self.i18n.get("setting_external_agent_mcp_guide"),
