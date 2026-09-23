@@ -22,9 +22,16 @@ Recommended first steps for any LLM client:
 5. Then use `call_web_api` or `upload_file`
 
 External Agent clients should then call `agent_register` and keep the returned
-lease alive with `agent_heartbeat`. The registry describes connection state only;
+lease alive with `agent_heartbeat`. The default connection lease is 120 seconds;
+clients may request up to 3600 seconds (60 minutes) with
+`requested_lease_seconds: 3600`. The registry describes connection state only;
 all project and task mutations remain behind domain tools and the deterministic
 AiNiee data plane.
+
+The project stays in its configured API mode by default. To request one
+external-Agent task, call the authenticated MCP route
+`POST /api/task/external-agent-mode`; this changes only that task snapshot and
+never edits `translation_execution_mode`, profiles, or other project settings.
 
 ## Security Policy
 
@@ -101,8 +108,12 @@ AGENT_TOOL_DESCRIPTIONS = [
         "purpose": "Read one or all active external Agent connection leases.",
     },
     {
+        "tool_name": "agent_request_external_mode",
+        "purpose": "Request a session-scoped external-Agent mode through the authenticated MCP port without changing Profile/config files.",
+    },
+    {
         "tool_name": "agent_prepare_project",
-        "purpose": "Create a controlled project and translation batch ledger without writing cache or output.",
+        "purpose": "Create a controlled line-based project ledger only for ordinary TXT without writing cache or output; structured or other formats are rejected and must use a format-aware task route.",
     },
     {
         "tool_name": "agent_prepare_cache_project",
@@ -119,6 +130,10 @@ AGENT_TOOL_DESCRIPTIONS = [
     {
         "tool_name": "agent_release_batch",
         "purpose": "Release a claimed batch after disconnect without accepting results.",
+    },
+    {
+        "tool_name": "agent_resume_task",
+        "purpose": "Rebind a durable task to a newly registered session after the previous Agent disconnected.",
     },
     {
         "tool_name": "agent_acquire_writer_lease",
@@ -141,6 +156,10 @@ EXACT_ROUTE_PURPOSES = {
     "/api/queue": "Read or modify queue tasks.",
     "/api/queue/raw": "Read or replace the raw queue JSON document.",
     "/api/task/run": "Start a translation / polish / export task.",
+    "/api/task/external-agent-mode": (
+        "Start one task in external-Agent mode through the authenticated MCP bridge; "
+        "this changes only the task snapshot and never edits the active profile setting."
+    ),
     "/api/task/runtime-parameters": "List runtime override fields, types, ranges and dependencies.",
     "/api/task/stop": "Stop the current running task.",
     "/api/task/status": "Read live task status, logs, and metrics.",
@@ -344,7 +363,11 @@ def build_tool_catalog(
         )
         result.update(
             {
-                "usage": "Use agent_register first, then renew its lease with agent_heartbeat.",
+                "usage": (
+                    "Use agent_register first, then renew its lease with agent_heartbeat. "
+                    "The default lease is 120 seconds; requested_lease_seconds may be "
+                    "set up to 3600 seconds (60 minutes)."
+                ),
                 "category_count": 1,
                 "endpoint_count": len(AGENT_TOOL_DESCRIPTIONS),
                 "route_tool_count": 0,
@@ -476,7 +499,9 @@ def get_server_instructions_text() -> str:
         f"{MCP_SECRET_PLACEHOLDER} as a redacted placeholder, not a usable "
         "secret, and ask the user for a second confirmation before changing MCP "
         "host or port settings. When an external Agent connects, call "
-        "agent_register first and renew its lease with agent_heartbeat; use "
+        "agent_register first and renew its lease with agent_heartbeat. The default "
+        "lease is 120 seconds; request up to 3600 seconds (60 minutes) with "
+        "requested_lease_seconds when a long task needs it. Use "
         "agent_status to inspect connection state."
     )
 

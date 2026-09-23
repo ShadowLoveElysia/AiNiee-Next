@@ -31,7 +31,7 @@ export const Monitor: React.FC = () => {
   };
 
   const resolveComparisonStatus = (taskStatus: string, comparisonSeq: number, comparisonUpdatedAt?: number) => {
-    if (taskStatus !== 'running') return { status: 'idle' as const, lagSec: null as number | null };
+    if (!['running', 'starting'].includes(taskStatus)) return { status: 'idle' as const, lagSec: null as number | null };
     if (!comparisonSeq || !comparisonUpdatedAt) return { status: 'waiting' as const, lagSec: null as number | null };
     const lagSec = Math.max(0, Math.floor(Date.now() / 1000 - comparisonUpdatedAt));
     return lagSec <= 20
@@ -83,7 +83,7 @@ export const Monitor: React.FC = () => {
             stats: data.stats,
             logs: mergedLogs.slice(-500),
             chartData: mergedChart.slice(-120),
-            isRunning: data.stats.status === 'running',
+            isRunning: Boolean(data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)),
             comparison: data.comparison ? { ...data.comparison } : prev.comparison
           };
         });

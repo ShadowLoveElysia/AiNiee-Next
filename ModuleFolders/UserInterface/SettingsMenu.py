@@ -82,8 +82,9 @@ class SettingsMenu:
         from ModuleFolders.Service.Agent.ExternalAgentOnboarding import external_agent_prompt
 
         self.host.display_banner()
+        console.print(f"[dim]{self.i18n.get('external_agent_prompt_copy_hint')}[/dim]")
         console.print(Panel(
-            external_agent_prompt(),
+            external_agent_prompt(self.host._external_agent_prompt_context()),
             title=self.i18n.get("external_agent_onboarding_prompt_title"),
             border_style="green",
             expand=False,

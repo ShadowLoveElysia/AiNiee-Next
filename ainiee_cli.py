@@ -834,14 +834,29 @@ class CLIMenu:
         ]
         self.save_config(save_root=True)
         if accepted:
+            console.print(f"[dim]{i18n.get('external_agent_prompt_copy_hint')}[/dim]")
             console.print(Panel(
-                external_agent_prompt(),
+                external_agent_prompt(self._external_agent_prompt_context()),
                 title=i18n.get("external_agent_onboarding_prompt_title"),
                 border_style="green",
                 expand=False,
             ))
         else:
             console.print(f"[dim]{i18n.get('external_agent_onboarding_declined')}[/dim]")
+
+    def _external_agent_prompt_context(self):
+        """Collect the current path snapshot shown in the Agent handoff."""
+        profile_path = os.path.join(PROJECT_ROOT, "Resource", "profiles", f"{self.active_profile_name}.json")
+        rules_path = os.path.join(PROJECT_ROOT, "Resource", "rules_profiles", f"{self.active_rules_profile_name}.json")
+        return {
+            "cwd": os.getcwd(),
+            "project_root": PROJECT_ROOT,
+            "input_path": self.config.get("label_input_path"),
+            "output_path": self.config.get("label_output_path"),
+            "profile_path": profile_path,
+            "rules_profile_path": rules_path,
+            "interface_language": self.config.get("interface_language", current_lang),
+        }
 
     def _menu_label(self, menu_key: str) -> str:
         label = i18n.get(f"menu_{menu_key}")

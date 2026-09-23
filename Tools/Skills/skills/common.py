@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import os
+import shutil
 import tempfile
+import uuid
 from typing import Any, Dict, Mapping, Tuple
 
 from ModuleFolders.Infrastructure.TaskContract import (
@@ -45,6 +47,7 @@ PROJECT_ROOT = os.path.abspath(
 )
 SKILLS_ALLOWED_PATHS_ENV = "AINIEE_SKILLS_ALLOWED_PATHS"
 SKILLS_ALLOW_EXTERNAL_PATHS_ENV = "AINIEE_SKILLS_ALLOW_EXTERNAL_PATHS"
+EXTERNAL_INPUT_STAGING_DIR = os.path.join("Resource", "automation_progress", "external_inputs")
 
 
 class SkillPathError(SkillError):
@@ -83,6 +86,63 @@ def skill_allowed_roots() -> tuple[str, ...]:
             if candidate not in roots:
                 roots.append(candidate)
     return tuple(roots)
+
+
+def external_input_staging_root(*, create: bool = False) -> str:
+    """Return the project-owned staging directory for user supplied files.
+
+    A Skills client may select a file outside the AiNiee workspace, but the
+    batch service must never consume that path directly.  ``stage_external``
+    copies the explicitly confirmed file here; the resulting path is inside
+    ``PROJECT_ROOT`` and therefore accepted by the normal batch boundary.  A
+    project-owned directory also works when the MCP and Skills processes use
+    different temporary-directory implementations or run under Windows.
+    """
+    root = os.path.realpath(os.path.join(PROJECT_ROOT, EXTERNAL_INPUT_STAGING_DIR))
+    if create:
+        os.makedirs(root, exist_ok=True)
+    return root
+
+
+def stage_external_input(path: Any, *, confirmed: bool) -> dict[str, str]:
+    """Copy one user-confirmed external file into the controlled workspace.
+
+    The source is intentionally resolved without applying the workspace policy:
+    this is the one operation that accepts a user-selected external path.  The
+    destination is randomized and always checked to remain under the staging
+    root before copying.  Callers should pass the returned ``local_path`` to
+    translation or Agent batch Skills; they must not forward the source path.
+    """
+    if not confirmed:
+        raise SkillPathError(
+            "stage_external requires explicit confirmation for a user-supplied file.",
+            "EXTERNAL_PATH_CONFIRMATION_REQUIRED",
+        )
+    if not isinstance(path, str) or not path.strip():
+        raise SkillPathError("path must be a non-empty path.", "INVALID_PATH")
+    raw_path = path.strip().strip('"').strip("'")
+    source = os.path.realpath(os.path.abspath(os.path.expanduser(raw_path)))
+    if not os.path.isfile(source):
+        raise SkillPathError("The supplied external path is not a file.", "INVALID_PATH")
+
+    root = external_input_staging_root(create=True)
+    destination = os.path.realpath(
+        os.path.join(root, f"{uuid.uuid4().hex}_{os.path.basename(source)}")
+    )
+    try:
+        if os.path.commonpath((root, destination)) != root:
+            raise SkillPathError("staging destination escapes the project staging root.", "PATH_NOT_ALLOWED")
+    except ValueError as exc:
+        raise SkillPathError("staging destination is on an unrelated filesystem.", "PATH_NOT_ALLOWED") from exc
+    try:
+        shutil.copy2(source, destination)
+    except OSError as exc:
+        raise SkillPathError(f"Unable to stage external file: {exc}", "IO_ERROR") from exc
+    return {
+        "local_path": destination,
+        "source_name": os.path.basename(source),
+        "staging_root": root,
+    }
 
 
 def validate_skill_path(

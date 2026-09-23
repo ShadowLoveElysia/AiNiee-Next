@@ -260,6 +260,22 @@ class CacheManager(Base):
         self.project = data
         self._normalize_project_state()
 
+    def build_external_agent_manifest(self) -> dict[str, Any]:
+        """Return an opaque manifest for the currently loaded runtime cache.
+
+        External-Agent preparation used to read only a flushed
+        ``AinieeCacheData.json``.  A running task can be ahead of that file, so
+        take a lock-protected project snapshot and use the same manifest
+        builder as the file-backed path.  This method is read-only; writers
+        still need the normal cache file and revision checks to commit.
+        """
+        from ModuleFolders.Service.Agent.ExternalAgentCacheManifest import (
+            ExternalAgentCacheManifestService,
+        )
+
+        snapshot = self.project.to_dict() if self.project is not None else CacheProject().to_dict()
+        return ExternalAgentCacheManifestService().build_runtime_project(snapshot)
+
     # 从缓存文件读取数据
     def load_from_file(self, output_path: str, interactive_recovery: bool | None = None) -> None:
         """从文件加载数据"""

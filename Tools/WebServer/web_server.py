@@ -10,6 +10,7 @@ import subprocess
 import time
 import collections
 import locale
+from pathlib import Path
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -115,6 +116,25 @@ except Exception as exc:
 WEB_TASK_API_KEY_ENV = TASK_API_KEY_ENV
 WEB_TASK_ID_ENV = "AINIEE_WEB_TASK_ID"
 
+# External-Agent tasks deliberately do not own a child process.  Keep their
+# lifecycle in the same task contract so Web callers can wait, resume and stop
+# them without accidentally falling back to the default API worker.
+TASK_ACTIVE_STATUSES = frozenset({"starting", "running", "stopping", "waiting_for_agent", "agent_disconnected", "committed"})
+TASK_EXTERNAL_STATUSES = frozenset({"waiting_for_agent", "running", "agent_disconnected", "committed", "completed", "failed", "stopped"})
+
+# External-Agent updates come from a separate connection and can arrive late.
+# Keep terminal tasks immutable and reject stale updates instead of allowing a
+# disconnected or old Agent to resurrect a finished Web task.
+EXTERNAL_AGENT_STATUS_TRANSITIONS = {
+    "waiting_for_agent": frozenset({"running", "agent_disconnected", "stopped", "failed"}),
+    "running": frozenset({"waiting_for_agent", "agent_disconnected", "committed", "completed", "failed", "stopped"}),
+    "agent_disconnected": frozenset({"waiting_for_agent", "running", "committed", "stopped", "failed"}),
+    "committed": frozenset({"completed", "failed", "stopped"}),
+    "completed": frozenset(),
+    "failed": frozenset(),
+    "stopped": frozenset(),
+}
+
 
 def resolve_task_worker_python(project_root: str, platform_name: str | None = None) -> str:
     """Return the project virtual-environment interpreter for task workers."""
@@ -143,7 +163,7 @@ class TaskManager:
     def __init__(self):
         if not hasattr(self, 'initialized'):  # Prevent re-initialization
             self.process: Optional[subprocess.Popen] = None
-            self.status: str = "idle"  # idle, running, stopping, completed, error
+            self.status: str = "idle"  # idle, running, stopping, waiting_for_agent, agent_disconnected, completed, error
             # ``status`` is retained for the existing Web UI.  The lifecycle
             # fields below are the stable cross-entry task contract consumed
             # by Web, CLI, and Skills callers.
@@ -183,12 +203,17 @@ class TaskManager:
         # Treating a stale ``lifecycle_status=running`` as active would block
         # every later task even though no worker is owned by this manager.
         if self.process is None:
-            return False
+            # Waiting external-Agent tasks intentionally have no child
+            # process, but still reserve the single Web task slot.
+            return (
+                self.stats.get("execution_mode") == "external_agent"
+                and self.lifecycle_status in {"running", "waiting_for_agent", "agent_disconnected", "committed"}
+            )
         # Keep the slot reserved until the monitor finalizes a process that
         # has already exited.  Otherwise a fast worker can be replaced by a
         # new task while its monitor thread is still writing the terminal
         # status, and that thread will then lose ownership of its record.
-        if self.status in {"running", "stopping"}:
+        if self.status in {"running", "stopping", "waiting_for_agent", "agent_disconnected", "committed"}:
             return True
         try:
             return self.process.poll() is None
@@ -196,7 +221,7 @@ class TaskManager:
             # A minimal/fake process may not expose ``poll``.  In that case
             # regard an owned process as active unless it has already reached
             # a terminal legacy status.
-            return self.status in {"starting", "running", "stopping"}
+            return self.status in {"starting", "running", "stopping", "waiting_for_agent", "agent_disconnected", "committed"}
 
     def task_conflict_detail(self) -> str | None:
         """Return the protocol error for a concurrent start, if one exists."""
@@ -208,7 +233,7 @@ class TaskManager:
             return "A task is already running."
 
     def _task_contract(self) -> Dict[str, Any]:
-        running = self.lifecycle_status in {"starting", "running", "stopping"}
+        running = self.lifecycle_status in TASK_ACTIVE_STATUSES
         return {
             "task_id": self.task_id,
             "status": self._canonical_status(),
@@ -341,22 +366,30 @@ class TaskManager:
             self.push_log("Task starting with parameters from web UI...")
 
             try:
-                worker_python = resolve_task_worker_python(PROJECT_ROOT)
-            except FileNotFoundError as exc:
-                self.status = "error"
-                self.lifecycle_status = "failed"
-                self.stats["status"] = "error"
-                self.push_log(str(exc), "error")
-                self.finished_at = self._timestamp()
-                return None
-
-            try:
                 spec = payload if isinstance(payload, TaskSpec) else TaskSpec.from_mapping(payload)
             except TaskContractError as exc:
                 self.status = "error"
                 self.lifecycle_status = "failed"
                 self.stats["status"] = "error"
                 self.push_log(f"Invalid task payload: {exc}", "error")
+                self.finished_at = self._timestamp()
+                return None
+
+            if spec.execution_mode == "external_agent":
+                self.status = "waiting_for_agent"
+                self.lifecycle_status = "waiting_for_agent"
+                self.stats["status"] = "waiting_for_agent"
+                self.stats["execution_mode"] = "external_agent"
+                self.push_log("Task is waiting for an external Agent.", "system")
+                return self.task_id
+
+            try:
+                worker_python = resolve_task_worker_python(PROJECT_ROOT)
+            except FileNotFoundError as exc:
+                self.status = "error"
+                self.lifecycle_status = "failed"
+                self.stats["status"] = "error"
+                self.push_log(str(exc), "error")
                 self.finished_at = self._timestamp()
                 return None
 
@@ -519,6 +552,18 @@ class TaskManager:
         with self._lock:
             if task_id and task_id != self.task_id:
                 return False
+            if (
+                self.stats.get("execution_mode") == "external_agent"
+                and self.status in {"running", "waiting_for_agent", "agent_disconnected", "committed"}
+                and not self.process
+            ):
+                self.status = "idle"
+                self.lifecycle_status = "stopped"
+                self.stats["status"] = "idle"
+                self.exit_code = None
+                self.finished_at = self._timestamp()
+                self.push_log("Task stopped before an external Agent resumed it.", "warning")
+                return True
             if self.status not in {"running", "stopping"} or not self.process:
                 return True
 
@@ -550,6 +595,54 @@ class TaskManager:
             self.exit_code = process.returncode
             self.finished_at = self._timestamp()
             self.push_log("Task stopped.")
+            return True
+
+    def update_external_agent_status(
+        self,
+        status: str,
+        task_id: str | None = None,
+        message: str | None = None,
+    ) -> bool:
+        """Apply a guarded lifecycle transition for an external-Agent task.
+
+        The method is intentionally small and process-local.  MCP/Skills
+        integrations can call it when they share the Web process; a caller
+        must provide the stable task ID so an old task cannot update a newer
+        one.
+        """
+        normalized = str(status or "").strip().lower()
+        if normalized not in TASK_EXTERNAL_STATUSES:
+            return False
+        with self._lock:
+            if task_id and task_id != self.task_id:
+                return False
+            if self.stats.get("execution_mode") != "external_agent":
+                return False
+            current = self.lifecycle_status
+            if current == normalized:
+                return True
+            if normalized not in EXTERNAL_AGENT_STATUS_TRANSITIONS.get(current, frozenset()):
+                return False
+            if normalized == "completed":
+                self.status = "completed"
+                self.lifecycle_status = "completed"
+                self.stats["status"] = "completed"
+            elif normalized == "failed":
+                self.status = "error"
+                self.lifecycle_status = "failed"
+                self.stats["status"] = "error"
+            elif normalized == "stopped":
+                self.status = "idle"
+                self.lifecycle_status = "stopped"
+                self.stats["status"] = "idle"
+            else:
+                self.status = normalized
+                self.lifecycle_status = normalized
+                self.stats["status"] = normalized
+                if normalized == "running" and self.started_at is None:
+                    self.started_at = self._timestamp()
+            self.finished_at = self._timestamp() if normalized in {"completed", "failed", "stopped"} else None
+            self.push_log(message or f"External Agent task status: {normalized}.", "warning" if normalized == "agent_disconnected" else "system")
             return True
 
 
@@ -3154,8 +3247,43 @@ async def run_task(payload: TaskPayload):
         "message": "Task started successfully.",
         "task_id": task_id,
         "status": task_manager.lifecycle_status,
-        "running": task_manager.lifecycle_status in {"starting", "running", "stopping"},
+        "running": task_manager._task_contract()["running"],
     }
+
+
+@app.post("/api/task/external-agent-mode")
+async def request_external_agent_mode(payload: TaskPayload, request: Request):
+    """Start one MCP-scoped task in external-Agent mode.
+
+    The mode is applied to this task snapshot only.  This endpoint is exposed
+    for MCP clients and deliberately does not write ``translation_execution_mode``
+    or any other profile setting.
+    """
+    if not is_mcp_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="External-Agent mode must be requested through the authenticated MCP bridge.",
+        )
+
+    try:
+        root_config = load_root_config()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read onboarding state: {exc}") from exc
+    if root_config.get("external_agent_onboarding_status") != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail="External-Agent onboarding has not been accepted by the user.",
+        )
+
+    # Pydantic's model copy keeps the caller's payload intact while forcing the
+    # backend choice on this request.  The normal task endpoint then performs
+    # all prompt, feature, conflict, and lifecycle checks.
+    forced_payload = payload.model_copy(update={"execution_mode": "external_agent"})
+    result = await run_task(forced_payload)
+    result["execution_mode"] = "external_agent"
+    result["mode_scope"] = "task"
+    result["config_changed"] = False
+    return result
 
 @app.post("/api/task/stop")
 async def stop_task(payload: Optional[TaskControlPayload] = None):
@@ -3257,16 +3385,22 @@ async def upload_file(file: UploadFile = File(...), policy: str = "default"):
                 "path": "" # Will be filled after save
             }
 
-        # 4. Save File
-        file_location = os.path.join(UPDATETEMP_PATH, file.filename)
-        # Security check
-        if not os.path.abspath(file_location).startswith(os.path.abspath(UPDATETEMP_PATH)):
-             raise HTTPException(status_code=400, detail="Invalid file path")
+        # 4. Save File. Resolve both the upload root and destination so a
+        # crafted filename (or an existing symlink) cannot escape updatetemp.
+        upload_root = Path(UPDATETEMP_PATH).resolve()
+        filename = Path(file.filename or "").name
+        if not filename or filename in {".", ".."}:
+            raise HTTPException(status_code=400, detail="Invalid file name")
+        destination = (upload_root / filename).resolve()
+        try:
+            destination.relative_to(upload_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid file path") from exc
 
-        with open(file_location, "wb+") as file_object:
+        with destination.open("wb") as file_object:
             file_object.write(await file.read())
-            
-        return {"info": f"file '{file.filename}' saved", "path": file_location}
+
+        return {"info": f"file '{filename}' saved", "path": str(destination)}
 
     except Exception as e:
         # If it was our custom return, don't wrap it in 500

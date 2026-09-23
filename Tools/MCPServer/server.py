@@ -870,7 +870,9 @@ def _build_mcp_app(
         "Register an external Agent connection and receive a renewable session lease.",
         (
             "Call this when an external Agent begins using AiNiee. The returned session_id "
-            "is required for heartbeat and unregister. Registration records connection metadata only."
+            "is required for heartbeat and unregister. Registration records connection metadata only. "
+            "The default lease is 120 seconds; requested_lease_seconds may be set up to 3600 "
+            "seconds (60 minutes)."
         ),
     )
     def agent_register(
@@ -939,10 +941,60 @@ def _build_mcp_app(
         result = AGENT_SESSION_REGISTRY.status(session_id)
         return result if isinstance(result, dict) else {"session_id": session_id, "state": "missing"}
 
+    @_mcp_tool(
+        mcp,
+        "Request the runtime MCP external-Agent mode for a registered session.",
+        (
+            "This is a port-only runtime request. It does not edit Profile/config.json or change "
+            "AiNiee's default API mode. Registration must already include onboarding and explicit "
+            "user confirmation; pass task_id to scope the grant to one task when available."
+        ),
+    )
+    def agent_request_external_mode(
+        session_id: str,
+        task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not _external_agent_onboarding_accepted():
+            raise ValueError(
+                "ONBOARDING_NOT_ACCEPTED: external Agent onboarding has not been accepted by the user"
+            )
+        _require_external_agent_session(session_id)
+        try:
+            return AGENT_SESSION_REGISTRY.request_external_mode(session_id, task_id=task_id)
+        except Exception as exc:
+            code = getattr(exc, "code", "EXTERNAL_MODE_REJECTED")
+            raise ValueError(f"{code}: {exc}") from exc
+
     def _require_external_agent_session(session_id: str) -> None:
         record = AGENT_SESSION_REGISTRY.status(session_id)
         if not isinstance(record, dict) or record.get("state") != "registered":
             raise ValueError("Agent session is not registered or has expired.")
+
+    def _require_external_agent_mode(session_id: str, task_id: str | None = None) -> None:
+        _require_external_agent_session(session_id)
+        try:
+            granted = AGENT_SESSION_REGISTRY.has_external_mode(session_id, task_id=task_id)
+        except Exception as exc:
+            raise ValueError(f"EXTERNAL_MODE_REQUIRED: {exc}") from exc
+        if not granted:
+            raise ValueError(
+                "EXTERNAL_MODE_REQUIRED: call agent_request_external_mode through MCP before task operations"
+            )
+
+    def _bind_external_agent_context(
+        session_id: str,
+        *,
+        task_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> None:
+        try:
+            AGENT_SESSION_REGISTRY.update_context(
+                session_id, task_id=task_id, batch_id=batch_id
+            )
+        except Exception:
+            # The domain operation is already durable. A status-only metadata
+            # update must never turn a successful batch operation into a retry.
+            return
 
     @_mcp_tool(
         mcp,
@@ -955,11 +1007,13 @@ def _build_mcp_app(
         session_id: str,
         execution_mode: str = "external_agent",
     ) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
-            return get_external_agent_batch_service().prepare_project(
+            result = get_external_agent_batch_service().prepare_project(
                 input_path, task_id, session_id, execution_mode
             )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
 
@@ -974,11 +1028,13 @@ def _build_mcp_app(
         session_id: str,
         execution_mode: str = "external_agent",
     ) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
-            return get_external_agent_batch_service().prepare_cache_project(
+            result = get_external_agent_batch_service().prepare_cache_project(
                 cache_path, task_id, session_id, execution_mode
             )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
         except (ExternalAgentBatchError, ValueError) as exc:
             code = getattr(exc, "code", "CACHE_MANIFEST_INVALID")
             raise ValueError(f"{code}: {exc}") from exc
@@ -989,9 +1045,13 @@ def _build_mcp_app(
         "Only one Agent session can claim a batch at a time.",
     )
     def agent_claim_batch(task_id: str, session_id: str) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
-            return get_external_agent_batch_service().claim_batch(task_id, session_id)
+            result = get_external_agent_batch_service().claim_batch(task_id, session_id)
+            _bind_external_agent_context(
+                session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
+            )
+            return result
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
 
@@ -1009,12 +1069,13 @@ def _build_mcp_app(
         idempotency_key: str,
         items: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
             batch_service = get_external_agent_batch_service()
             result = batch_service.submit_translation_batch(
                 task_id, session_id, batch_id, source_hash, revision, idempotency_key, items
             )
+            _bind_external_agent_context(session_id, task_id=task_id, batch_id=batch_id)
             ledger = batch_service.get_ledger(task_id, session_id)
             staged = get_external_agent_batch_result_service().validate_and_stage(
                 ledger,
@@ -1035,9 +1096,46 @@ def _build_mcp_app(
         "Releases the claim without accepting translations.",
     )
     def agent_release_batch(task_id: str, session_id: str, batch_id: str) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
-            return get_external_agent_batch_service().release_batch(task_id, session_id, batch_id)
+            result = get_external_agent_batch_service().release_batch(task_id, session_id, batch_id)
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Resume a durable external-Agent task after the previous session disconnected.",
+        (
+            "Register the new Agent session first. Pass the previous session_id; it must be expired or "
+            "disconnected (or no longer visible after a service restart). The task claim is rebound, "
+            "old writer leases are released, and the new session must acquire a writer lease again."
+        ),
+    )
+    def agent_resume_task(
+        task_id: str,
+        session_id: str,
+        previous_session_id: str,
+    ) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        if not isinstance(previous_session_id, str) or not previous_session_id.strip():
+            raise ValueError("PREVIOUS_SESSION_REQUIRED: previous_session_id is required")
+        if previous_session_id == session_id:
+            raise ValueError("SESSION_ALREADY_ACTIVE: a resumed task requires a different session")
+        previous = AGENT_SESSION_REGISTRY.status(previous_session_id)
+        if isinstance(previous, dict) and previous.get("state") == "registered":
+            raise ValueError("SESSION_STILL_ACTIVE: previous session must be disconnected or expired")
+        try:
+            batch_service = get_external_agent_batch_service()
+            resumed = batch_service.resume_task(task_id, previous_session_id, session_id)
+            released = get_external_agent_writer_lease_registry().release_task(
+                task_id, previous_session_id
+            )
+            resumed["released_writer_leases"] = released
+            resumed["writer_lease_required"] = True
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return resumed
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
 
@@ -1047,7 +1145,7 @@ def _build_mcp_app(
         "A task has at most one writer lease; the lease is separate from the MCP and Agent session IDs.",
     )
     def agent_acquire_writer_lease(task_id: str, session_id: str) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         try:
             return get_external_agent_writer_lease_registry().acquire(task_id, session_id)
         except ValueError as exc:
@@ -1064,29 +1162,40 @@ def _build_mcp_app(
         writer_lease_id: str,
         batch_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        _require_external_agent_session(session_id)
+        _require_external_agent_mode(session_id, task_id)
         if not isinstance(batch_id, str) or not batch_id.strip():
             raise ValueError("BATCH_ID_REQUIRED: batch_id is required for commit")
         leases = get_external_agent_writer_lease_registry()
         if not leases.validate(writer_lease_id, task_id, session_id):
             raise ValueError("WRITER_LEASE_UNAUTHORIZED: writer lease is invalid or expired")
-        writer = ExternalAgentBatchWriter(
-            PROJECT_ROOT,
-            writer_lease_validator=lambda record, lease: leases.validate(lease, task_id, session_id),
-        )
         try:
-            cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
+            batch_service = get_external_agent_batch_service()
+            ledger = batch_service.get_ledger(task_id, session_id)
+            batch = next(
+                (item for item in ledger.get("batches", []) if item.get("batch_id") == batch_id),
+                None,
+            )
+            if batch is None:
+                raise ExternalAgentBatchError("batch does not exist", "BATCH_NOT_FOUND")
+            if batch.get("status") != "submitted":
+                raise ExternalAgentBatchError("batch is not submitted", "BATCH_NOT_SUBMITTED")
+            cache_path = batch_service.cache_path_for_writer(task_id, session_id)
             staged_result = get_external_agent_batch_result_service().read_staged(task_id)
+            writer = ExternalAgentBatchWriter(
+                PROJECT_ROOT,
+                writer_lease_validator=lambda record, lease: leases.validate(lease, task_id, session_id),
+            )
             result = writer.apply_staged_result(
                 cache_path,
                 staged_result,
                 writer_lease_id=writer_lease_id,
                 batch_id=batch_id,
             )
-            ledger_result = get_external_agent_batch_service().mark_batch_committed(
+            ledger_result = batch_service.mark_batch_committed(
                 task_id, session_id, batch_id, writer_lease_id, result
             )
             leases.release(writer_lease_id, task_id, session_id)
+            _bind_external_agent_context(session_id, task_id=task_id, batch_id=batch_id)
             result["ledger"] = ledger_result
             return result
         except ExternalAgentBatchWriterError as exc:

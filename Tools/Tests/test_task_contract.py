@@ -95,6 +95,68 @@ class TaskContractTests(unittest.TestCase):
         )
         self.assertEqual(item.to_task_spec().execution_mode, "external_agent")
 
+    def test_mixed_queue_skips_external_agent_and_persists_waiting_state(self):
+        queue_module = self._import_with_rapidjson(
+            "ModuleFolders.Service.TaskQueue.QueueManager"
+        )
+        manager = object.__new__(queue_module.QueueManager)
+        external = queue_module.QueueTaskItem(
+            "translate", "agent.txt", execution_mode="external_agent"
+        )
+        default = queue_module.QueueTaskItem("translate", "api.txt")
+        manager.tasks = [external, default]
+        saves = []
+        manager.save_tasks = lambda: saves.append(True) or True
+
+        index, task = manager.get_next_unlocked_task(statuses={"waiting"})
+
+        self.assertEqual(index, 1)
+        self.assertIs(task, default)
+        self.assertEqual(external.status, "waiting_for_agent")
+        self.assertFalse(external.locked)
+        self.assertTrue(saves)
+
+    def test_external_agent_queue_rows_recover_after_reload_and_support_disconnect_resume(self):
+        queue_module = self._import_with_rapidjson(
+            "ModuleFolders.Service.TaskQueue.QueueManager"
+        )
+        manager = object.__new__(queue_module.QueueManager)
+        manager.tasks = []
+        task = queue_module.QueueTaskItem(
+            "translate", "agent.txt", execution_mode="external_agent"
+        )
+        task.status = "translating"
+        task.locked = True
+        task.is_processing = True
+        task.process_start_time = "2026-09-20T00:00:00"
+        task.last_activity_time = task.process_start_time
+        changed = manager._replace_tasks_from_data([task.to_persistent_dict()])
+
+        self.assertTrue(changed)
+        recovered = manager.tasks[0]
+        self.assertEqual(recovered.status, "waiting_for_agent")
+        self.assertFalse(recovered.locked)
+        self.assertFalse(recovered.is_processing)
+        manager.save_tasks = lambda: True
+        self.assertTrue(manager.mark_external_agent_disconnected(task_id=recovered.task_id))
+        self.assertEqual(recovered.status, "agent_disconnected")
+        self.assertTrue(manager.resume_external_agent_task(task_id=recovered.task_id))
+        self.assertEqual(recovered.status, "waiting_for_agent")
+
+    def test_external_agent_single_step_never_calls_api_host(self):
+        queue_module = self._import_with_rapidjson(
+            "ModuleFolders.Service.TaskQueue.QueueManager"
+        )
+        manager = object.__new__(queue_module.QueueManager)
+        task = queue_module.QueueTaskItem(
+            "translate", "agent.txt", execution_mode="external_agent"
+        )
+        called = []
+        host = SimpleNamespace(run_task=lambda *_args, **_kwargs: called.append(True))
+        self.assertFalse(manager._run_single_step(host, task, "translate"))
+        self.assertEqual(task.status, "waiting_for_agent")
+        self.assertEqual(called, [])
+
     def test_invalid_task_and_conflicting_all_in_one_are_rejected(self):
         with self.assertRaises(TaskContractError):
             TaskSpec.from_mapping({"task": "unknown", "input_path": "input.txt"})

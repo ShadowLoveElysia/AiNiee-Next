@@ -241,7 +241,7 @@ uv run python Tools/TauriShell/tauri_web_host.py --host 0.0.0.0 --port 8000 --al
 2. 如果客户端只接受“原始命令”，可直接使用：
 
 ```bash
-uv run --directory /path/to/AiNiee-CLI --isolated --no-project --quiet --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio
+uv run --directory /path/to/AiNiee-CLI --python 3.12 --isolated --no-project --quiet --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio
 ```
 
 3. Codex 通过 `stdio` 直连时，推荐直接使用项目内置 launcher：

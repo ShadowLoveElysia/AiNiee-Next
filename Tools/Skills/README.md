@@ -104,14 +104,20 @@ curl http://127.0.0.1:8766/skills
 | `translate` | task | 执行翻译任务 |
 | `queue` | queue | 管理项目内置任务队列（`Resource/queue_tasks.json`） |
 | `profile` | config | 管理配置方案（新建/切换/删除，自动限制在 profiles 目录内） |
-| `file` | files | 文件发现与暂存 |
-| `agent_session` | agent | 外部 Agent 会话注册、心跳、状态和断开 |
+| `file` | files | 文件发现与暂存；用户直接提供工作区外文件时，先用 `stage_external` 明确确认并复制到 AiNiee 受控目录 |
+| `agent_session` | agent | 外部 Agent 会话、批次准备/领取/提交、writer lease 与缓存提交 |
 
 ### 外部 Agent 会话
 
-`agent_session` 管理外部 Agent 的短期租约，且与 `X-AiNiee-Skills-Auth`
+`agent_session` 管理外部 Agent 的会话租约，且与 `X-AiNiee-Skills-Auth`
 鉴权令牌完全分离。注册必须携带用户确认字段；会话过期后应重新注册。
 Skills 只保存会话元数据，不接收 API key、MCP token 或其他提供商密钥。
+
+默认会话租约为 120 秒。长任务可在 `register` 请求中传入
+`requested_lease_seconds: 3600`（60 分钟）；服务端最大值为 3600 秒，超过上限会被拒绝。
+客户端应按注册响应中的 `heartbeat_interval_seconds` 调用 `heartbeat`，不能假定租约会自动延长。
+
+Agent session 租约最长 3600 秒（60 分钟），实际到期时间和心跳间隔以注册响应为准；writer lease 仍是独立的短期写回租约。
 
 ```bash
 curl -X POST http://127.0.0.1:8766/skills/agent_session \
@@ -121,6 +127,24 @@ curl -X POST http://127.0.0.1:8766/skills/agent_session \
 ```
 
 随后使用返回的 `session_id` 和 `agent_instance_id` 调用 `heartbeat`；任务运行期间应定期续租。`status` 可查询单个会话或返回当前进程中的会话摘要，`unregister` 会结束租约并保留脱敏审计快照。
+
+如果用户传入的文件位于项目目录之外（例如 Windows 的 `H:\\Downloads`），不能把原始路径直接传给批次 Skill。先调用 `file` Skill 的 `stage_external`，并传入 `confirm_external: true`；它会把文件复制到项目的 `Resource/automation_progress/external_inputs` 受控目录。随后只使用返回的 `local_path` 调用 `agent_session.prepare_project` 或 `translate`。未明确确认时，暂存操作会被拒绝。
+
+`resume_task` 用于新会话接管断线任务：新会话必须先注册并通过 `request_external_mode`，`previous_session_id` 必须指向已断开或已过期、且曾获得外部模式授权的旧会话。服务会重新绑定任务中的 claimed 批次，释放旧会话持有的 writer lease；恢复后必须由新会话重新获取 writer lease。旧会话不能继续提交或写回。
+
+`agent_session` 还提供 `request_external_mode`，通过已鉴权的 Skills 端口给当前 session 请求运行时 `external_agent` 模式。它不会写入 Profile、`Resource/config.json` 或 `translation_execution_mode`；请求前必须完成 onboarding、注册 session 并在注册时提供用户确认。随后才可调用受控批次动作：`prepare_project`、`prepare_cache_project`、`project_status`、`claim_batch`、`submit_translation_batch`、`release_batch`、`resume_task`、`acquire_writer_lease` 和 `commit_cache_batch`。批次动作必须携带有效的 Agent session；输入路径受 Skills 工作区边界限制。`submit_translation_batch` 只做结构校验并写入任务专属 staging，`commit_cache_batch` 需要独立 writer lease，并复用确定性 writer 更新缓存。Skills 不接受 API key、MCP token 或任意内部路径，也不会让 Agent 直接改写缓存或输出文件。
+
+`agent_session.prepare_project` 只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式以及其他非 TXT 输入不得传给逐行批次接口；服务会返回稳定错误码
+`STRUCTURED_FORMAT_REQUIRES_MCP_TASK`，必须使用 AiNiee 的格式感知任务入口。
+
+示例（动作通过同一个 `/skills/agent_session` 端点调用）：
+
+```json
+{"action":"request_external_mode","session_id":"<session_id>"}
+{"action":"prepare_project","input_path":"Resource/input.txt","task_id":"task_1","session_id":"sess_example","execution_mode":"external_agent"}
+{"action":"claim_batch","task_id":"task_1","session_id":"sess_example"}
+{"action":"submit_translation_batch","task_id":"task_1","session_id":"sess_example","batch_id":"batch_000001","source_hash":"<sha256>","revision":1,"idempotency_key":"task_1_batch_1","items":[{"index":0,"translation":"译文"}]}
+```
 
 ## API 参考
 

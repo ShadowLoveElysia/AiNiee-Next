@@ -13,8 +13,20 @@ AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools �
 5. 再通过 `call_web_api` 或 `upload_file` 调用具体能力
 
 外部 Agent 接入后，应先调用 `agent_register` 获取连接租约，并在租约到期前调用
-`agent_heartbeat`。断开时调用 `agent_unregister`；可用 `agent_status` 查询单个或全部连接。
+`agent_heartbeat`。默认连接租约为 120 秒；长任务可在注册时传入
+`requested_lease_seconds: 3600`，服务端允许的最大会话租约为 3600 秒（60 分钟）。
+超过上限的请求会被拒绝；无论租约长短，客户端都应按返回的
+`heartbeat_interval_seconds` 定期续租。断开时调用 `agent_unregister`；可用 `agent_status`
+查询单个或全部连接。
 这些工具只管理进程内连接状态，不授予 Agent 直接修改缓存、队列、源文件或输出文件的权限。
+
+Agent session 租约最长 3600 秒（60 分钟）；建议长任务仍按返回的 `heartbeat_interval_seconds`
+定期调用 `agent_heartbeat`。writer lease 是独立的短期写回租约，不随 session 租约延长。
+
+项目默认继续使用已配置的 API。若要让某一次任务由外部 Agent 处理，使用已鉴权的
+MCP 代理调用 `POST /api/task/external-agent-mode`；它只覆盖这一次任务的快照，
+不会修改 `translation_execution_mode`、Profile 或其他项目设置。不要通过 `/api/config`
+把全局模式改成外部 Agent 来启动任务。
 
 如果客户端只展示工具名和工具说明，不展示仓库文件，也应优先使用上面的说明工具，而不是猜参数结构或一次性读取全量端点目录。
 
@@ -33,6 +45,13 @@ AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools �
 1. 先向用户说明影响
 2. 再次询问用户是否确认修改
 3. 只有得到二次确认后，才在写配置时传 `confirm_advanced_change=true`
+
+外部 Agent 不得为了连接方便自行修改 `mcp_server_host`、`mcp_server_port` 或
+`enable_remote_access`。先读取并探测当前服务，复用现有端口；默认保持 loopback
+监听和远程访问关闭。若用户确实要求改变服务端高级设置，必须先完成上面的二次确认，
+再通过 MCP 配置端点写入并传 `confirm_advanced_change=true`，同时让客户端 URL 与实际
+host、port、path 保持一致。客户端自己的 MCP 配置只能通过客户端原生配置接口写入，
+且仍需先取得用户许可；这不等于允许直接编辑 AiNiee 项目配置文件。
 
 ## Security Policy
 
@@ -77,10 +96,11 @@ _mcp_security_notice
 - `agent_heartbeat`: 使用 `session_id` 续租
 - `agent_unregister`: 主动释放连接租约
 - `agent_status`: 查询连接状态
+- `agent_request_external_mode`: 通过已鉴权的 MCP 端口请求当前 session 使用外部 Agent 模式；仅写入运行时 session 状态，不修改 Profile、`Resource/config.json` 或 `translation_execution_mode`
 
-推荐调用顺序：`agent_register` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
+推荐调用顺序：`agent_register` → `agent_request_external_mode` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
-外部 Agent 翻译原型顺序：`agent_register` → `agent_prepare_project` →
+外部 Agent 翻译原型顺序：`agent_register` → `agent_request_external_mode` → `agent_prepare_project` →
 `agent_claim_batch` → `agent_submit_translation_batch`。提交只写入受控批次账本，
 不会直接写入 AiNiee 缓存或最终输出；断线时使用 `agent_release_batch`，不要重用过期 session。
 如果要基于已有 AiNiee 缓存继续翻译，使用 `agent_prepare_cache_project`；它会返回服务端生成的
@@ -88,6 +108,14 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 正式写回还必须先调用 `agent_acquire_writer_lease`，再调用 `agent_commit_cache_batch`。
 提交时只需传任务、批次和 writer lease；缓存路径与 staged 结果由 AiNiee 服务端绑定和读取。
 没有 writer lease、cache revision 或 opaque locator 时，结果只能停留在 staging，不能写入正式缓存。
+
+`agent_prepare_project` 只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式以及其他非 TXT 输入会被拒绝，并返回稳定错误码
+`STRUCTURED_FORMAT_REQUIRES_MCP_TASK`；不得把它们当作二进制文本切批，应通过任务目录中的格式感知 MCP 路由处理。
+
+会话断线后不要复用过期的 `session_id`。先用新的 Agent 实例调用 `agent_register`，再调用
+`agent_resume_task(task_id, session_id, previous_session_id)`。旧会话必须已经断开或过期；任务账本
+会把仍在领取中的批次绑定到新会话，保留已经 staging 的结果，并释放旧 writer lease。恢复后必须
+重新调用 `agent_acquire_writer_lease`，然后才能提交写回。
 
 ## Calling Patterns
 

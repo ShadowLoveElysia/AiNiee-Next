@@ -525,9 +525,46 @@ class QueueManager(Base):
             raise ValueError("Queue data must be an array")
         old_tasks = self.tasks
         new_tasks = []
+        runtime_state_changed = False
         for index, item in enumerate(data):
             if isinstance(item, dict):
-                new_tasks.append(QueueTaskItem.from_dict(item))
+                task = QueueTaskItem.from_dict(item)
+                # A process can crash after an external-Agent row was marked
+                # active.  It has no local worker to own that lock, so recover
+                # it to a durable waiting state instead of blocking the queue
+                # until the generic five-minute stale-lock timeout.
+                if (
+                    str(getattr(task, "execution_mode", "default_api") or "default_api").strip().lower()
+                    == "external_agent"
+                    and (
+                        getattr(task, "status", "")
+                        in {
+                            "waiting",
+                            "translated",
+                            "translating",
+                            "polishing",
+                            "workflow",
+                            "waiting_for_agent",
+                        }
+                        or bool(getattr(task, "workflow_steps", None))
+                    )
+                ):
+                    if (
+                        task.status != "waiting_for_agent"
+                        or task.locked
+                        or task.is_processing
+                        or task.process_start_time is not None
+                        or task.last_activity_time is not None
+                        or bool(getattr(task, "workflow_steps", None))
+                    ):
+                        runtime_state_changed = True
+                    task.status = "waiting_for_agent"
+                    task.workflow_steps = []
+                    task.locked = False
+                    task.is_processing = False
+                    task.process_start_time = None
+                    task.last_activity_time = None
+                new_tasks.append(task)
                 continue
             fallback = QueueTaskItem(
                 TaskType.TRANSLATION,
@@ -542,7 +579,7 @@ class QueueManager(Base):
             for item, task in zip(data, new_tasks)
         )
         self.tasks = new_tasks
-        return task_ids_changed
+        return task_ids_changed or runtime_state_changed
 
     def add_task(self, task_item):
         self.tasks.append(task_item)
@@ -979,7 +1016,7 @@ class QueueManager(Base):
                 # 保存当前锁定状态
                 locked_states = {}
                 for task in self.tasks:
-                    if task.locked:
+                    if task.locked and not self._is_external_agent_task(task):
                         locked_states[task.task_id] = task.status
 
                 # 重新加载任务
@@ -1042,17 +1079,116 @@ class QueueManager(Base):
                 return False
             return True
 
+    @staticmethod
+    def _is_external_agent_task(task):
+        return str(getattr(task, "execution_mode", "default_api") or "default_api").strip().lower() == "external_agent"
+
+    def _set_external_agent_status(self, index, status):
+        """Persist a queue-side external-Agent lifecycle transition.
+
+        External-Agent work is completed by the MCP/Skills batch protocol, so
+        the queue worker must never claim it as an API task.  Keeping the
+        transition here also makes a mixed queue durable across hot reloads.
+        """
+        if not (0 <= index < len(self.tasks)):
+            return False
+        task = self.tasks[index]
+        if not self._is_external_agent_task(task):
+            return False
+        previous = (
+            task.status,
+            task.locked,
+            task.is_processing,
+            task.process_start_time,
+            task.last_activity_time,
+        )
+        task.status = str(status)
+        if status in {
+            "waiting_for_agent",
+            "agent_disconnected",
+            "staging",
+            "committed",
+            "completed",
+            "stopped",
+            "error",
+        }:
+            task.locked = False
+            task.is_processing = False
+            task.process_start_time = None
+            task.last_activity_time = None
+        if self.save_tasks() is False:
+            (
+                task.status,
+                task.locked,
+                task.is_processing,
+                task.process_start_time,
+                task.last_activity_time,
+            ) = previous
+            return False
+        return True
+
+    def mark_external_agent_disconnected(self, task_id: str = "", input_path: str = ""):
+        """Mark an external-Agent queue item as disconnected and unlock it."""
+        target_input = os.path.abspath(input_path) if input_path else ""
+        for index, task in enumerate(self.tasks):
+            matches_id = bool(task_id) and str(getattr(task, "task_id", "")) == str(task_id)
+            matches_path = target_input and os.path.abspath(getattr(task, "input_path", "") or "") == target_input
+            if (matches_id or matches_path) and self._is_external_agent_task(task):
+                return self._set_external_agent_status(index, "agent_disconnected")
+        return False
+
+    def sync_external_agent_status(self, task_id: str, status: str) -> bool:
+        """Apply a batch-protocol status to the matching queue item.
+
+        This is intentionally an explicit bridge: external-Agent services may
+        run without a QueueManager, while a queue-backed task can opt into
+        durable status updates after claim, disconnect, staging or commit.
+        """
+        allowed = {
+            "waiting_for_agent",
+            "agent_disconnected",
+            "staging",
+            "committed",
+            "completed",
+            "stopped",
+            "error",
+        }
+        if status not in allowed:
+            raise ValueError(f"Unsupported external-Agent queue status: {status!r}")
+        for index, task in enumerate(self.tasks):
+            if str(getattr(task, "task_id", "")) == str(task_id) and self._is_external_agent_task(task):
+                return self._set_external_agent_status(index, status)
+        return False
+
+    def resume_external_agent_task(self, task_id: str = "", input_path: str = ""):
+        """Return a disconnected external-Agent item to the waiting state."""
+        target_input = os.path.abspath(input_path) if input_path else ""
+        resumable = {"agent_disconnected", "stopped", "error", "waiting_for_agent"}
+        for index, task in enumerate(self.tasks):
+            matches_id = bool(task_id) and str(getattr(task, "task_id", "")) == str(task_id)
+            matches_path = target_input and os.path.abspath(getattr(task, "input_path", "") or "") == target_input
+            if (
+                (matches_id or matches_path)
+                and self._is_external_agent_task(task)
+                and getattr(task, "status", "") in resumable
+            ):
+                return self._set_external_agent_status(index, "waiting_for_agent")
+        return False
+
     def get_next_unlocked_task(self, start_index=0, statuses=None):
         """获取下一个未锁定的待执行任务"""
         allowed_statuses = set(statuses or {"waiting", "translated"})
         for i in range(start_index, len(self.tasks)):
             task = self.tasks[i]
+            if self._is_external_agent_task(task):
+                if not task.locked and task.status in allowed_statuses:
+                    # Persist this once so a following hot reload does not
+                    # turn the item back into an API-eligible ``waiting`` row.
+                    self._set_external_agent_status(i, "waiting_for_agent")
+                continue
             if self._task_has_workflow(task):
                 continue
             if not task.locked and task.status in allowed_statuses:
-                if getattr(task, "execution_mode", "default_api") == "external_agent":
-                    task.status = "waiting_for_agent"
-                    continue
                 return i, task
         return None, None
 
@@ -1060,6 +1196,10 @@ class QueueManager(Base):
         """标记任务为执行中并锁定 - 使用智能处理状态管理"""
         if 0 <= index < len(self.tasks):
             task = self.tasks[index]
+
+            if self._is_external_agent_task(task):
+                self._set_external_agent_status(index, "waiting_for_agent")
+                return False
 
             previous = (
                 task.status,
@@ -1426,6 +1566,11 @@ class QueueManager(Base):
                         self.is_running = False
                         return
             else:
+                if self._is_external_agent_task(task):
+                    # ``False`` means the external hand-off is waiting, not
+                    # that an API translation failed.  Leave the durable
+                    # waiting state for the Agent batch protocol to advance.
+                    continue
                 if self.mark_task_completed(
                     index,
                     "stopped" if Base.work_status == Base.STATUS.STOPING else "error",
@@ -1468,6 +1613,7 @@ class QueueManager(Base):
                     if self._task_has_workflow(task):
                         continue
                     if (not task.locked and
+                        not self._is_external_agent_task(task) and
                         task.status == "translated" and
                         task.task_type in [TaskType.POLISH, TaskType.TRANSLATE_AND_POLISH]):
 
@@ -1542,6 +1688,11 @@ class QueueManager(Base):
         previous_tasks = copy.deepcopy(self.tasks)
         changed = False
         for task in self.tasks:
+            if self._is_external_agent_task(task):
+                # Background automation is an API worker path.  Never attach
+                # workflow steps to an external-Agent item, otherwise the
+                # queue can accidentally claim it as a local subprocess task.
+                continue
             if task.locked or self._task_has_workflow(task):
                 continue
             if task.status not in {"waiting", "translated"}:
@@ -1573,6 +1724,8 @@ class QueueManager(Base):
         for task in self.tasks:
             if task.locked:
                 continue
+            if self._is_external_agent_task(task):
+                continue
             if task.status in {"waiting", "translated"}:
                 return True
         return False
@@ -1582,7 +1735,12 @@ class QueueManager(Base):
 
     def _get_next_workflow_task(self):
         for i, task in enumerate(self.tasks):
-            if not task.locked and task.status in {"waiting", "translated"} and self._task_has_workflow(task):
+            if (
+                not task.locked
+                and not self._is_external_agent_task(task)
+                and task.status in {"waiting", "translated"}
+                and self._task_has_workflow(task)
+            ):
                 return i, task
         return None, None
 
@@ -1697,6 +1855,13 @@ class QueueManager(Base):
         return None
 
     def _run_single_step(self, cli_menu, task, step_type, resume=False):
+        if self._is_external_agent_task(task):
+            # The deterministic API runner is intentionally unavailable for
+            # external-Agent tasks.  Their status is advanced by the batch
+            # protocol after an Agent session claims/submits/commits work.
+            task.status = "waiting_for_agent"
+            return False
+
         if self._task_has_workflow(task):
             return True
 

@@ -47,15 +47,20 @@ codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_laun
 
 首次启动若依赖尚未缓存，建议在 `~/.codex/config.toml` 中为该 MCP 配置较大的 `startup_timeout_sec`，例如 `90`。
 
-2. 若需要原始命令，推荐使用隔离模式，避免项目 `.venv` 干扰
+2. 若需要原始命令，优先复用项目现有 `.venv` 环境
 
 ```bash
-uv run --python /usr/bin/python3 --isolated --no-project --quiet --with mcp --with fastapi --with 'uvicorn[standard]' --with requests python /path/to/AiNiee-CLI/Tools/MCPServer/server.py --transport stdio
+uv run --directory /path/to/AiNiee-CLI --python /path/to/AiNiee-CLI/.venv/bin/python python Tools/MCPServer/server.py --transport stdio
 ```
+
+Windows 使用项目环境时，将解释器改为
+`H:\\小说\\AiNiee-CLI\\.venv-win\\Scripts\\python.exe`。只有项目环境不存在或明确需要隔离时，才使用
+`uv run --python 3.12 --isolated --no-project --with mcp --with fastapi --with 'uvicorn[standard]' --with requests ...`。
 
 补充说明：
 
 - 部分 LLM 客户端会在自身启动时自动拉起配置好的 `stdio` MCP 进程
+- AiNiee-Next 要求 Python `3.12.*`；不要把 `python3`、Python 3.11 或更低版本传给 `uv --python`。如果 stdio 日志出现 `SyntaxError` 或 `BrokenPipe/Invalid argument`，先检查解释器版本；后者通常只是 MCP 进程已退出后的管道次生错误。
 - 现在如果 AiNiee 的 `streamable-http` MCP 已经在运行，新的 `stdio` 进程会先探测该端点，探测成功后直接复用已有服务，不再重复启动一套 MCP
 - 复用命中时，`stderr` 会打印一行提示：`AiNiee MCP reusing running service: http://127.0.0.1:端口/mcp`
 - 如果你确实需要禁用这层复用逻辑，可设置环境变量 `AINIEE_MCP_DISABLE_RUNNING_REUSE=1`

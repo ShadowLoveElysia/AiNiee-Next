@@ -103,7 +103,7 @@ export const TaskRunner: React.FC = () => {
   };
 
   const resolveComparisonStatus = (taskStatus: string, comparisonSeq: number, comparisonUpdatedAt?: number) => {
-      if (taskStatus !== 'running') return { status: 'idle' as const, lagSec: null as number | null };
+      if (!['running', 'starting'].includes(taskStatus)) return { status: 'idle' as const, lagSec: null as number | null };
       if (!comparisonSeq || !comparisonUpdatedAt) return { status: 'waiting' as const, lagSec: null as number | null };
       const lagSec = Math.max(0, Math.floor(Date.now() / 1000 - comparisonUpdatedAt));
       return lagSec <= 20
@@ -234,7 +234,7 @@ export const TaskRunner: React.FC = () => {
               );
               setComparisonChannelStatus(comparisonStatus.status);
               setComparisonLagSec(comparisonStatus.lagSec);
-              if (['completed', 'error', 'idle'].includes(data.stats?.status)) {
+              if (['completed', 'error', 'failed', 'idle', 'stopped'].includes(data.stats?.status)) {
                   setPreviewTaskOverride(null);
               }
               
@@ -261,7 +261,7 @@ export const TaskRunner: React.FC = () => {
                       };
                       
                       // Check stop condition
-                      if (stats.status === 'completed' || stats.status === 'error' || stats.status === 'idle') {
+                      if (['completed', 'error', 'failed', 'idle', 'stopped'].includes(stats.status)) {
                           if (prev.isRunning) {
                               // Stop running locally if backend is done
                               stopPolling();
@@ -509,19 +509,19 @@ export const TaskRunner: React.FC = () => {
             );
             setComparisonChannelStatus(recoveredStatus.status);
             setComparisonLagSec(recoveredStatus.lagSec);
-            if (!data.running && data.stats.status !== 'running') {
+            if (!data.running && !['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)) {
                 setPreviewTaskOverride(null);
             }
             setTaskState(prev => ({
                 ...prev,
-                isRunning: Boolean(data.running || data.stats.status === 'running'),
+                isRunning: Boolean(data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)),
                 stats: data.stats,
                 chartData: data.chart_data || [],
                 comparison: data.comparison || prev.comparison,
                 logs: mapLogs(data.logs || [], 'sync')
             }));
             
-            if (data.running || data.stats.status === 'running') {
+            if (data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)) {
                 startPolling(recoveryGeneration);
             }
         } catch (e) {

@@ -17,6 +17,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 SCHEMA = "ainiee.external_agent.batch.v1"
 DEFAULT_BATCH_SIZE = 50
+LINE_BATCH_INPUT_SUFFIXES = frozenset({".txt"})
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 
@@ -114,13 +115,17 @@ class ExternalAgentBatchService:
             raise ExternalAgentBatchError("session does not own this task", "SESSION_MISMATCH")
         return session_id
 
-    def _resolve_input(self, input_path: str | Path) -> Path:
+    def _resolve_input(self, input_path: str | Path, *, allow_directory: bool = False) -> Path:
         if not isinstance(input_path, (str, Path)) or not str(input_path).strip():
             raise ExternalAgentBatchError("input_path is required", "INVALID_INPUT_PATH")
         try:
             path = Path(input_path).expanduser().resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             raise ExternalAgentBatchError("input file does not exist", "INPUT_NOT_FOUND") from exc
+        if path.is_dir() and allow_directory:
+            if not any(path == root or root in path.parents for root in self.allowed_input_roots):
+                raise ExternalAgentBatchError("input_path is outside controlled project roots", "INPUT_PATH_OUTSIDE_PROJECT")
+            return path
         if not path.is_file():
             raise ExternalAgentBatchError("input_path must be a file", "INVALID_INPUT_PATH")
         if not any(path == root or root in path.parents for root in self.allowed_input_roots):
@@ -145,7 +150,12 @@ class ExternalAgentBatchService:
         session_id = _safe_id(session_id, "session_id")
         if execution_mode != "external_agent":
             raise ExternalAgentBatchError("external Agent batches require external_agent mode", "EXECUTION_MODE_REQUIRED")
-        path = self._resolve_input(input_path)
+        path = self._resolve_input(input_path, allow_directory=True)
+        if path.is_dir() or path.suffix.lower() not in LINE_BATCH_INPUT_SUFFIXES:
+            raise ExternalAgentBatchError(
+                "only ordinary TXT files may use line batches; structured or other formats must use the format-aware MCP task route",
+                "STRUCTURED_FORMAT_REQUIRES_MCP_TASK",
+            )
         raw, items = self._source_items(path)
         batches = []
         for start in range(0, len(items), self.batch_size):
@@ -191,7 +201,8 @@ class ExternalAgentBatchService:
             batch_items = manifest_items[start : start + self.batch_size]
             batches.append({
                 "batch_id": f"batch_{len(batches) + 1:06d}", "index": len(batches), "status": "pending",
-                "revision": None, "source_hash": self._batch_hash(batch_items), "items": batch_items,
+                "revision": None, "source_hash": self._batch_hash(batch_items),
+                "cache_revision": manifest["cache_revision"], "items": batch_items,
             })
         with self._lock:
             if self._task_path(task_id).exists():
@@ -247,6 +258,17 @@ class ExternalAgentBatchService:
             self._validate_session(state, session_id)
             if state["status"] == "completed":
                 raise ExternalAgentBatchError("project has no remaining batches", "NO_BATCH_AVAILABLE")
+            # Cache-backed batches must be committed in order.  Once a cache
+            # document changes, any staged result prepared against the old
+            # revision is stale; requiring the writer commit before claiming
+            # another batch keeps the ledger and cache revision bound.
+            if state.get("cache_path") and any(
+                item.get("status") == "submitted" for item in state["batches"]
+            ):
+                raise ExternalAgentBatchError(
+                    "commit the submitted cache batch before claiming another batch",
+                    "BATCH_COMMIT_REQUIRED",
+                )
             for batch in state["batches"]:
                 if batch["status"] == "claimed":
                     if batch.get("claimed_session_id") == session_id:
@@ -278,6 +300,65 @@ class ExternalAgentBatchService:
             state.update({"status": "ready", "updated_at": self._clock()})
             self._write(state)
             return {"status": "released", "task": self._project_view(state), "batch": self._batch_view(batch)}
+
+    def resume_task(
+        self,
+        task_id: str,
+        previous_session_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Rebind an interrupted task to a newly registered Agent session.
+
+        The task ledger is the durable source of ownership.  A resumed
+        session inherits an in-flight claim, while submitted batches remain
+        staged until the new session obtains a fresh writer lease and commits
+        them.  The old session is no longer accepted by any task operation.
+        The caller is responsible for proving that the old connection is
+        terminal before invoking this method.
+        """
+        task_id = _safe_id(task_id, "task_id")
+        previous_session_id = _safe_id(previous_session_id, "session_id")
+        session_id = _safe_id(session_id, "session_id")
+        if previous_session_id == session_id:
+            raise ExternalAgentBatchError(
+                "a resumed task requires a different session", "SESSION_ALREADY_ACTIVE"
+            )
+        with self._lock:
+            state = self._read(task_id)
+            self._validate_session(state, previous_session_id)
+            if state.get("status") == "completed":
+                raise ExternalAgentBatchError("project is already completed", "TASK_COMPLETED")
+
+            history = state.get("session_history")
+            if not isinstance(history, list):
+                history = []
+            history.append({"session_id": previous_session_id, "ended_at": self._clock()})
+            state["session_history"] = history[-32:]
+            state["session_id"] = session_id
+            state["resumed_from_session_id"] = previous_session_id
+            state["resumed_at"] = self._clock()
+
+            for batch in state.get("batches", []):
+                if batch.get("status") == "claimed" and batch.get("claimed_session_id") == previous_session_id:
+                    batch["claimed_session_id"] = session_id
+
+            statuses = [item.get("status") for item in state.get("batches", [])]
+            if statuses and all(status == "committed" for status in statuses):
+                state["status"] = "completed"
+            elif any(status == "claimed" for status in statuses):
+                state["status"] = "translating"
+            elif statuses and all(status in {"submitted", "committed"} for status in statuses):
+                state["status"] = "awaiting_commit"
+            else:
+                state["status"] = "ready"
+            state["updated_at"] = self._clock()
+            self._write(state)
+            return {
+                "status": "resumed",
+                "task": self._project_view(state),
+                "previous_session_id": previous_session_id,
+                "session_id": session_id,
+            }
 
     @staticmethod
     def _validate_result_items(expected: Sequence[Mapping[str, Any]], items: Any) -> list[dict[str, Any]]:
@@ -345,6 +426,9 @@ class ExternalAgentBatchService:
             submission = {"status": "accepted", "task_id": task_id, "batch_id": batch_id, "revision": revision,
                           "next_revision": revision + 1, "result_hash": _sha256(_canonical(result_items)),
                           "items": deepcopy(result_items), "replayed": False}
+            if state.get("cache_path"):
+                submission["cache_revision"] = batch.get("cache_revision") or state.get("cache_revision")
+                submission["manifest_hash"] = state.get("manifest_hash")
             batch.update({"status": "submitted", "idempotency_key": idempotency_key, "result_fingerprint": fingerprint,
                           "submitted_at": self._clock(), "submission": submission})
             state["revision"] = revision + 1
@@ -396,6 +480,17 @@ class ExternalAgentBatchService:
                 "backup_path_recorded": bool(commit_result.get("backup_path")),
                 "committed_at": self._clock(),
             })
+            if state.get("cache_path") and commit_result.get("cache_revision"):
+                state["cache_revision"] = commit_result["cache_revision"]
+                # Pending batches carry the revision in every opaque item so
+                # the next staged result is checked against the cache produced
+                # by this commit rather than the original project snapshot.
+                for pending in state["batches"]:
+                    if pending.get("status") == "pending":
+                        pending["cache_revision"] = commit_result["cache_revision"]
+                        for item in pending.get("items", []):
+                            if isinstance(item, dict):
+                                item["cache_revision"] = commit_result["cache_revision"]
             state["status"] = "completed" if all(item.get("status") == "committed" for item in state["batches"]) else "ready"
             state["updated_at"] = self._clock()
             self._write(state)
@@ -422,8 +517,12 @@ def claim_batch(task_id: str, session_id: str) -> dict[str, Any]:
     return get_external_agent_batch_service().claim_batch(task_id, session_id)
 
 
+def resume_task(task_id: str, previous_session_id: str, session_id: str) -> dict[str, Any]:
+    return get_external_agent_batch_service().resume_task(task_id, previous_session_id, session_id)
+
+
 def submit_translation_batch(task_id: str, session_id: str, batch_id: str, source_hash: str, revision: int, idempotency_key: str, items: Any) -> dict[str, Any]:
     return get_external_agent_batch_service().submit_translation_batch(task_id, session_id, batch_id, source_hash, revision, idempotency_key, items)
 
 
-__all__ = ["SCHEMA", "DEFAULT_BATCH_SIZE", "ExternalAgentBatchError", "BatchError", "ExternalAgentBatchService", "get_external_agent_batch_service", "prepare_project", "claim_batch", "submit_translation_batch"]
+__all__ = ["SCHEMA", "DEFAULT_BATCH_SIZE", "ExternalAgentBatchError", "BatchError", "ExternalAgentBatchService", "get_external_agent_batch_service", "prepare_project", "claim_batch", "resume_task", "submit_translation_batch"]

@@ -17,7 +17,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "1"
 DEFAULT_LEASE_SECONDS = 120
-MAX_LEASE_SECONDS = 600
+MAX_LEASE_SECONDS = 3600
 MIN_LEASE_SECONDS = 5
 
 
@@ -221,6 +221,7 @@ class ExternalAgentSessionRegistry:
                 "client_version": str(data.get("client_version", "")),
                 "capabilities": list(capabilities),
                 "supported_modes": list(modes),
+                "external_processing_confirmed": True,
                 "transport": str(data.get("transport", "")),
                 "lease_seconds": lease,
                 "heartbeat_interval_seconds": max(1, lease // 3),
@@ -228,6 +229,9 @@ class ExternalAgentSessionRegistry:
                 "last_heartbeat_at": self._format_time(now),
                 "expires_at": self._format_time(expires_at),
                 "server_directive": "continue",
+                "execution_mode": "default_api",
+                "mode_status": "not_requested",
+                "config_written": False,
             }
             self._sessions[session_id] = record
             self._expiry[session_id] = expires_at
@@ -286,6 +290,91 @@ class ExternalAgentSessionRegistry:
                 record["server_directive"] = "stop"
                 record["disconnect_reason"] = str(kwargs.get("reason", "client_shutdown"))
             return self._copy(record)
+
+    def update_context(
+        self,
+        session_id: str,
+        *,
+        task_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist the task/batch currently associated with a live session.
+
+        Domain adapters call this after a successful task operation. It does
+        not renew the connection lease; heartbeats remain the only renewal
+        mechanism, while this metadata survives ordinary status inspection.
+        """
+        with self._lock:
+            now = self._now()
+            self._expire_due(now)
+            record = self._find(session_id)
+            if record.get("state") != "registered":
+                raise ExternalAgentSessionError("session lease has expired", "SESSION_EXPIRED")
+            if task_id is not None:
+                if not isinstance(task_id, str) or not task_id.strip():
+                    raise ExternalAgentSessionError("task_id must be a non-empty string", "INVALID_ARGUMENTS")
+                record["last_task_id"] = task_id
+            if batch_id is not None:
+                if not isinstance(batch_id, str) or not batch_id.strip():
+                    raise ExternalAgentSessionError("batch_id must be a non-empty string", "INVALID_ARGUMENTS")
+                record["active_batch_id"] = batch_id
+            return self._copy(record)
+
+    def request_external_mode(
+        self,
+        session_id: str,
+        *,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Grant a session-scoped external-Agent mode without changing config.
+
+        The mode grant is runtime session state.  It is intentionally separate
+        from Profile configuration: MCP callers can request it through the
+        authenticated port, while the default API mode on disk remains intact.
+        Registration already requires onboarding acceptance and an explicit
+        user confirmation, so an Agent cannot self-authorize through this call.
+        """
+        with self._lock:
+            now = self._now()
+            self._expire_due(now)
+            record = self._find(session_id)
+            if record.get("state") != "registered":
+                raise ExternalAgentSessionError("session lease has expired", "SESSION_EXPIRED")
+            if record.get("external_processing_confirmed") is not True:
+                raise ExternalAgentSessionError(
+                    "external processing must be confirmed by the user",
+                    "EXTERNAL_PROCESSING_NOT_CONFIRMED",
+                )
+            modes = record.get("supported_modes") or []
+            if modes and "external_agent" not in modes:
+                raise ExternalAgentSessionError(
+                    "external_agent mode is not supported", "AGENT_MODE_UNSUPPORTED"
+                )
+            if task_id is not None:
+                if not isinstance(task_id, str) or not task_id.strip():
+                    raise ExternalAgentSessionError(
+                        "task_id must be a non-empty string", "INVALID_ARGUMENTS"
+                    )
+                record["mode_task_id"] = task_id
+                record["last_task_id"] = task_id
+            record["execution_mode"] = "external_agent"
+            record["mode_status"] = "granted"
+            record["mode_granted_at"] = self._format_time(now)
+            record["server_directive"] = "use_external_agent_tools"
+            return self._copy(record)
+
+    def has_external_mode(self, session_id: str, *, task_id: str | None = None) -> bool:
+        """Return whether a live session has an applicable mode grant."""
+        with self._lock:
+            now = self._now()
+            self._expire_due(now)
+            record = self._find(session_id)
+            if record.get("state") != "registered":
+                return False
+            if record.get("execution_mode") != "external_agent" or record.get("mode_status") != "granted":
+                return False
+            scoped_task = record.get("mode_task_id")
+            return task_id is None or scoped_task in (None, task_id)
 
     def get(self, session_id: str, *, active_only: bool = False) -> dict[str, Any] | None:
         """Return a copy of a session, marking an elapsed lease as expired."""

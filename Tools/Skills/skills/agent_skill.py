@@ -1,17 +1,37 @@
-"""External Agent session lifecycle Skill.
+"""External Agent session and batch lifecycle Skill.
 
-This adapter exposes only the short-lived registration lease.  It does not
-share the Skills authentication token with an Agent session and never accepts
-or persists provider credentials.  The session registry remains transport
-agnostic so MCP and Skills can use the same runtime state.
+The adapter deliberately contains no translation or cache business logic. It
+only authenticates the active Agent session, applies the Skills workspace path
+policy, and delegates batch/result/commit operations to the shared services
+used by MCP.
 """
 from __future__ import annotations
 
 from typing import Any, Dict
 
+from ModuleFolders.Service.Agent.ExternalAgentBatch import (
+    ExternalAgentBatchError,
+    ExternalAgentBatchService,
+    get_external_agent_batch_service,
+)
+from ModuleFolders.Service.Agent.ExternalAgentBatchResult import (
+    ExternalAgentBatchResultError,
+    ExternalAgentBatchResultService,
+    get_external_agent_batch_result_service,
+)
+from ModuleFolders.Service.Agent.ExternalAgentBatchWriter import (
+    ExternalAgentBatchWriter,
+    ExternalAgentBatchWriterError,
+)
 from ModuleFolders.Service.Agent.ExternalAgentSession import (
     ExternalAgentSessionError,
     ExternalAgentSessionRegistry,
+    get_external_agent_session_registry,
+)
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import (
+    ExternalAgentWriterLeaseError,
+    ExternalAgentWriterLeaseRegistry,
+    get_external_agent_writer_lease_registry,
 )
 from Tools.Skills.skill_base import (
     Skill,
@@ -21,43 +41,77 @@ from Tools.Skills.skill_base import (
     normalize_skill_action,
     reject_unknown_skill_fields,
 )
+from Tools.Skills.skills.common import SkillPathError, validate_skill_path
 
 
 class AgentSkill(Skill):
-    """Register and inspect an external Agent connection lease."""
+    """Expose session and controlled external-Agent batch operations."""
 
-    def __init__(self, registry: ExternalAgentSessionRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: ExternalAgentSessionRegistry | None = None,
+        *,
+        batch_service: ExternalAgentBatchService | None = None,
+        result_service: ExternalAgentBatchResultService | None = None,
+        writer_lease_registry: ExternalAgentWriterLeaseRegistry | None = None,
+    ) -> None:
         super().__init__()
         self._registry = registry
+        self._batch_service = batch_service
+        self._result_service = result_service
+        self._writer_lease_registry = writer_lease_registry
 
     @property
     def registry(self) -> ExternalAgentSessionRegistry:
         if self._registry is None:
-            # Import lazily so listing the Skills remains usable in minimal
-            # environments and both MCP and Skills resolve one shared registry.
-            from ModuleFolders.Service.Agent.ExternalAgentSession import (
-                get_external_agent_session_registry,
-            )
-
             self._registry = get_external_agent_session_registry()
         return self._registry
+
+    @property
+    def batch_service(self) -> ExternalAgentBatchService:
+        if self._batch_service is None:
+            self._batch_service = get_external_agent_batch_service()
+        return self._batch_service
+
+    @property
+    def result_service(self) -> ExternalAgentBatchResultService:
+        if self._result_service is None:
+            self._result_service = get_external_agent_batch_result_service()
+        return self._result_service
+
+    @property
+    def writer_lease_registry(self) -> ExternalAgentWriterLeaseRegistry:
+        if self._writer_lease_registry is None:
+            self._writer_lease_registry = get_external_agent_writer_lease_registry()
+        return self._writer_lease_registry
 
     @property
     def meta(self) -> SkillMeta:
         return SkillMeta(
             name="agent_session",
             description=(
-                "Register, renew, inspect, or disconnect an external Agent session. "
-                "The lease is separate from the Skills HTTP authentication token."
+                "Register, renew, inspect, or disconnect an external Agent session; "
+                "prepare and exchange controlled line-based translation batches. "
+                "Results are validated and staged before a separate writer commits "
+                "a cache; structured formats must use a format-aware task route."
             ),
             category="agent",
             parameters=[
                 SkillParameter(
                     name="action",
-                    description="Operation: register, heartbeat, status, or unregister.",
+                    description=(
+                        "Operation: register, heartbeat, status, unregister, prepare_project, "
+                        "prepare_cache_project, project_status, claim_batch, submit_translation_batch, "
+                        "release_batch, resume_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
+                    ),
                     type="string",
                     required=True,
-                    enum=["register", "heartbeat", "status", "unregister"],
+                    enum=[
+                        "register", "heartbeat", "status", "unregister",
+                        "prepare_project", "prepare_cache_project", "project_status",
+                        "claim_batch", "submit_translation_batch", "release_batch",
+                        "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task",
+                    ],
                 ),
                 SkillParameter(name="session_id", description="Session lease id.", type="string"),
                 SkillParameter(name="agent_instance_id", description="Stable external Agent instance id.", type="string"),
@@ -67,31 +121,36 @@ class AgentSkill(Skill):
                 SkillParameter(name="capabilities", description="Declared capabilities.", type="array"),
                 SkillParameter(name="supported_modes", description="Supported AiNiee execution modes.", type="array"),
                 SkillParameter(name="transport", description="Transport label (for diagnostics only).", type="string"),
-                SkillParameter(name="requested_lease_seconds", description="Requested lease duration.", type="integer"),
+                SkillParameter(name="requested_lease_seconds", description="Requested session lease in seconds (default 120, maximum 3600 / 60 minutes).", type="integer"),
                 SkillParameter(name="user_confirmed_external_processing", description="User confirmed sending work to the external Agent.", type="boolean"),
                 SkillParameter(name="active_only", description="Only return a live session for status.", type="boolean"),
                 SkillParameter(name="last_task_id", description="Optional task id carried by heartbeat.", type="string"),
                 SkillParameter(name="active_batch_id", description="Optional batch id carried by heartbeat.", type="string"),
                 SkillParameter(name="reason", description="Disconnect reason.", type="string"),
+                SkillParameter(name="input_path", description="Controlled ordinary TXT file for a line batch project; all other formats are rejected with STRUCTURED_FORMAT_REQUIRES_MCP_TASK.", type="string"),
+                SkillParameter(name="cache_path", description="Controlled AinieeCacheData.json for a cache-backed project.", type="string"),
+                SkillParameter(name="task_id", description="Stable external Agent task id.", type="string"),
+                SkillParameter(name="batch_id", description="Batch id returned by claim_batch.", type="string"),
+                SkillParameter(name="execution_mode", description="Must be external_agent for this protocol.", type="string", default="external_agent", enum=["external_agent"]),
+                SkillParameter(name="source_hash", description="SHA-256 hash returned for the claimed batch.", type="string"),
+                SkillParameter(name="revision", description="Task revision returned for the claimed batch.", type="integer"),
+                SkillParameter(name="idempotency_key", description="Stable key for safe submission retries.", type="string"),
+                SkillParameter(name="items", description="Complete structured translation result for every claimed item.", type="array"),
+                SkillParameter(name="writer_lease_id", description="Lease returned by acquire_writer_lease.", type="string"),
+                SkillParameter(name="mode_task_id", description="Optional task scope for request_external_mode.", type="string"),
+                SkillParameter(name="previous_session_id", description="Previous disconnected session id for resume_task.", type="string"),
             ],
             examples=[
-                {
-                    "action": "register",
-                    "agent_instance_id": "workbuddy-desktop-1",
-                    "client_name": "WorkBuddy",
-                    "supported_modes": ["external_agent"],
-                    "capabilities": ["translation", "proofread"],
-                    "user_confirmed_external_processing": True,
-                },
-                {"action": "heartbeat", "session_id": "sess_example", "agent_instance_id": "workbuddy-desktop-1"},
-                {"action": "status"},
-                {"action": "unregister", "session_id": "sess_example", "agent_instance_id": "workbuddy-desktop-1"},
+                {"action": "register", "agent_instance_id": "desktop-1", "supported_modes": ["external_agent"], "capabilities": ["translation"], "user_confirmed_external_processing": True},
+                {"action": "prepare_project", "input_path": "Resource/input.txt", "task_id": "task_1", "session_id": "sess_example"},
+                {"action": "claim_batch", "task_id": "task_1", "session_id": "sess_example"},
+                {"action": "submit_translation_batch", "task_id": "task_1", "session_id": "sess_example", "batch_id": "batch_000001", "source_hash": "<sha256>", "revision": 1, "idempotency_key": "task_1_batch_1", "items": []},
             ],
         )
 
     @staticmethod
-    def _error(exc: ExternalAgentSessionError) -> SkillResult:
-        return SkillResult.fail(str(exc), exc.code)
+    def _error(exc: Exception) -> SkillResult:
+        return SkillResult.fail(str(exc), getattr(exc, "code", "SKILL_ERROR"))
 
     @staticmethod
     def _onboarding_accepted() -> bool:
@@ -102,32 +161,220 @@ class AgentSkill(Skill):
         except Exception:
             return False
 
+    def _require_session(self, session_id: Any) -> SkillResult | None:
+        if not isinstance(session_id, str) or not session_id.strip():
+            return SkillResult.fail("session_id is required.", "MISSING_PARAM")
+        try:
+            if hasattr(self.registry, "status"):
+                record = self.registry.status(session_id)
+            else:
+                record = self.registry.get(session_id, active_only=True)
+        except ExternalAgentSessionError as exc:
+            return self._error(exc)
+        if not isinstance(record, dict) or record.get("state") != "registered":
+            return SkillResult.fail("Agent session is not registered or has expired.", "AGENT_SESSION_REQUIRED")
+        return None
+
+    def _require_external_mode(self, session_id: Any, task_id: Any = None) -> SkillResult | None:
+        session_error = self._require_session(session_id)
+        if session_error:
+            return session_error
+        try:
+            checker = getattr(self.registry, "has_external_mode", None)
+            if not callable(checker) or not checker(session_id, task_id=task_id):
+                return SkillResult.fail(
+                    "Call request_external_mode through the Skills port before task operations.",
+                    "EXTERNAL_MODE_REQUIRED",
+                )
+        except ExternalAgentSessionError as exc:
+            return self._error(exc)
+        return None
+
+    @staticmethod
+    def _required(args: Dict[str, Any], *names: str) -> SkillResult | None:
+        missing = [name for name in names if not isinstance(args.get(name), str) or not args[name].strip()]
+        if missing:
+            return SkillResult.fail(f"Missing required parameter: {', '.join(missing)}", "MISSING_PARAM")
+        return None
+
+    @staticmethod
+    def _safe_input_path(value: Any, *, field_name: str = "input_path") -> str:
+        return validate_skill_path(value, field_name=field_name, must_exist=True, expect_file=True)
+
+    def _execute_batch(self, action: str, args: Dict[str, Any]) -> SkillResult:
+        session_id = args.get("session_id")
+        missing = self._required(args, "session_id")
+        if missing:
+            return missing
+        session_error = self._require_external_mode(session_id, args.get("task_id"))
+        if session_error:
+            return session_error
+
+        try:
+            if action == "prepare_project":
+                missing = self._required(args, "input_path", "task_id")
+                if missing:
+                    return missing
+                input_path = self._safe_input_path(args["input_path"])
+                return SkillResult.ok(self.batch_service.prepare_project(
+                    input_path, args["task_id"], session_id, args.get("execution_mode", "external_agent")
+                ))
+
+            if action == "prepare_cache_project":
+                missing = self._required(args, "cache_path", "task_id")
+                if missing:
+                    return missing
+                cache_path = self._safe_input_path(args["cache_path"], field_name="cache_path")
+                return SkillResult.ok(self.batch_service.prepare_cache_project(
+                    cache_path, args["task_id"], session_id, args.get("execution_mode", "external_agent")
+                ))
+
+            if action == "project_status":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.get_project(args["task_id"], session_id))
+
+            if action == "claim_batch":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.claim_batch(args["task_id"], session_id))
+
+            if action == "release_batch":
+                missing = self._required(args, "task_id", "batch_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.release_batch(args["task_id"], session_id, args["batch_id"]))
+
+            if action == "resume_task":
+                missing = self._required(args, "task_id", "previous_session_id")
+                if missing:
+                    return missing
+                previous_session_id = args["previous_session_id"]
+                if previous_session_id == session_id:
+                    return SkillResult.fail(
+                        "a resumed task requires a different session",
+                        "SESSION_ALREADY_ACTIVE",
+                    )
+                previous = self.registry.status(previous_session_id)
+                if isinstance(previous, dict) and previous.get("state") == "registered":
+                    return SkillResult.fail(
+                        "Previous session must be disconnected or expired.",
+                        "SESSION_STILL_ACTIVE",
+                    )
+                # The prior record remains an audit snapshot after disconnect;
+                # require that it was granted external mode before takeover.
+                if isinstance(previous, dict) and previous.get("mode_status") != "granted":
+                    return SkillResult.fail(
+                        "Previous session did not hold external-agent mode.",
+                        "PREVIOUS_EXTERNAL_MODE_REQUIRED",
+                    )
+                if isinstance(previous, dict) and previous.get("mode_task_id") not in (None, args["task_id"]):
+                    return SkillResult.fail(
+                        "Previous session external-agent mode was granted for another task.",
+                        "PREVIOUS_MODE_TASK_MISMATCH",
+                    )
+                mode_error = self._require_external_mode(session_id, args["task_id"])
+                if mode_error:
+                    return mode_error
+                resumed = self.batch_service.resume_task(
+                    args["task_id"], previous_session_id, session_id
+                )
+                resumed["released_writer_leases"] = self.writer_lease_registry.release_task(
+                    args["task_id"], previous_session_id
+                )
+                resumed["writer_lease_required"] = True
+                return SkillResult.ok(resumed)
+
+            if action == "submit_translation_batch":
+                missing = self._required(args, "task_id", "batch_id", "source_hash", "idempotency_key")
+                if missing:
+                    return missing
+                for field in ("revision", "items"):
+                    if field not in args:
+                        return SkillResult.fail(f"Missing required parameter: {field}", "MISSING_PARAM")
+                result = self.batch_service.submit_translation_batch(
+                    args["task_id"], session_id, args["batch_id"], args["source_hash"],
+                    args["revision"], args["idempotency_key"], args["items"],
+                )
+                ledger = self.batch_service.get_ledger(args["task_id"], session_id)
+                staged = self.result_service.validate_and_stage(
+                    ledger, result, idempotency_key=args["idempotency_key"]
+                )
+                result["staging_status"] = "replayed" if staged.get("replayed") else "staged"
+                result["staged_result_hash"] = staged.get("result_hash")
+                return SkillResult.ok(result)
+
+            if action == "acquire_writer_lease":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.writer_lease_registry.acquire(args["task_id"], session_id))
+
+            if action == "commit_cache_batch":
+                missing = self._required(args, "task_id", "batch_id", "writer_lease_id")
+                if missing:
+                    return missing
+                lease_id = args["writer_lease_id"]
+                leases = self.writer_lease_registry
+                if not leases.validate(lease_id, args["task_id"], session_id):
+                    return SkillResult.fail("writer lease is invalid or expired", "WRITER_LEASE_UNAUTHORIZED")
+                ledger = self.batch_service.get_ledger(args["task_id"], session_id)
+                batch = next((item for item in ledger.get("batches", []) if item.get("batch_id") == args["batch_id"]), None)
+                if batch is None:
+                    return SkillResult.fail("batch does not exist", "BATCH_NOT_FOUND")
+                if batch.get("status") != "submitted":
+                    return SkillResult.fail("batch is not submitted", "BATCH_NOT_SUBMITTED")
+                cache_path = self.batch_service.cache_path_for_writer(args["task_id"], session_id)
+                staged = self.result_service.read_staged(args["task_id"])
+                writer = ExternalAgentBatchWriter(
+                    self.batch_service.project_root,
+                    writer_lease_validator=lambda record, lease: leases.validate(lease, args["task_id"], session_id),
+                )
+                result = writer.apply_staged_result(
+                    cache_path, staged, writer_lease_id=lease_id, batch_id=args["batch_id"]
+                )
+                ledger_result = self.batch_service.mark_batch_committed(
+                    args["task_id"], session_id, args["batch_id"], lease_id, result
+                )
+                leases.release(lease_id, args["task_id"], session_id)
+                result["ledger"] = ledger_result
+                return SkillResult.ok(result)
+
+            return SkillResult.fail(f"Unknown agent batch action: {action}", "INVALID_ACTION")
+        except (ExternalAgentSessionError, ExternalAgentBatchError, ExternalAgentBatchResultError, ExternalAgentBatchWriterError, ExternalAgentWriterLeaseError, SkillPathError, ValueError) as exc:
+            return self._error(exc)
+
     def execute(self, args: Dict[str, Any]) -> SkillResult:
-        invalid = reject_unknown_skill_fields(
-            args,
-            {
-                "action", "session_id", "agent_instance_id", "protocol_version",
-                "client_name", "client_version", "capabilities", "supported_modes",
-                "transport", "requested_lease_seconds", "user_confirmed_external_processing",
-                "active_only", "last_task_id", "active_batch_id", "reason",
-            },
-            skill_name="agent_session",
-        )
+        allowed = {
+            "action", "session_id", "agent_instance_id", "protocol_version", "client_name", "client_version",
+            "capabilities", "supported_modes", "transport", "requested_lease_seconds",
+            "user_confirmed_external_processing", "active_only", "last_task_id", "active_batch_id", "reason",
+            "input_path", "cache_path", "task_id", "batch_id", "execution_mode", "source_hash", "revision",
+            "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id",
+        }
+        invalid = reject_unknown_skill_fields(args, allowed, skill_name="agent_session")
         if invalid:
             return invalid
         action = normalize_skill_action(args)
         if action is None:
             return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
+        if action in {
+            "prepare_project", "prepare_cache_project", "project_status", "claim_batch", "submit_translation_batch",
+            "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch",
+        }:
+            return self._execute_batch(action, args)
+
         try:
+            session_id = args.get("session_id")
             if action == "register":
                 if not self._onboarding_accepted():
                     return SkillResult.fail(
                         "External Agent onboarding has not been accepted by the user.",
                         "ONBOARDING_NOT_ACCEPTED",
                     )
-                # Pass only the documented protocol fields; this prevents a
-                # future registry extension from accidentally accepting secrets.
                 fields = {
                     key: args[key]
                     for key in (
@@ -139,31 +386,30 @@ class AgentSkill(Skill):
                 }
                 return SkillResult.ok(self.registry.register(fields))
 
-            session_id = args.get("session_id")
-            if action == "heartbeat":
-                if "agent_instance_id" not in args:
-                    return SkillResult.fail("Missing required parameter: agent_instance_id", "MISSING_PARAM")
-                fields = {
-                    key: args[key]
-                    for key in ("last_task_id", "active_batch_id")
-                    if key in args
-                }
+            if action == "request_external_mode":
+                if not self._onboarding_accepted():
+                    return SkillResult.fail(
+                        "External Agent onboarding has not been accepted by the user.",
+                        "ONBOARDING_NOT_ACCEPTED",
+                    )
+                missing = self._required(args, "session_id")
+                if missing:
+                    return missing
                 return SkillResult.ok(
-                    self.registry.heartbeat(
+                    self.registry.request_external_mode(
                         session_id,
-                        agent_instance_id=args.get("agent_instance_id"),
-                        **fields,
+                        task_id=args.get("mode_task_id") or args.get("task_id"),
                     )
                 )
 
+            if action == "heartbeat":
+                if "agent_instance_id" not in args:
+                    return SkillResult.fail("Missing required parameter: agent_instance_id", "MISSING_PARAM")
+                fields = {key: args[key] for key in ("last_task_id", "active_batch_id") if key in args}
+                return SkillResult.ok(self.registry.heartbeat(session_id, agent_instance_id=args.get("agent_instance_id"), **fields))
+
             if action == "unregister":
-                return SkillResult.ok(
-                    self.registry.unregister(
-                        session_id,
-                        agent_instance_id=args.get("agent_instance_id"),
-                        reason=args.get("reason", "client_shutdown"),
-                    )
-                )
+                return SkillResult.ok(self.registry.unregister(session_id, agent_instance_id=args.get("agent_instance_id"), reason=args.get("reason", "client_shutdown")))
 
             if action == "status":
                 active_only = args.get("active_only", False)
@@ -172,22 +418,19 @@ class AgentSkill(Skill):
                 if session_id is not None:
                     if not isinstance(session_id, str) or not session_id.strip():
                         return SkillResult.fail("session_id must be a non-empty string.", "INVALID_ARGUMENTS")
-                    # ``status(id)`` returns the audit snapshot; ``get`` is
-                    # used for the optional active-only filter.
                     result = self.registry.get(session_id, active_only=active_only)
                     if result is None:
                         return SkillResult.fail("session does not exist", "SESSION_NOT_FOUND")
                     return SkillResult.ok(result)
                 if hasattr(self.registry, "status"):
-                    return SkillResult.ok(self.registry.status())
-                # Compatibility fallback for an older injected registry.
+                    result = self.registry.status()
+                    if isinstance(result, dict):
+                        return SkillResult.ok(result)
                 return SkillResult.ok({"sessions": [], "count": 0, "active_count": len(self.registry)})
 
             return SkillResult.fail(f"Unknown agent_session action: {action}", "INVALID_ACTION")
-        except ExternalAgentSessionError as exc:
+        except (ExternalAgentSessionError, TypeError, ValueError) as exc:
             return self._error(exc)
-        except (TypeError, ValueError) as exc:
-            return SkillResult.fail(str(exc), "INVALID_ARGUMENTS")
 
 
 __all__ = ["AgentSkill"]

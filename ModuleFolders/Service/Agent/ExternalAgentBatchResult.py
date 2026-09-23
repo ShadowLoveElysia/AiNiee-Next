@@ -268,6 +268,27 @@ class ExternalAgentBatchResultService:
         if expected_revision is not None and provided_revision != expected_revision:
             raise ExternalAgentBatchResultError("result revision is stale", "REVISION_CONFLICT")
 
+        # Cache-backed ledgers have a second, independent revision.  The task
+        # revision protects claim/submit ordering; the cache revision protects
+        # the deterministic writer from applying a result to a changed JSON
+        # document.  Preserve it on the staged record instead of allowing the
+        # numeric task revision to masquerade as a cache revision.
+        cache_revision = payload.get("cache_revision")
+        expected_cache_revision = ledger_value.get("cache_revision")
+        if expected_cache_revision is None:
+            expected_cache_revision = batch.get("cache_revision")
+        if expected_cache_revision is None:
+            item_revisions = {
+                item.get("cache_revision") for item in expected if item.get("cache_revision") is not None
+            }
+            if len(item_revisions) == 1:
+                expected_cache_revision = next(iter(item_revisions))
+        if expected_cache_revision is not None:
+            if cache_revision is None:
+                cache_revision = expected_cache_revision
+            if cache_revision != expected_cache_revision:
+                raise ExternalAgentBatchResultError("cache revision is stale", "CACHE_REVISION_CONFLICT")
+
         key = idempotency_key if idempotency_key is not None else payload.get("idempotency_key")
         if key is not None and (not isinstance(key, str) or not key or len(key) > 256):
             raise ExternalAgentBatchResultError("idempotency_key is invalid", "INVALID_IDEMPOTENCY_KEY")
@@ -291,6 +312,10 @@ class ExternalAgentBatchResultService:
                 "idempotency_key": key, "accepted_at": self._clock(),
                 "items": deepcopy(accepted_items), "replayed": False,
             }
+            if cache_revision is not None:
+                record["cache_revision"] = cache_revision
+            if payload.get("manifest_hash") is not None:
+                record["manifest_hash"] = payload["manifest_hash"]
             document["results"].append(record)
             document["updated_at"] = record["accepted_at"]
             self._write_document(path, document)

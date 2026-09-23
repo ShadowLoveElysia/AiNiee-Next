@@ -241,6 +241,12 @@ class ExternalAgentBatchWriter:
                 raise ExternalAgentBatchWriterError("translation must be a non-empty string", "ITEM_INVALID")
             status = current.get("translation_status", TranslationStatus.UNTRANSLATED)
             existing = current.get("translated_text", "")
+            if status == TranslationStatus.EXCLUDED:
+                # EXCLUDED rows are intentional source-preserving entries
+                # (separators, punctuation-only lines, addresses, etc.).
+                # Legacy manifests may still contain them; skip them so they
+                # cannot block unrelated translated rows in the same batch.
+                continue
             if status != TranslationStatus.UNTRANSLATED or existing:
                 if existing == translation and status == TranslationStatus.TRANSLATED:
                     continue

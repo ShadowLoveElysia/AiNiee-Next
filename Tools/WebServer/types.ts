@@ -14,7 +14,7 @@ export interface TaskStats {
   completedProgress: number;
   totalTokens: number;
   elapsedTime: number;
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'error' | 'stopping';
+  status: 'idle' | 'starting' | 'running' | 'paused' | 'waiting_for_agent' | 'agent_disconnected' | 'committed' | 'completed' | 'error' | 'failed' | 'stopping' | 'stopped';
   currentFile: string;
   successRate?: number;
   errorRate?: number;
@@ -22,7 +22,7 @@ export interface TaskStats {
 
 export interface TaskLifecycle {
   task_id?: string | null;
-  status?: 'idle' | 'starting' | 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
+  status?: 'idle' | 'starting' | 'running' | 'stopping' | 'waiting_for_agent' | 'agent_disconnected' | 'committed' | 'completed' | 'failed' | 'stopped';
   running?: boolean;
   created_at?: string | null;
   started_at?: string | null;

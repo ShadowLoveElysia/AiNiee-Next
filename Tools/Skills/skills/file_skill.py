@@ -13,6 +13,7 @@ from Tools.Skills.skill_base import (
 )
 from Tools.Skills.skills.common import (
     SkillPathError,
+    stage_external_input,
     validate_skill_glob_pattern,
     validate_skill_path,
 )
@@ -33,10 +34,10 @@ class FileSkill(Skill):
             parameters=[
                 SkillParameter(
                     name="action",
-                    description="Operation: list, info, upload_path.",
+                    description="Operation: list, info, upload_path, or stage_external.",
                     type="string",
                     required=True,
-                    enum=["list", "info", "upload_path"],
+                    enum=["list", "info", "upload_path", "stage_external"],
                 ),
                 SkillParameter(
                     name="path",
@@ -51,6 +52,13 @@ class FileSkill(Skill):
                     required=False,
                     default="*",
                 ),
+                SkillParameter(
+                    name="confirm_external",
+                    description="Explicitly confirm that the user supplied this external file for staging.",
+                    type="boolean",
+                    required=False,
+                    default=False,
+                ),
             ],
             examples=[
                 {"action": "list", "path": "/path/to/input", "pattern": "*.txt"},
@@ -61,7 +69,7 @@ class FileSkill(Skill):
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
         invalid = reject_unknown_skill_fields(
-            args, {"action", "path", "pattern"}, skill_name="file"
+            args, {"action", "path", "pattern", "confirm_external"}, skill_name="file"
         )
         if invalid:
             return invalid
@@ -159,5 +167,27 @@ class FileSkill(Skill):
                 "local_path": path,
                 "note": "Use this path as input_path for translate skill or queue skill.",
             })
+
+        if action == "stage_external":
+            path = args.get("path", "")
+            if not isinstance(path, str) or not path.strip():
+                return SkillResult.fail("Missing required parameter: path", "MISSING_PARAM")
+            if args.get("confirm_external") is not True:
+                return SkillResult.fail(
+                    "stage_external requires confirm_external=true for a user-supplied file.",
+                    "EXTERNAL_PATH_CONFIRMATION_REQUIRED",
+                )
+            try:
+                staged = stage_external_input(
+                    path,
+                    confirmed=args.get("confirm_external") is True,
+                )
+                return SkillResult.ok({
+                    **staged,
+                    "staged": True,
+                    "note": "Use local_path as input_path for the controlled Agent batch.",
+                })
+            except SkillPathError as exc:
+                return SkillResult.fail(str(exc), exc.code)
 
         return SkillResult.fail(f"Unknown file action: {action}", "INVALID_ACTION")
