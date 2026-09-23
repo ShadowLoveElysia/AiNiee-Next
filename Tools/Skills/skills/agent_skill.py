@@ -42,6 +42,10 @@ from Tools.Skills.skill_base import (
     reject_unknown_skill_fields,
 )
 from Tools.Skills.skills.common import SkillPathError, validate_skill_path
+from Tools.MCPServer.file_tools import (
+    FileToolError,
+    get_agent_read_batch_service,
+)
 
 
 class AgentSkill(Skill):
@@ -91,9 +95,9 @@ class AgentSkill(Skill):
             name="agent_session",
             description=(
                 "Register, renew, inspect, or disconnect an external Agent session; "
-                "prepare and exchange controlled line-based translation batches. "
+                "prepare and exchange controlled translation and read-analysis batches. "
                 "Results are validated and staged before a separate writer commits "
-                "a cache; structured formats must use a format-aware task route."
+                "a cache; structured formats use the Web prewarmed cache route."
             ),
             category="agent",
             parameters=[
@@ -111,6 +115,8 @@ class AgentSkill(Skill):
                         "prepare_project", "prepare_cache_project", "project_status",
                         "claim_batch", "submit_translation_batch", "release_batch",
                         "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task",
+                        "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch",
+                        "release_read_batch",
                     ],
                 ),
                 SkillParameter(name="session_id", description="Session lease id.", type="string"),
@@ -127,7 +133,7 @@ class AgentSkill(Skill):
                 SkillParameter(name="last_task_id", description="Optional task id carried by heartbeat.", type="string"),
                 SkillParameter(name="active_batch_id", description="Optional batch id carried by heartbeat.", type="string"),
                 SkillParameter(name="reason", description="Disconnect reason.", type="string"),
-                SkillParameter(name="input_path", description="Controlled ordinary TXT file for a line batch project; all other formats are rejected with STRUCTURED_FORMAT_REQUIRES_MCP_TASK.", type="string"),
+                SkillParameter(name="input_path", description="Controlled ordinary TXT file for a direct line batch; Web-prewarmed structured tasks use their cache path.", type="string"),
                 SkillParameter(name="cache_path", description="Controlled AinieeCacheData.json for a cache-backed project.", type="string"),
                 SkillParameter(name="task_id", description="Stable external Agent task id.", type="string"),
                 SkillParameter(name="batch_id", description="Batch id returned by claim_batch.", type="string"),
@@ -139,6 +145,8 @@ class AgentSkill(Skill):
                 SkillParameter(name="writer_lease_id", description="Lease returned by acquire_writer_lease.", type="string"),
                 SkillParameter(name="mode_task_id", description="Optional task scope for request_external_mode.", type="string"),
                 SkillParameter(name="previous_session_id", description="Previous disconnected session id for resume_task.", type="string"),
+                SkillParameter(name="path", description="Controlled source file for read-only Agent analysis batches.", type="string"),
+                SkillParameter(name="project_type", description="Optional format-aware source project type.", type="string", default="auto"),
             ],
             examples=[
                 {"action": "register", "agent_instance_id": "desktop-1", "supported_modes": ["external_agent"], "capabilities": ["translation"], "user_confirmed_external_processing": True},
@@ -353,6 +361,7 @@ class AgentSkill(Skill):
             "user_confirmed_external_processing", "active_only", "last_task_id", "active_batch_id", "reason",
             "input_path", "cache_path", "task_id", "batch_id", "execution_mode", "source_hash", "revision",
             "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id",
+            "path", "project_type",
         }
         invalid = reject_unknown_skill_fields(args, allowed, skill_name="agent_session")
         if invalid:
@@ -366,6 +375,47 @@ class AgentSkill(Skill):
             "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch",
         }:
             return self._execute_batch(action, args)
+
+        if action in {
+            "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch", "release_read_batch",
+        }:
+            missing = self._required(args, "session_id")
+            if missing:
+                return missing
+            mode_error = self._require_external_mode(args["session_id"], args.get("task_id"))
+            if mode_error:
+                return mode_error
+            try:
+                service = get_agent_read_batch_service()
+                if action == "prepare_read_batches":
+                    required = self._required(args, "path", "task_id")
+                    if required:
+                        return required
+                    return SkillResult.ok(service.prepare(
+                        validate_skill_path(args["path"], field_name="path", must_exist=True, expect_file=True),
+                        args["task_id"], args["session_id"], project_type=args.get("project_type", "auto"),
+                    ))
+                if action == "claim_read_batch":
+                    required = self._required(args, "task_id")
+                    if required:
+                        return required
+                    return SkillResult.ok(service.claim(args["task_id"], args["session_id"], args.get("batch_id")))
+                if action == "read_batch_status":
+                    required = self._required(args, "task_id")
+                    if required:
+                        return required
+                    return SkillResult.ok(service.status(args["task_id"], args["session_id"]))
+                if action == "release_read_batch":
+                    required = self._required(args, "task_id", "batch_id")
+                    if required:
+                        return required
+                    return SkillResult.ok(service.release(args["task_id"], args["session_id"], args["batch_id"]))
+                required = self._required(args, "task_id", "batch_id")
+                if required:
+                    return required
+                return SkillResult.ok(service.complete(args["task_id"], args["session_id"], args["batch_id"]))
+            except (FileToolError, SkillPathError, ValueError) as exc:
+                return self._error(exc)
 
         try:
             session_id = args.get("session_id")

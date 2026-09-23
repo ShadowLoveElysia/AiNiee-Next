@@ -87,7 +87,7 @@ CATEGORY_DESCRIPTIONS = {
     "draft": "Draft editor data for glossary, exclusion, character, world, style, and examples.",
     "cache": "Cache status, load, item update, and search operations.",
     "manga": "Manga project, page, model, pipeline, editor, and export operations.",
-    "external_agent": "External Agent connection registration and lease status.",
+    "external_agent": "External Agent connection, translation, and read-batch leases.",
 }
 
 AGENT_TOOL_DESCRIPTIONS = [
@@ -112,8 +112,40 @@ AGENT_TOOL_DESCRIPTIONS = [
         "purpose": "Request a session-scoped external-Agent mode through the authenticated MCP port without changing Profile/config files.",
     },
     {
+        "tool_name": "agent_read_file",
+        "purpose": "Read up to 1000 logical source lines per call for Agent-side terminology extraction or analysis.",
+    },
+    {
+        "tool_name": "agent_detect_file_language",
+        "purpose": "Detect the dominant language and ranked language profile for a selected file using a capped sample.",
+    },
+    {
+        "tool_name": "agent_prepare_read_batches",
+        "purpose": "Prepare a read-only source file into durable batches of at most 1000 logical lines.",
+    },
+    {
+        "tool_name": "agent_claim_read_batch",
+        "purpose": "Claim one terminology-analysis source batch with batch_id, source_hash, revision, and up to 1000 lines.",
+    },
+    {
+        "tool_name": "agent_read_batch_status",
+        "purpose": "Recover compact read-batch identifiers after a lost prepare or claim response.",
+    },
+    {
+        "tool_name": "agent_complete_read_batch",
+        "purpose": "Complete a claimed read batch so the next 1000-line batch can be claimed.",
+    },
+    {
+        "tool_name": "agent_release_read_batch",
+        "purpose": "Release a claimed read batch after disconnect without changing source data.",
+    },
+    {
         "tool_name": "agent_prepare_project",
-        "purpose": "Create a controlled line-based project ledger only for ordinary TXT without writing cache or output; structured or other formats are rejected and must use a format-aware task route.",
+        "purpose": "Create or recover an external-Agent ledger; Web external tasks may transparently use their prewarmed structured-format cache.",
+    },
+    {
+        "tool_name": "agent_project_status",
+        "purpose": "Recover compact task status and batch identifiers after a lost prepare or claim response.",
     },
     {
         "tool_name": "agent_prepare_cache_project",
@@ -329,8 +361,11 @@ def build_tool_category_index(
                 "Avoid category='all' unless the user explicitly needs the full endpoint catalog."
             ),
             "category_count": len(categories),
-            "endpoint_count": sum(item["endpoint_count"] for item in categories),
-            "route_tool_count": sum(item["endpoint_count"] for item in categories)
+            # Keep the legacy aggregate count for Web API routes. The
+            # external-Agent category is a separate MCP-tool catalog and its
+            # entries are already described in ``core_tools``.
+            "endpoint_count": sum(item["endpoint_count"] for item in categories if item["category"] != "external_agent"),
+            "route_tool_count": sum(item["endpoint_count"] for item in categories if item["category"] != "external_agent")
             if route_tools_exposed
             else 0,
             "categories": categories,

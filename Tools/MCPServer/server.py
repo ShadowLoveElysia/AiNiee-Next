@@ -45,6 +45,12 @@ from Tools.MCPServer.security import (
     MCP_CALLER_VALUE,
     sanitize_data_for_mcp,
 )
+from Tools.MCPServer.file_tools import (
+    FileToolError,
+    detect_file_language,
+    get_agent_read_batch_service,
+    read_file_lines,
+)
 from ModuleFolders.Infrastructure.RemoteAccessPolicy import (
     ensure_bind_allowed,
     is_loopback_bind_host,
@@ -770,6 +776,59 @@ def _ensure_advanced_change_confirmed(path: str, body: Any, confirmed: bool) -> 
         )
 
 
+def _finalize_external_agent_output(ws_module: Any, task_id: str, cache_path: str) -> Dict[str, Any] | None:
+    """Export a completed cache-backed external task once all batches commit."""
+    manager = getattr(ws_module, "task_manager", None)
+    if manager is None or getattr(manager, "task_id", None) != task_id:
+        return None
+    if getattr(manager, "stats", {}).get("execution_mode") != "external_agent":
+        return None
+    input_path = getattr(manager, "external_agent_input_path", None)
+    output_path = getattr(manager, "external_agent_output_path", None)
+    if not input_path or not output_path:
+        return None
+    from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
+    from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+
+    cache_manager = ws_module.get_cache_manager()
+    cache_root = str(Path(cache_path).resolve().parent.parent)
+    cache_manager.load_from_file(cache_root, interactive_recovery=False)
+    config = ws_module._load_active_config_payload()
+    task_config = TaskConfig()
+    task_config.initialize(config)
+    output_config = {
+        "translated_suffix": config.get("output_filename_suffix", "_translated"),
+        "bilingual_suffix": "_bilingual",
+        "bilingual_order": config.get("bilingual_text_order", "source_first"),
+        "enable_bilingual_output": config.get("enable_bilingual_output", False),
+        "epub_layout_mode": config.get("epub_layout_mode", "off"),
+        "sync_metadata_title": config.get("sync_output_metadata_title", False),
+    }
+    FileOutputer().output_translated_content(
+        cache_manager.project,
+        output_path,
+        input_path,
+        output_config,
+        task_config,
+    )
+    manager.external_agent_cache_path = str(Path(cache_path).resolve())
+    manager.update_external_agent_status(
+        "committed",
+        task_id,
+        "All external-Agent batches committed; exporting final output.",
+    )
+    manager.update_external_agent_status(
+        "completed",
+        task_id,
+        "External-Agent cache committed and final output exported.",
+    )
+    return {
+        "status": "exported",
+        "output_path": output_path,
+        "cache_path": str(Path(cache_path).resolve()),
+    }
+
+
 def _build_mcp_app(
     api: AiNieeAPIClient,
     ws_module,
@@ -965,6 +1024,130 @@ def _build_mcp_app(
             code = getattr(exc, "code", "EXTERNAL_MODE_REJECTED")
             raise ValueError(f"{code}: {exc}") from exc
 
+    @_mcp_tool(
+        mcp,
+        "Read a bounded window of source items for an external Agent.",
+        (
+            "Use this for terminology extraction or other Agent-side analysis. "
+            "Each call returns at most 1000 logical source lines; use next_start_line "
+            "to continue. Paths must be inside the MCP workspace or the controlled "
+            "temporary directory. This tool never writes source files, glossary data, "
+            "cache, or output."
+        ),
+    )
+    def agent_read_file(
+        path: str,
+        start_line: int = 0,
+        max_lines: int = 1000,
+        project_type: str = "auto",
+    ) -> Dict[str, Any]:
+        try:
+            return read_file_lines(
+                path,
+                start_line=start_line,
+                max_lines=max_lines,
+                project_type=project_type,
+            )
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Detect the main language of a selected file.",
+        (
+            "Returns a ranked language profile and the dominant ISO language code. "
+            "The sample is capped at 1000 logical source lines and the path is subject "
+            "to the same MCP workspace boundary as agent_read_file."
+        ),
+    )
+    def agent_detect_file_language(
+        path: str,
+        project_type: str = "auto",
+    ) -> Dict[str, Any]:
+        try:
+            return detect_file_language(path, project_type=project_type)
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Prepare a read-only source file into 1000-line Agent analysis batches.",
+        "Use agent_claim_read_batch after this call. This protocol is intended for terminology extraction and does not write glossary or translation output.",
+    )
+    def agent_prepare_read_batches(
+        path: str,
+        task_id: str,
+        session_id: str,
+        project_type: str = "auto",
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_agent_read_batch_service().prepare(
+                path, task_id, session_id, project_type=project_type
+            )
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Claim one read-only source batch for Agent analysis.",
+        "Each returned batch contains at most 1000 source lines and includes batch_id, source_hash, and task revision. Omit batch_id to claim the next pending batch.",
+    )
+    def agent_claim_read_batch(
+        task_id: str,
+        session_id: str,
+        batch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_agent_read_batch_service().claim(task_id, session_id, batch_id)
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Mark one read-only source batch complete and release the read cursor.",
+        "Call this after the Agent has extracted terminology from the claimed batch, then claim the next batch.",
+    )
+    def agent_complete_read_batch(
+        task_id: str,
+        session_id: str,
+        batch_id: str,
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_agent_read_batch_service().complete(task_id, session_id, batch_id)
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Release a claimed read-only source batch after a disconnect.",
+        "Releases the read cursor without changing source text or terminology data.",
+    )
+    def agent_release_read_batch(
+        task_id: str,
+        session_id: str,
+        batch_id: str,
+    ) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_agent_read_batch_service().release(task_id, session_id, batch_id)
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Recover read-batch identifiers after a lost prepare or claim response.",
+        "Returns compact read-task state without source text.",
+    )
+    def agent_read_batch_status(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_session(session_id)
+        try:
+            return get_agent_read_batch_service().status(task_id, session_id)
+        except FileToolError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
     def _require_external_agent_session(session_id: str) -> None:
         record = AGENT_SESSION_REGISTRY.status(session_id)
         if not isinstance(record, dict) or record.get("state") != "registered":
@@ -996,6 +1179,30 @@ def _build_mcp_app(
             # update must never turn a successful batch operation into a retry.
             return
 
+    def _prepare_web_task_ledger_if_needed(task_id: str, session_id: str) -> Dict[str, Any] | None:
+        """Create the cache-backed ledger for a prewarmed Web external task."""
+        manager = getattr(ws_module, "task_manager", None)
+        if manager is None or getattr(manager, "task_id", None) != task_id:
+            return None
+        cache_path = getattr(manager, "external_agent_cache_path", None)
+        if not isinstance(cache_path, str) or not cache_path:
+            return None
+        batch_service = get_external_agent_batch_service()
+        try:
+            return batch_service.get_project(task_id, session_id)
+        except ExternalAgentBatchError as exc:
+            if exc.code != "TASK_NOT_FOUND":
+                raise
+        try:
+            prepared = batch_service.prepare_cache_project(
+                cache_path, task_id, session_id, "external_agent"
+            )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return prepared
+        except (ExternalAgentBatchError, ValueError) as exc:
+            code = getattr(exc, "code", "CACHE_MANIFEST_INVALID")
+            raise ValueError(f"{code}: {exc}") from exc
+
     @_mcp_tool(
         mcp,
         "Prepare a controlled external-Agent translation project.",
@@ -1009,9 +1216,27 @@ def _build_mcp_app(
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
-            result = get_external_agent_batch_service().prepare_project(
-                input_path, task_id, session_id, execution_mode
-            )
+            result = _prepare_web_task_ledger_if_needed(task_id, session_id)
+            if result is None:
+                result = get_external_agent_batch_service().prepare_project(
+                    input_path, task_id, session_id, execution_mode
+                )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Read the compact status and batch identifiers for an external-Agent task.",
+        "Use this recovery tool when the client lost the prepare or claim response. Full source items are returned only by agent_claim_batch.",
+    )
+    def agent_project_status(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        try:
+            result = _prepare_web_task_ledger_if_needed(task_id, session_id)
+            if result is None:
+                result = get_external_agent_batch_service().get_project(task_id, session_id)
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except ExternalAgentBatchError as exc:
@@ -1030,9 +1255,11 @@ def _build_mcp_app(
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
-            result = get_external_agent_batch_service().prepare_cache_project(
-                cache_path, task_id, session_id, execution_mode
-            )
+            result = _prepare_web_task_ledger_if_needed(task_id, session_id)
+            if result is None:
+                result = get_external_agent_batch_service().prepare_cache_project(
+                    cache_path, task_id, session_id, execution_mode
+                )
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except (ExternalAgentBatchError, ValueError) as exc:
@@ -1047,7 +1274,13 @@ def _build_mcp_app(
     def agent_claim_batch(task_id: str, session_id: str) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
+            _prepare_web_task_ledger_if_needed(task_id, session_id)
             result = get_external_agent_batch_service().claim_batch(task_id, session_id)
+            manager = getattr(ws_module, "task_manager", None)
+            if manager is not None and getattr(manager, "task_id", None) == task_id:
+                manager.update_external_agent_status(
+                    "running", task_id, "External Agent claimed a translation batch."
+                )
             _bind_external_agent_context(
                 session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
             )
@@ -1197,6 +1430,28 @@ def _build_mcp_app(
             leases.release(writer_lease_id, task_id, session_id)
             _bind_external_agent_context(session_id, task_id=task_id, batch_id=batch_id)
             result["ledger"] = ledger_result
+            if ledger_result.get("task", {}).get("status") == "completed":
+                try:
+                    exported = _finalize_external_agent_output(
+                        ws_module,
+                        task_id,
+                        cache_path,
+                    )
+                    if exported:
+                        result["export"] = exported
+                except Exception as exc:
+                    manager = getattr(ws_module, "task_manager", None)
+                    if manager is not None:
+                        manager.update_external_agent_status(
+                            "failed",
+                            task_id,
+                            f"Cache committed but final export failed: {exc}",
+                        )
+                    result["export"] = {
+                        "status": "failed",
+                        "error": str(exc),
+                        "cache_path": cache_path,
+                    }
             return result
         except ExternalAgentBatchWriterError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc

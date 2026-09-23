@@ -234,6 +234,22 @@ class ExternalAgentBatchService:
     def _project_view(state: Mapping[str, Any]) -> dict[str, Any]:
         submitted_batches = sum(x.get("status") in {"submitted", "committed"} for x in state["batches"])
         committed_batches = sum(x.get("status") == "committed" for x in state["batches"])
+        batch_summaries = [
+            {
+                "batch_id": item.get("batch_id"),
+                "index": item.get("index"),
+                "status": item.get("status"),
+                "revision": item.get("revision"),
+                "source_hash": item.get("source_hash"),
+                "item_count": len(item.get("items") or []),
+                "cache_revision": item.get("cache_revision"),
+            }
+            for item in state.get("batches", [])
+        ]
+        next_batch = next(
+            (item for item in batch_summaries if item.get("status") in {"pending", "claimed"}),
+            None,
+        )
         return {
             "schema": state["schema"], "task_id": state["task_id"], "execution_mode": state["execution_mode"],
             "source_hash": state["source_hash"], "source_size": state["source_size"], "revision": state["revision"],
@@ -244,6 +260,12 @@ class ExternalAgentBatchService:
             "submitted_batches": submitted_batches,
             "committed_batches": committed_batches,
             "completed_batches": committed_batches,
+            # Keep batch identifiers available immediately after prepare and
+            # through project_status. Source items remain on claim_batch so
+            # discovery responses stay small enough for LLM clients.
+            "batches": batch_summaries,
+            "batch_ids": [item["batch_id"] for item in batch_summaries if item.get("batch_id")],
+            "next_batch_id": next_batch.get("batch_id") if next_batch else None,
         }
 
     @staticmethod

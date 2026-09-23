@@ -109,8 +109,31 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 提交时只需传任务、批次和 writer lease；缓存路径与 staged 结果由 AiNiee 服务端绑定和读取。
 没有 writer lease、cache revision 或 opaque locator 时，结果只能停留在 staging，不能写入正式缓存。
 
-`agent_prepare_project` 只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式以及其他非 TXT 输入会被拒绝，并返回稳定错误码
-`STRUCTURED_FORMAT_REQUIRES_MCP_TASK`；不得把它们当作二进制文本切批，应通过任务目录中的格式感知 MCP 路由处理。
+`agent_prepare_project` 的返回值包含 `next_batch_id`、`batch_ids` 和不含正文的 `batches` 摘要；
+如果客户端丢失了准备或领取响应，可用 `agent_project_status` 恢复这些字段，再调用
+`agent_claim_batch` 获取该批次的正文。`agent_claim_batch` 的完整响应仍以 `batch.batch_id`
+为提交时的权威批次 ID。
+
+术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言，
+再用 `agent_read_file` 分段读取原文。每次最多返回 1000 行，响应中的 `next_start_line`
+用于继续读取。读取工具只提供受控文本，不会自动改写术语表；术语结果若要保存，必须另行
+使用明确的 glossary 写入操作。
+
+需要和翻译批次一样可靠领取时，使用 `agent_prepare_read_batches` →
+`agent_claim_read_batch`。每个读取批次最多 1000 行，并返回独立的 `batch_id`、
+`source_hash` 和任务 `revision`；客户端丢失响应时用 `agent_read_batch_status` 恢复批次 ID。
+处理完一批后调用 `agent_complete_read_batch`，再领取下一批；所有读取批次均为只读，
+不会直接写入术语表。
+如果 Agent 在一批处理中断，调用 `agent_release_read_batch` 后可以重新领取该批次。
+
+对于由 `POST /api/task/external-agent-mode` 创建的全新 EPUB/DOCX 等结构化任务，Web
+端会先执行无 API 的解析预热并生成受控 `AinieeCacheData.json`，随后首次调用
+`agent_prepare_project`、`agent_project_status` 或 `agent_claim_batch` 会自动建立缓存账本，
+不再需要先跑一次普通翻译。全部缓存批次提交并写回后，MCP 会自动触发最终格式导出；提交接口
+返回的 `export` 字段包含输出目录。若只完成 staging 或没有 writer lease，则不会导出。
+
+直接使用 `agent_prepare_project` 创建新账本时仍只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式会返回稳定错误码
+`STRUCTURED_FORMAT_REQUIRES_MCP_TASK`；但由 Web 的 `external-agent-mode` 任务预热生成的结构化缓存，会由同名工具自动恢复账本（见上文），不需要把结构化文件当作二进制文本切批。
 
 会话断线后不要复用过期的 `session_id`。先用新的 Agent 实例调用 `agent_register`，再调用
 `agent_resume_task(task_id, session_id, previous_session_id)`。旧会话必须已经断开或过期；任务账本

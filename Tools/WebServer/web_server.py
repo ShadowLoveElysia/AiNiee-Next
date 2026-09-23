@@ -184,6 +184,9 @@ class TaskManager:
             self.internal_api_url = "http://127.0.0.1" # Worker callback URL（启动后会带端口）
             self.comparison_seq = 0
             self.comparison_updated_at = 0.0
+            self.external_agent_cache_path: Optional[str] = None
+            self.external_agent_input_path: Optional[str] = None
+            self.external_agent_output_path: Optional[str] = None
 
             # Use a separate thread to monitor the process output
             self.monitor_thread: Optional[threading.Thread] = None
@@ -242,6 +245,9 @@ class TaskManager:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "exit_code": self.exit_code,
+            "external_agent_cache_path": self.external_agent_cache_path,
+            "external_agent_input_path": self.external_agent_input_path,
+            "external_agent_output_path": self.external_agent_output_path,
         }
 
     def _get_initial_stats(self) -> Dict[str, Any]:
@@ -376,10 +382,33 @@ class TaskManager:
                 return None
 
             if spec.execution_mode == "external_agent":
+                self.external_agent_input_path = spec.input_path
+                self.external_agent_output_path = self._external_agent_output_path(spec)
+                self.external_agent_cache_path = None
+                if spec.input_path and os.path.isfile(spec.input_path):
+                    try:
+                        self._prepare_external_agent_cache(spec)
+                    except Exception as exc:
+                        self.status = "error"
+                        self.lifecycle_status = "failed"
+                        self.stats["status"] = "error"
+                        self.stats["execution_mode"] = "external_agent"
+                        self.stats["external_agent_bootstrap_status"] = "failed"
+                        self.push_log(f"External-Agent cache preparation failed: {exc}", "error")
+                        self.finished_at = self._timestamp()
+                        return self.task_id
+                else:
+                    self.stats["external_agent_bootstrap_status"] = "source_not_found"
+                    self.push_log(
+                        "External-Agent cache preparation was skipped because the source path is not a local file.",
+                        "warning",
+                    )
                 self.status = "waiting_for_agent"
                 self.lifecycle_status = "waiting_for_agent"
                 self.stats["status"] = "waiting_for_agent"
                 self.stats["execution_mode"] = "external_agent"
+                self.stats["external_agent_cache_path"] = self.external_agent_cache_path
+                self.stats["external_agent_output_path"] = self.external_agent_output_path
                 self.push_log("Task is waiting for an external Agent.", "system")
                 return self.task_id
 
@@ -446,6 +475,7 @@ class TaskManager:
                 self.monitor_thread.start()
 
                 return self.task_id
+
             except Exception as e:
                 failed_process = self.process
                 if failed_process is not None:
@@ -465,6 +495,63 @@ class TaskManager:
                 self.push_log(f"Failed to start process: {e}", "error")
                 self.finished_at = self._timestamp()
                 return None
+
+    @staticmethod
+    def _external_agent_output_path(spec: TaskSpec) -> str:
+        config = _load_active_config_payload()
+        configured = spec.output_path or config.get("label_output_path")
+        if configured:
+            return os.path.abspath(str(configured))
+        source = os.path.abspath(str(spec.input_path or ""))
+        parent = os.path.dirname(source)
+        stem = os.path.splitext(os.path.basename(source))[0] or "AiNiee_Task"
+        return os.path.join(parent, f"{stem}_AiNiee_Output")
+
+    def _prepare_external_agent_cache(self, spec: TaskSpec) -> None:
+        """Parse a new external-Agent input without making any API request."""
+        from ModuleFolders.Domain.FileReader.FileReader import FileReader
+
+        # Use a task-local manager so prewarming cannot replace a cache that
+        # the Web UI has loaded for another operation.
+        from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
+        cache_manager = CacheManager()
+        config = _load_active_config_payload()
+        project_type = spec.project_type or config.get("translation_project", "AutoType")
+        exclude_rules = config.get("label_input_exclude_rule", config.get("exclude_rule_str", "")) or ""
+        # MCP/stdio callers must stay protocol-clean on Windows consoles whose
+        # legacy code page cannot encode Rich progress glyphs.
+        from ModuleFolders.Domain.FileReader import ReaderUtil
+        previous_suppression = getattr(ReaderUtil, "_SUPPRESS_OUTPUT", False)
+        ReaderUtil._SUPPRESS_OUTPUT = True
+        try:
+            project = FileReader().read_files(project_type, spec.input_path, exclude_rules)
+        finally:
+            ReaderUtil._SUPPRESS_OUTPUT = previous_suppression
+        if not project or not getattr(project, "files", None):
+            raise RuntimeError("no readable source items were found")
+        output_path = self.external_agent_output_path or self._external_agent_output_path(spec)
+        # Keep the mutable cache inside AiNiee's controlled project root even
+        # when the requested final output directory is an external user path.
+        # The final exporter may still write to ``output_path`` after commit.
+        cache_output_path = os.path.join(
+            PROJECT_ROOT,
+            "Resource",
+            "automation_progress",
+            "external_agent_tasks",
+            str(self.task_id),
+        )
+        os.makedirs(cache_output_path, exist_ok=True)
+        cache_manager.load_from_project(project)
+        cache_manager.save_to_file_require_path = cache_output_path
+        cache_manager.save_to_file()
+        self.external_agent_output_path = output_path
+        self.external_agent_cache_path = os.path.join(cache_output_path, "cache", "AinieeCacheData.json")
+        self.stats["external_agent_bootstrap_status"] = "ready"
+        self.stats["external_agent_total_items"] = cache_manager.get_item_count()
+        self.push_log(
+            f"External-Agent source parsed; cache ready with {cache_manager.get_item_count()} items.",
+            "system",
+        )
 
     def _process_monitor(self, process=None):
         """Monitors the subprocess, which now provides correctly decoded strings."""
@@ -3248,6 +3335,15 @@ async def run_task(payload: TaskPayload):
         "task_id": task_id,
         "status": task_manager.lifecycle_status,
         "running": task_manager._task_contract()["running"],
+        **(
+            {
+                "external_agent_cache_path": task_manager.external_agent_cache_path,
+                "external_agent_output_path": task_manager.external_agent_output_path,
+                "external_agent_bootstrap_status": task_manager.stats.get("external_agent_bootstrap_status"),
+            }
+            if spec.execution_mode == "external_agent"
+            else {}
+        ),
     }
 
 
