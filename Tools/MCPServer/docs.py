@@ -117,7 +117,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_detect_file_language",
-        "purpose": "Detect the dominant language and ranked language profile for a selected file using a capped sample.",
+        "purpose": "Detect the dominant language across the entire selected file; returns statistics without source text and has no 1000-line scanning limit.",
     },
     {
         "tool_name": "agent_prepare_read_batches",

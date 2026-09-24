@@ -47,7 +47,7 @@ from Tools.MCPServer.security import (
 )
 from Tools.MCPServer.file_tools import (
     FileToolError,
-    detect_file_language,
+    detect_file_language_isolated,
     get_agent_read_batch_service,
     read_file_lines,
 )
@@ -1056,16 +1056,17 @@ def _build_mcp_app(
         "Detect the main language of a selected file.",
         (
             "Returns a ranked language profile and the dominant ISO language code. "
-            "The sample is capped at 1000 logical source lines and the path is subject "
-            "to the same MCP workspace boundary as agent_read_file."
+            "Scans the entire file and returns statistics without source text. "
+            "The 1000-line transfer limit applies only to source-reading batches, "
+            "not language detection. Paths follow the agent_read_file workspace boundary."
         ),
     )
-    def agent_detect_file_language(
+    async def agent_detect_file_language(
         path: str,
         project_type: str = "auto",
     ) -> Dict[str, Any]:
         try:
-            return detect_file_language(path, project_type=project_type)
+            return await detect_file_language_isolated(path, project_type=project_type)
         except FileToolError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
 

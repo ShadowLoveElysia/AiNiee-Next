@@ -225,7 +225,7 @@
     "choice_external_agent_onboarding_status_accepted": "已接受",
     "external_agent_onboarding_title": "外部 Agent / MCP 接入",
     "external_agent_onboarding_intro": "AiNiee 可以將術語分析、翻譯判斷和可選校對交給您使用的外部 Agent（例如 WorkBuddy、千問辦公或豆包電腦版）。AiNiee 仍負責專案狀態、快取校驗和最終輸出。必要的原文片段會傳送給外部 Agent，對方平台可能收取費用或消耗點數。",
-    "external_agent_onboarding_confirm": "請選擇操作方式：1）使用智慧助手  2）自行操作 AiNiee",
+    "external_agent_onboarding_confirm": "請選擇操作方式：1）使用智慧助手（Agent）  2）傳統模式（純 API）",
     "external_agent_onboarding_prompt_title": "請複製到外部 Agent",
     "external_agent_prompt_copy_hint": "提示詞將在稍後自動開啟的暫存文字檔中顯示，請從檔案複製到 Codex、Claude Code、OpenCode、WorkBuddy、千問辦公、豆包電腦版或其他支援 MCP 的 Agent 用戶端。",
     "external_agent_prompt_open_failed": "無法開啟暫存提示詞檔案。",

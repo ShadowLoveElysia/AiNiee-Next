@@ -22,6 +22,8 @@ REQUIRED_COMPONENT_FILES = (
     "runtime.py",
     "security.py",
     "server.py",
+    "file_tools.py",
+    "language_worker.py",
 )
 
 

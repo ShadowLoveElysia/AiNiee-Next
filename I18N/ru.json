@@ -225,7 +225,7 @@
     "choice_external_agent_onboarding_status_accepted": "Принято",
     "external_agent_onboarding_title": "Подключение внешнего Agent / MCP",
     "external_agent_onboarding_intro": "AiNiee может передать анализ терминологии, переводческие решения и необязательную вычитку внешнему Agent, например WorkBuddy, Qwen Office или Doubao Desktop. AiNiee продолжит управлять состоянием проекта, проверкой кэша и итоговым выводом. Необходимые фрагменты оригинала могут быть отправлены внешнему Agent, а его платформа может взимать плату или кредиты.",
-    "external_agent_onboarding_confirm": "Выберите способ работы: 1) использовать интеллектуального помощника  2) работать с AiNiee вручную",
+    "external_agent_onboarding_confirm": "Выберите способ работы: 1) интеллектуальный помощник (Agent)  2) обычный режим (только API)",
     "external_agent_onboarding_prompt_title": "Скопируйте во внешний Agent",
     "external_agent_prompt_copy_hint": "Вскоре подсказка откроется во временном текстовом файле. Скопируйте её из этого файла в Codex, Claude Code, OpenCode, WorkBuddy, Qwen Office, Doubao Desktop или другой Agent-клиент с поддержкой MCP.",
     "external_agent_prompt_open_failed": "Не удалось открыть временный файл подсказки.",

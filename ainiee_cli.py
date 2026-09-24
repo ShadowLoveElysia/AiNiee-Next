@@ -65,6 +65,7 @@ from ModuleFolders.Infrastructure.TaskConfig.PolishingMode import (
 from ModuleFolders.Service.Agent.ExternalAgentOnboarding import (
     apply_onboarding_decision,
     external_agent_prompt,
+    ONBOARDING_ACCEPTED,
     ONBOARDING_PENDING,
 )
 from ModuleFolders.Infrastructure.TaskContract import (
@@ -743,28 +744,29 @@ class CLIMenu:
         self.display_banner()
         console.print(Panel("[bold cyan]Welcome to AiNiee-Next! Let's run a quick setup wizard.[/bold cyan]"))
         
-        # 1. UI Language
         self.first_time_lang_setup()
-        
-        # 2. Translation Languages
-        console.print(f"\n[bold]1. {i18n.get('setting_src_lang')}/{i18n.get('setting_tgt_lang')}[/bold]")
-        self.config["source_language"] = Prompt.ask(i18n.get('prompt_source_lang'), default="auto")
-        self.config["target_language"] = Prompt.ask(i18n.get('prompt_target_lang'), default="Chinese")
-        
-        # 3. API Platform
-        console.print(f"\n[bold]2. {i18n.get('menu_api_settings')}[/bold]")
-        console.print(f"1. {i18n.get('menu_api_online')}\n2. {i18n.get('menu_api_local')}")
-        api_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["1", "2"], default=1)
-        self.api_manager.select_api_menu(online=(api_choice == 1))
+        use_agent = self._maybe_offer_external_agent_onboarding(open_prompt=False)
 
-        # 4. Validation
-        console.print(f"\n[bold]3. {i18n.get('menu_api_validate')}[/bold]")
-        self.api_manager.validate_api()
-        
-        # 5. Save and complete
+        if not use_agent:
+            console.print(f"\n[bold]1. {i18n.get('setting_src_lang')}/{i18n.get('setting_tgt_lang')}[/bold]")
+            self.config["source_language"] = Prompt.ask(i18n.get('prompt_source_lang'), default="auto")
+            self.config["target_language"] = Prompt.ask(i18n.get('prompt_target_lang'), default="Chinese")
+
+            console.print(f"\n[bold]2. {i18n.get('menu_api_settings')}[/bold]")
+            console.print(f"1. {i18n.get('menu_api_online')}\n2. {i18n.get('menu_api_local')}")
+            api_choice = IntPrompt.ask(i18n.get('prompt_select'), choices=["1", "2"], default=1)
+            self.api_manager.select_api_menu(online=(api_choice == 1))
+
+            console.print(f"\n[bold]3. {i18n.get('menu_api_validate')}[/bold]")
+            self.api_manager.validate_api()
+
         self.root_config["wizard_completed"] = True
+        self.config["wizard_completed"] = True
         self.save_config(save_root=True)
-        self.save_config() # Save the profile as well
+        self.save_config()
+
+        if use_agent:
+            self._open_external_agent_prompt()
         
         console.print(f"\n[bold green]✓ {i18n.get('msg_saved')} Wizard complete! Entering the main menu...[/bold green]")
         time.sleep(2)
@@ -781,9 +783,8 @@ class CLIMenu:
 
         if not self.root_config.get("wizard_completed"):
             self.run_wizard()
-
-        # Offer the Agent/manual choice as part of the first-run flow.
-        self._maybe_offer_external_agent_onboarding()
+        else:
+            self._maybe_offer_external_agent_onboarding()
 
         self._maybe_start_background_prewarm()
 
@@ -808,16 +809,16 @@ class CLIMenu:
                 continue
             return
 
-    def _maybe_offer_external_agent_onboarding(self):
-        """Ask once whether the user wants external Agent/MCP onboarding."""
-        if not self.root_config.get("external_agent_onboarding", True):
-            return
+    def _maybe_offer_external_agent_onboarding(self, *, open_prompt=True) -> bool:
+        """Ask once and return the saved onboarding choice without changing task mode."""
         status = self.root_config.get(
             "external_agent_onboarding_status",
             self.config.get("external_agent_onboarding_status", ONBOARDING_PENDING),
         )
         if status != ONBOARDING_PENDING:
-            return
+            return status == ONBOARDING_ACCEPTED
+        if not self.root_config.get("external_agent_onboarding", True):
+            return False
 
         self.display_banner()
         console.print(Panel(
@@ -839,9 +840,11 @@ class CLIMenu:
         ]
         self.save_config(save_root=True)
         if accepted:
-            self._open_external_agent_prompt()
+            if open_prompt:
+                self._open_external_agent_prompt()
         else:
             console.print(f"[dim]{i18n.get('external_agent_onboarding_declined')}[/dim]")
+        return accepted
 
     def _open_external_agent_prompt(self):
         """Open the localized handoff in a disposable text editor window."""

@@ -14,6 +14,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MAX_READ_LINES = 1000
+LANGUAGE_SCAN_TIMEOUT_SECONDS = 180
 READ_SCHEMA = "ainiee.external_agent.read.v1"
 
 
@@ -96,10 +97,15 @@ def _source_items(path: Path, project_type: str = "auto") -> tuple[list[str], di
                     "language_stats": _language_stats(cache),
                 },
             )
-    except Exception:
-        # The MCP read endpoint remains useful for plain text even when an
-        # optional structured-format reader is unavailable.
-        pass
+        if path.suffix.lower() not in {".txt", ".md"}:
+            return [], {"project_type": project_type or "auto", "language_stats": []}
+    except Exception as exc:
+        # Never reinterpret a failed EPUB/DOCX parser's ZIP bytes as text.
+        if path.suffix.lower() not in {".txt", ".md"}:
+            raise FileToolError(
+                "The source reader failed; check the format and installed reader dependencies.",
+                "FILE_PARSE_FAILED",
+            ) from exc
     return _raw_lines(path), {"project_type": project_type or "auto", "language_stats": []}
 
 
@@ -180,10 +186,71 @@ def read_file_lines(
 
 
 def detect_file_language(path: Any, *, project_type: str = "auto") -> dict[str, Any]:
-    result = read_file_lines(path, start_line=0, max_lines=MAX_READ_LINES, project_type=project_type)
-    result.pop("lines", None)
-    result["sample_lines"] = min(MAX_READ_LINES, result["total_lines"])
-    return result
+    """Detect language across the entire file, independently of transfer limits."""
+    resolved = resolve_file_path(path)
+    lines, metadata = _source_items(resolved, project_type)
+    language_stats = metadata.get("language_stats") or _fallback_language(lines)
+    return {
+        "path": str(resolved),
+        "project_type": metadata.get("project_type", project_type or "auto"),
+        "scan_scope": "full_file",
+        "total_lines": len(lines),
+        "scanned_lines": len(lines),
+        "language": language_stats[0]["language"] if language_stats else "un",
+        "language_stats": language_stats,
+    }
+
+
+async def detect_file_language_isolated(path: str, *, project_type: str = "auto") -> dict[str, Any]:
+    """Keep native reader imports away from the live MCP stdio reader thread."""
+    import asyncio
+    import sys
+
+    resolved = resolve_file_path(path)
+    request = json.dumps({"path": str(resolved), "project_type": project_type}).encode("utf-8")
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(Path(__file__).with_name("language_worker.py")),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+        )
+    except OSError as exc:
+        raise FileToolError("Unable to start the language scan worker.", "LANGUAGE_SCAN_START_FAILED") from exc
+    try:
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(request), timeout=LANGUAGE_SCAN_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError as exc:
+        raise FileToolError(
+            f"Full-file language detection exceeded {LANGUAGE_SCAN_TIMEOUT_SECONDS} seconds.",
+            "LANGUAGE_SCAN_TIMEOUT",
+        ) from exc
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+    if process.returncode != 0:
+        raise FileToolError("The language scan worker exited unexpectedly.", "LANGUAGE_SCAN_FAILED")
+    try:
+        payload = json.loads(stdout)
+        if payload["ok"] is True and isinstance(payload["result"], dict):
+            return payload["result"]
+        if payload["ok"] is False:
+            raise FileToolError(payload["error"], payload["error_code"])
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, FileToolError):
+            raise
+        raise FileToolError("Invalid language scan worker response.", "LANGUAGE_SCAN_FAILED") from exc
+    raise FileToolError("Invalid language scan worker response.", "LANGUAGE_SCAN_FAILED")
 
 
 class AgentReadBatchService:
@@ -383,6 +450,7 @@ __all__ = [
     "FileToolError",
     "MAX_READ_LINES",
     "detect_file_language",
+    "detect_file_language_isolated",
     "read_file_lines",
     "resolve_file_path",
     "AgentReadBatchService",

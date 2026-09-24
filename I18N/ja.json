@@ -869,7 +869,7 @@
     "choice_external_agent_onboarding_status_accepted": "承諾",
     "external_agent_onboarding_title": "外部 Agent / MCP 接続",
     "external_agent_onboarding_intro": "AiNiee は用語分析、翻訳判断、任意の校正を WorkBuddy、Qwen Office、Doubao Desktop などの外部 Agent に委任できます。プロジェクト状態、キャッシュ検証、最終出力は AiNiee が管理します。必要な原文の一部が外部 Agent に送信され、料金やクレジットが発生する場合があります。",
-    "external_agent_onboarding_confirm": "操作方法を選択してください：1) スマートアシスタントを使う  2) AiNieeを自分で操作する",
+    "external_agent_onboarding_confirm": "操作方法を選択してください：1) スマートアシスタント（Agent）  2) 従来モード（API のみ）",
     "external_agent_onboarding_prompt_title": "外部 Agent にコピー",
     "external_agent_prompt_copy_hint": "プロンプトはまもなく一時テキストファイルで開きます。そのファイルからコピーして、Codex、Claude Code、OpenCode、WorkBuddy、Qwen Office、Doubao Desktop など MCP 対応の Agent クライアントに貼り付けてください。",
     "external_agent_prompt_open_failed": "一時プロンプトファイルを開けませんでした。",

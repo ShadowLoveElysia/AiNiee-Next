@@ -225,7 +225,7 @@
     "choice_external_agent_onboarding_status_accepted": "Aceptado",
     "external_agent_onboarding_title": "Conexión de Agent externo / MCP",
     "external_agent_onboarding_intro": "AiNiee puede delegar el análisis de terminología, las decisiones de traducción y la corrección opcional a un Agent externo como WorkBuddy, Qwen Office o Doubao Desktop. AiNiee seguirá gestionando el estado del proyecto, la validación de caché y la salida final. Los fragmentos necesarios del original pueden enviarse al Agent externo y su plataforma puede cobrar créditos o tarifas.",
-    "external_agent_onboarding_confirm": "Elige cómo trabajar: 1) usar un asistente inteligente  2) manejar AiNiee tú mismo",
+    "external_agent_onboarding_confirm": "Elige cómo trabajar: 1) asistente inteligente (Agent)  2) modo tradicional (solo API)",
     "external_agent_onboarding_prompt_title": "Copia esto en tu Agent externo",
     "external_agent_prompt_copy_hint": "El prompt se abrirá en breve en un archivo de texto temporal. Cópialo desde ese archivo en Codex, Claude Code, OpenCode, WorkBuddy, Qwen Office, Doubao Desktop u otro cliente Agent compatible con MCP.",
     "external_agent_prompt_open_failed": "No se pudo abrir el archivo temporal del prompt.",

@@ -84,10 +84,13 @@ If the program says that the Web build package is missing, you can enter `0` to 
 On the first run, AiNiee-Next may open a quick setup wizard. For a basic DeepSeek setup, use this order:
 
 1. Interface language: choose Simplified Chinese, English, or your preferred language.
-2. Source language: use `auto` if you are unsure, or choose the actual source language.
-3. Target language: use `Chinese` if you want Simplified Chinese output.
-4. API type: choose **Online API preset**.
-5. Provider preset: choose **DeepSeek**.
+2. Operation mode: choose **2. Traditional mode (API only)** for this tutorial.
+3. Source language: use `auto` if you are unsure, or choose the actual source language.
+4. Target language: use `Chinese` if you want Simplified Chinese output.
+5. API type: choose **Online API preset**.
+6. Provider preset: choose **DeepSeek**.
+
+Choosing **1. Smart assistant (Agent)** opens the external Agent connection guide and skips translation language setup, API selection, and API validation. The assistant later identifies the source language from your file and confirms the target language.
 
 After selecting DeepSeek, the wizard will ask for API information.
 

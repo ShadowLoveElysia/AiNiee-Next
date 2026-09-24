@@ -114,7 +114,12 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 `agent_claim_batch` 获取该批次的正文。`agent_claim_batch` 的完整响应仍以 `batch.batch_id`
 为提交时的权威批次 ID。
 
-术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言，
+术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言。
+语言识别扫描全本，返回 `scan_scope="full_file"`、`scanned_lines`、`total_lines` 和语言统计，
+不返回正文，也不受 1000 行批次传输上限限制。
+扫描在独立进程内执行，避免 Windows 原生读取依赖的导入阻塞 MCP stdio 消息处理；
+超过 180 秒返回 `LANGUAGE_SCAN_TIMEOUT`，取消调用时会清理该扫描进程。
+结构化文件解析失败会返回 `FILE_PARSE_FAILED`，不会将 EPUB/DOCX 压缩包当纯文本猜测语言。
 再用 `agent_read_file` 分段读取原文。每次最多返回 1000 行，响应中的 `next_start_line`
 用于继续读取。读取工具只提供受控文本，不会自动改写术语表；术语结果若要保存，必须另行
 使用明确的 glossary 写入操作。
