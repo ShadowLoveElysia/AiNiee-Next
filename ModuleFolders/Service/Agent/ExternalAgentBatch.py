@@ -145,7 +145,15 @@ class ExternalAgentBatchService:
     def _batch_hash(items: Sequence[Mapping[str, Any]]) -> str:
         return _sha256(_canonical([{"index": int(x["index"]), "source": str(x.get("source", x.get("source_text", "")))} for x in items]))
 
-    def prepare_project(self, input_path: str | Path, task_id: str, session_id: str, execution_mode: str) -> dict[str, Any]:
+    def prepare_project(
+        self,
+        input_path: str | Path,
+        task_id: str,
+        session_id: str,
+        execution_mode: str,
+        *,
+        output_path: str | Path | None = None,
+    ) -> dict[str, Any]:
         task_id = _safe_id(task_id, "task_id")
         session_id = _safe_id(session_id, "session_id")
         if execution_mode != "external_agent":
@@ -171,6 +179,7 @@ class ExternalAgentBatchService:
             state = {
                 "schema": SCHEMA, "task_id": task_id, "session_id": session_id,
                 "execution_mode": execution_mode, "input_path": str(path), "source_hash": _sha256(raw),
+                "output_path": str(Path(output_path).expanduser().resolve()) if output_path else str(path.parent / f"{path.stem}_AiNiee_Output"),
                 "source_size": len(raw), "revision": 1, "status": "ready" if batches else "completed",
                 "batch_size": self.batch_size, "total_batches": len(batches), "created_at": now,
                 "updated_at": now, "batches": batches,
@@ -178,7 +187,16 @@ class ExternalAgentBatchService:
             self._write(state)
             return self._project_view(state)
 
-    def prepare_cache_project(self, cache_path: str | Path, task_id: str, session_id: str, execution_mode: str) -> dict[str, Any]:
+    def prepare_cache_project(
+        self,
+        cache_path: str | Path,
+        task_id: str,
+        session_id: str,
+        execution_mode: str,
+        *,
+        input_path: str | Path | None = None,
+        output_path: str | Path | None = None,
+    ) -> dict[str, Any]:
         """Prepare batches from a host-generated cache manifest.
 
         Cache locators remain opaque to the Agent; the manifest service owns
@@ -212,6 +230,8 @@ class ExternalAgentBatchService:
                 "schema": SCHEMA, "task_id": task_id, "session_id": session_id,
                 "execution_mode": execution_mode, "cache_path_name": manifest["cache_path_name"],
                 "cache_path": str(Path(cache_path).expanduser().resolve()),
+                "input_path": str(Path(input_path).expanduser().resolve()) if input_path else None,
+                "output_path": str(Path(output_path).expanduser().resolve()) if output_path else None,
                 "cache_revision": manifest["cache_revision"], "manifest_hash": manifest["manifest_hash"],
                 "source_hash": manifest["manifest_hash"], "source_size": manifest["item_count"],
                 "revision": 1, "status": "ready" if batches else "completed",
@@ -229,6 +249,23 @@ class ExternalAgentBatchService:
             if not isinstance(cache_path, str) or not cache_path:
                 raise ExternalAgentBatchError("task is not cache-backed", "CACHE_MANIFEST_REQUIRED")
             return cache_path
+
+    def export_metadata(self, task_id: str, session_id: str) -> dict[str, Any]:
+        """Return persisted paths and completion state for a manual export."""
+        with self._lock:
+            state = self._read(task_id)
+            self._validate_session(state, session_id)
+            return {
+                "task_id": state["task_id"],
+                "status": state.get("status"),
+                "input_path": state.get("input_path"),
+                "output_path": state.get("output_path"),
+                "cache_path": state.get("cache_path"),
+                "batches": [
+                    {"batch_id": item.get("batch_id"), "status": item.get("status")}
+                    for item in state.get("batches", [])
+                ],
+            }
 
     @staticmethod
     def _project_view(state: Mapping[str, Any]) -> dict[str, Any]:

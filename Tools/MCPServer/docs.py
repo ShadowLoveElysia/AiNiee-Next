@@ -175,6 +175,10 @@ AGENT_TOOL_DESCRIPTIONS = [
         "tool_name": "agent_commit_cache_batch",
         "purpose": "Commit a staged cache-backed batch through the guarded deterministic writer.",
     },
+    {
+        "tool_name": "agent_export_task",
+        "purpose": "Manually export a task after all committed batches when automatic export did not run; input_path/output_path can repair missing legacy metadata.",
+    },
 ]
 
 EXACT_ROUTE_PURPOSES = {

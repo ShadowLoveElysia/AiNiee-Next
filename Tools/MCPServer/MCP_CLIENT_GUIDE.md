@@ -137,6 +137,12 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 不再需要先跑一次普通翻译。全部缓存批次提交并写回后，MCP 会自动触发最终格式导出；提交接口
 返回的 `export` 字段包含输出目录。若只完成 staging 或没有 writer lease，则不会导出。
 
+如果任务已经显示全部批次 `committed`，但自动导出没有发生（例如 WebServer 重启、任务状态回到
+`idle` 或自动导出阶段中断），调用 `agent_export_task(task_id, session_id)` 手动导出。旧账本
+若没有保存输入路径，可额外传入 `input_path`；需要改输出目录时传入 `output_path`。该工具
+只读取已写回的缓存并调用 AiNiee 的格式感知 `FileOutputer`，不会重新翻译；成功时返回
+`output_path` 和 `artifacts`，未全部 committed 时返回 `BATCH_COMMIT_REQUIRED`。
+
 直接使用 `agent_prepare_project` 创建新账本时仍只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式会返回稳定错误码
 `STRUCTURED_FORMAT_REQUIRES_MCP_TASK`；但由 Web 的 `external-agent-mode` 任务预热生成的结构化缓存，会由同名工具自动恢复账本（见上文），不需要把结构化文件当作二进制文本切批。
 

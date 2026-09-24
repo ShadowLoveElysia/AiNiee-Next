@@ -829,6 +829,78 @@ def _finalize_external_agent_output(ws_module: Any, task_id: str, cache_path: st
     }
 
 
+def _export_external_agent_task(
+    task_id: str,
+    session_id: str,
+    *,
+    input_path: str | None = None,
+    output_path: str | None = None,
+) -> Dict[str, Any]:
+    """Export a completed cache-backed task without relying on Web process state."""
+    batch_service = get_external_agent_batch_service()
+    metadata = batch_service.export_metadata(task_id, session_id)
+    if not metadata.get("cache_path"):
+        raise ExternalAgentBatchError("task is not cache-backed", "CACHE_MANIFEST_REQUIRED")
+    batches = metadata.get("batches") or []
+    if not batches or any(item.get("status") != "committed" for item in batches):
+        raise ExternalAgentBatchError(
+            "all translation batches must be committed before export",
+            "BATCH_COMMIT_REQUIRED",
+        )
+    input_path = input_path or metadata.get("input_path")
+    selected_output = output_path or metadata.get("output_path")
+    if not input_path or not selected_output:
+        raise ExternalAgentBatchError(
+            "export requires the persisted input_path and output_path",
+            "EXPORT_PATHS_REQUIRED",
+        )
+    input_path = str(Path(input_path).expanduser().resolve(strict=True))
+    selected_output = str(Path(selected_output).expanduser().resolve())
+    cache_path = str(Path(metadata["cache_path"]).expanduser().resolve(strict=True))
+    if Path(input_path).resolve() == Path(selected_output).resolve():
+        raise ExternalAgentBatchError("output_path must differ from input_path", "EXPORT_PATH_CONFLICT")
+
+    from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
+    from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+
+    try:
+        from Tools.WebServer.web_server import _load_active_config_payload
+
+        config = _load_active_config_payload()
+    except Exception:
+        config = {}
+    cache_manager = get_external_agent_batch_service()
+    from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
+
+    loaded_cache = CacheManager()
+    loaded_cache.load_from_file(str(Path(cache_path).parent.parent), interactive_recovery=False)
+    task_config = TaskConfig()
+    task_config.initialize(config)
+    output_config = {
+        "translated_suffix": config.get("output_filename_suffix", "_translated"),
+        "bilingual_suffix": "_bilingual",
+        "bilingual_order": config.get("bilingual_text_order", "source_first"),
+        "enable_bilingual_output": config.get("enable_bilingual_output", False),
+        "epub_layout_mode": config.get("epub_layout_mode", "off"),
+        "sync_metadata_title": config.get("sync_output_metadata_title", False),
+    }
+    artifacts = FileOutputer().output_translated_content(
+        loaded_cache.project,
+        selected_output,
+        input_path,
+        output_config,
+        task_config,
+    )
+    return {
+        "status": "exported",
+        "task_id": task_id,
+        "input_path": input_path,
+        "output_path": selected_output,
+        "cache_path": cache_path,
+        "artifacts": [str(item[0]) for item in (artifacts or [])],
+    }
+
+
 def _build_mcp_app(
     api: AiNieeAPIClient,
     ws_module,
@@ -1196,7 +1268,12 @@ def _build_mcp_app(
                 raise
         try:
             prepared = batch_service.prepare_cache_project(
-                cache_path, task_id, session_id, "external_agent"
+                cache_path,
+                task_id,
+                session_id,
+                "external_agent",
+                input_path=getattr(manager, "external_agent_input_path", None),
+                output_path=getattr(manager, "external_agent_output_path", None),
             )
             _bind_external_agent_context(session_id, task_id=task_id)
             return prepared
@@ -1220,7 +1297,10 @@ def _build_mcp_app(
             result = _prepare_web_task_ledger_if_needed(task_id, session_id)
             if result is None:
                 result = get_external_agent_batch_service().prepare_project(
-                    input_path, task_id, session_id, execution_mode
+                    input_path,
+                    task_id,
+                    session_id,
+                    execution_mode,
                 )
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
@@ -1259,12 +1339,45 @@ def _build_mcp_app(
             result = _prepare_web_task_ledger_if_needed(task_id, session_id)
             if result is None:
                 result = get_external_agent_batch_service().prepare_cache_project(
-                    cache_path, task_id, session_id, execution_mode
+                    cache_path,
+                    task_id,
+                    session_id,
+                    execution_mode,
                 )
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except (ExternalAgentBatchError, ValueError) as exc:
             code = getattr(exc, "code", "CACHE_MANIFEST_INVALID")
+            raise ValueError(f"{code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Export a completed external-Agent task from its committed cache.",
+        (
+            "Use this when all batches are committed but automatic export did not run, "
+            "for example after a WebServer restart or task status reset. It never calls "
+            "an API or translates text; it only loads the committed cache and writes the "
+            "format-aware final output through AiNiee's FileOutputer."
+        ),
+    )
+    def agent_export_task(
+        task_id: str,
+        session_id: str,
+        input_path: Optional[str] = None,
+        output_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        try:
+            result = _export_external_agent_task(
+                task_id,
+                session_id,
+                input_path=input_path,
+                output_path=output_path,
+            )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
+        except (ExternalAgentBatchError, ExternalAgentBatchWriterError, OSError, ValueError) as exc:
+            code = getattr(exc, "code", "EXPORT_FAILED")
             raise ValueError(f"{code}: {exc}") from exc
 
     @_mcp_tool(
