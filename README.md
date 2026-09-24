@@ -14,6 +14,37 @@
 
 项目以 CLI/TUI 为主要操作界面，同时提供 Web 控制面板、任务队列、插件系统和 MCP 服务，适合个人翻译、长篇内容处理和需要长期挂机的批量任务。
 
+[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 下载默认分支当前最新提交的完整源码副本。下载后先解压，Windows 用户进入解压后的项目目录，依次运行 `prepare.bat` 和 `Launch.bat`。
+
+<a id="agent-mode"></a>
+
+## 完全新手推荐：使用外部 Agent 模式
+
+如果您是完全新手，或赶时间、希望尽快开始翻译，建议选择 **使用智能助手（Agent）**。可以使用 WorkBuddy、千问办公、豆包电脑版等支持 MCP 的标准 Agent 客户端／框架，让智能助手通过 AiNiee 处理文件，无需先走完传统 API 配置向导。
+
+您可以利用第三方 Agent 平台提供的 **免费** 额度进行翻译；是否提供免费额度、额度大小和适用模型，以该平台当前规则及您的账号为准。
+
+1. 按下方[快速开始](#快速开始)准备环境并启动 AiNiee-Next。
+2. 首次进入时先选择界面语言，再选择 `1. 使用智能助手（Agent）`。
+3. 稍后会自动打开临时文本文件。将其中的**完整提示词**复制给 WorkBuddy、千问办公、豆包电脑版等支持 MCP 的 Agent，让它按指引完成接入。
+4. 确认 Agent 已能调用 AiNiee MCP 工具后，提供要翻译的文件或完整路径，并说明目标语言。
+
+<p align="center">
+  <img src="README_IMG/Agent/1.png" alt="首次进入 AiNiee-Next：选择使用智能助手（Agent），随后复制临时文本文件中的提示词" width="92%">
+  <br>
+  <sub>首次进入的操作方式选择界面。选择 1 后，请从自动打开的临时文本文件中复制完整提示词给外部 Agent。</sub>
+</p>
+
+**建议在支持 SubAgent 的客户端中开启 SubAgent 模式**，由主 Agent 协调子助手处理翻译任务。完成上述接入后，可以直接对 Agent 说：
+
+```text
+开启 SubAgent 翻译这本书 xxxx.epub，目标语言为简体中文，请通过 AiNiee-Next MCP 处理文件。
+```
+
+将 `xxxx.epub` 换成您上传的文件或实际完整路径。SubAgent 是否可用由第三方 Agent 客户端决定；不支持时，仍可由主 Agent 通过 MCP 完成翻译。
+
+如果您想自己配置模型、API Key 和翻译参数，请阅读[传统 API 模式图文教程](Docs/README_QUICK_START.md)。
+
 ---
 
 ## 智能诊断与问题反馈
@@ -51,11 +82,16 @@
 
 ## 快速开始
 
-> 新用户建议先阅读：[图文快速上手教程](Docs/README_QUICK_START.md)；还没有 API Key 的用户可先看：[DeepSeek API Key 申请教程](Docs/DEEPSEEK_API_KEY.md)；想提升翻译质量可继续看：[提示词、术语表、润色与软件设置教程](Docs/TRANSLATION_WORKFLOW_GUIDE.md)
+> 完全新手或赶时间，推荐先看[外部 Agent 模式](#agent-mode)。选择传统 API 模式的用户可阅读：[图文快速上手教程](Docs/README_QUICK_START.md)、[DeepSeek API Key 申请教程](Docs/DEEPSEEK_API_KEY.md)。想提升翻译质量可继续看：[提示词、术语表、润色与软件设置教程](Docs/TRANSLATION_WORKFLOW_GUIDE.md)。
 
 ### 方式一：一键启动（推荐）
 
 **1. 获取代码**
+
+新手可以直接[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)，解压后进入包含 `prepare.bat` 和 `Launch.bat` 的项目目录，继续第 2 步。
+
+熟悉 Git 的用户也可以克隆项目，方便后续更新：
+
 ```bash
 git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
 cd AiNiee-Next

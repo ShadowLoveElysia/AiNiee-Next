@@ -1,6 +1,24 @@
 # AiNiee-Next 图文快速上手教程
 
-本教程按 `README_IMG` 中的截图编号编写，适合第一次使用 AiNiee-Next 的用户快速完成：克隆项目、准备环境、配置 DeepSeek API、调整项目设置、选择提示词并开始翻译。
+> **本文是传统 API 模式（纯 API）的教程。** 如果您是完全新手或赶时间，可以选择[外部 Agent 模式](../README.md#agent-mode)，将接入提示词复制给 WorkBuddy、千问办公、豆包电脑版等支持 MCP 的标准 Agent 客户端／框架，然后交给它处理文件。可以利用第三方平台提供的 **免费** 额度翻译，具体额度以平台和账号为准。
+
+使用外部 Agent 时，仍需先完成下方的环境准备和启动步骤。首次选择界面语言后，选 `1. 使用智能助手（Agent）`，将自动打开的临时文本文件中的**完整提示词**复制给 Agent；确认 MCP 接入成功后，再上传文件或提供完整路径及目标语言，无需继续本文的 API 配置步骤。
+
+<p align="center">
+  <img src="../README_IMG/Agent/1.png" alt="首次进入：选择使用智能助手（Agent），复制接入提示词给支持 MCP 的客户端" width="92%">
+  <br>
+  <sub>选择 1 使用外部 Agent；选择 2 传统模式（纯 API）则继续按本文操作。</sub>
+</p>
+
+**建议启用客户端支持的 SubAgent 模式**。接入完成后可以直接说：
+
+```text
+开启 SubAgent 翻译这本书 xxxx.epub，目标语言为简体中文，请通过 AiNiee-Next MCP 处理文件。
+```
+
+将文件名替换为您的实际文件或完整路径；SubAgent 功能以所用客户端的支持情况为准。
+
+本教程按 `README_IMG` 中的截图编号编写，适合第一次使用 AiNiee-Next 的用户快速完成：下载或克隆项目、准备环境、配置 DeepSeek API、调整项目设置、选择提示词并开始翻译。
 
 > 示例环境为 Windows + DeepSeek。其他在线 API 的入口类似，但 API Key、模型名称、API 地址和 SDK 兼容性设置请以对应平台要求为准。
 > 这里选择 DeepSeek 做示范，主要是因为它价格便宜、效果够用、速度和稳定性也比较适合新手入门。它不是唯一选择；熟悉流程后，你也可以换成 OpenAI、Claude、Gemini 或其他兼容平台。
@@ -15,24 +33,26 @@ WebUI 的优势是直观、适合查看进度、管理队列和局域网远程�
 
 因此本教程建议：
 
-- **第一次使用**：先按本文使用 CLI/TUI 跑通一次翻译。
+- **第一次使用传统 API 模式**：先按本文使用 CLI/TUI 跑通一次翻译。
 - **已经跑通过一次后**：再使用 WebUI 查看进度、管理队列、切换 Profile 或远程监控。
 - **人在公司、学校、图书馆，或主机放在家里、宿舍、服务器上**：WebUI 很适合在局域网内用另一台设备查看任务状态。
 
 简单说，CLI/TUI 适合第一次配置和跑通流程，WebUI 适合后续监控和远程管理。等你理解了基本流程，再用 WebUI 会更顺手。
 
-## 1. 使用 Git 克隆项目
+## 1. 下载项目（ZIP 或 Git）
 
-请优先使用 Git 克隆项目，而不是直接下载 ZIP 压缩包。这样后续更新更方便。
+[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)
 
-如果电脑还没有安装 Git，请先安装 [Git for Windows](https://git-scm.com/download/win)。安装完成后，选择一个你想存放项目的目录，在空白处右键打开终端，执行：
+链接会直接下载默认分支当前最新提交的完整源码副本。下载完成后，先将 ZIP 解压到您想存放项目的目录，再打开包含 `prepare.bat` 和 `Launch.bat` 的文件夹，继续第 2 步。不要直接在压缩包内运行脚本。
+
+如果希望通过 Git 管理后续更新，也可以克隆项目。电脑还没有 Git 时，先安装 [Git for Windows](https://git-scm.com/download/win)，然后在您想存放项目的目录打开终端，执行：
 
 ```powershell
 git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
 cd AiNiee-Next
 ```
 
-克隆完成后，打开 `AiNiee-Next` 项目根目录。Windows 用户主要会用到根目录中的 `prepare.bat` 和 `Launch.bat`。
+下载解压或克隆完成后，打开项目根目录。Windows 用户主要会用到根目录中的 `prepare.bat` 和 `Launch.bat`。
 
 <p align="center">
   <img src="../README_IMG/1.png" alt="图 1：克隆项目并找到 prepare.bat 与 Launch.bat" width="92%">

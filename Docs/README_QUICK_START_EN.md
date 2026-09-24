@@ -1,5 +1,23 @@
 # AiNiee-Next Text Quick Start Guide
 
+> **This guide covers traditional API mode (API only).** If you are a complete beginner or short on time, try [External Agent Mode](../README_EN.md#agent-mode). Copy the connection prompt into WorkBuddy, Qwen Office, Doubao Desktop, or another standard MCP-capable Agent client or framework, then give it your file. You can use the platform's **free** quota where available; allowances depend on the platform and your account.
+
+First complete the environment setup and launch steps below. After choosing your interface language, select **1. Smart assistant (Agent)** and copy the **entire prompt** from the temporary text file into your Agent. Once MCP is connected, upload the file or provide its full path and target language. You can skip the API configuration steps in this guide.
+
+<p align="center">
+  <img src="../README_IMG/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
+  <br>
+  <sub>Choose option 1 for an external Agent, or option 2 to follow this traditional API tutorial.</sub>
+</p>
+
+**Enable SubAgent mode if your client supports it.** After connecting, you can say:
+
+```text
+Enable SubAgent mode to translate this book, xxxx.epub, into Simplified Chinese. Use AiNiee-Next MCP to process the file.
+```
+
+Replace the filename with your actual file or its full path. SubAgent availability depends on your client.
+
 This guide is written for first-time users who want to get AiNiee-Next running without guessing what each menu means. The example flow uses Windows and DeepSeek, but the overall process is similar for other online API providers.
 
 DeepSeek is used as the example because it is inexpensive, practical, and good enough for many translation workflows. It is not the only supported provider. After you understand the setup flow, you can switch to OpenAI, Claude, Gemini, or another compatible platform.
@@ -16,17 +34,19 @@ WebUI is useful after you already understand the basic workflow. It is good for 
 
 Recommended order:
 
-- **First run**: use CLI/TUI and complete one translation.
+- **First run in traditional API mode**: use CLI/TUI and complete one translation.
 - **After one successful run**: use WebUI for monitoring, queue management, and remote access.
 - **When your main machine is at home, in a dorm, on a server, or somewhere else on the LAN**: WebUI is a convenient remote control panel.
 
 In short: CLI/TUI is best for learning the workflow; WebUI is best for monitoring and management after the workflow is clear.
 
-## 1. Clone the Project with Git
+## 1. Get the Project (ZIP or Git)
 
-Please clone the project with Git instead of downloading the ZIP archive. This makes future updates easier.
+[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)
 
-If Git is not installed yet, install [Git for Windows](https://git-scm.com/download/win) first. Then open a terminal in the folder where you want to keep the project and run:
+This link directly downloads a complete source snapshot of the default branch's latest commit. Extract the ZIP, open the folder containing `prepare.bat` and `Launch.bat`, and continue to step 2. Extract the archive before running these scripts.
+
+You can also clone the project with Git for easier updates. If needed, install [Git for Windows](https://git-scm.com/download/win), then open a terminal in the folder where you want to keep the project and run:
 
 ```bash
 git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git

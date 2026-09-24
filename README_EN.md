@@ -14,6 +14,37 @@
 
 CLI/TUI is the primary interface, with a Web dashboard, task queues, plugins, and an MCP server also available. The project is suitable for personal translation, long-form content, and unattended batch jobs.
 
+[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Get a complete source snapshot of the default branch's latest commit. Extract the archive first. On Windows, open the extracted project folder and run `prepare.bat`, then `Launch.bat`.
+
+<a id="agent-mode"></a>
+
+## Recommended for Beginners: External Agent Mode
+
+If you are a complete beginner or want to start translating with less setup, choose **Smart assistant (Agent)**. You can use WorkBuddy, Qwen Office, Doubao Desktop, or another standard Agent client or framework that supports MCP to process files through AiNiee, without first completing the traditional API setup wizard.
+
+You can translate using a third-party Agent platform's **free** quota where available. Availability, quota size, and eligible models depend on the platform's current rules and your account.
+
+1. Prepare the environment and launch AiNiee-Next using [Quick Start](#quick-start) below.
+2. On the first run, choose your interface language, then **1. Smart assistant (Agent)**.
+3. A temporary text file will open. Copy its **entire prompt** into WorkBuddy, Qwen Office, Doubao Desktop, or another MCP-capable Agent and let it follow the connection instructions.
+4. Once the Agent can call AiNiee MCP tools, provide your file or its full path and specify the target language.
+
+<p align="center">
+  <img src="README_IMG/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
+  <br>
+  <sub>Select option 1, then copy the entire prompt from the temporary text file into your external Agent.</sub>
+</p>
+
+**Enable SubAgent mode if your client supports it**, so the main Agent can coordinate translation work with subagents. After connecting, you can say:
+
+```text
+Enable SubAgent mode to translate this book, xxxx.epub, into Simplified Chinese. Use AiNiee-Next MCP to process the file.
+```
+
+Replace `xxxx.epub` with your uploaded file or its full path. SubAgent support depends on the third-party client; the main Agent can still translate through MCP when subagents are unavailable.
+
+To configure models, API keys, and translation parameters yourself, read the [Traditional API Quick Start Guide](Docs/README_QUICK_START_EN.md).
+
 ---
 
 ## Diagnostics and Issue Reporting
@@ -52,11 +83,16 @@ The screenshot below demonstrates a ~20,000 line file being translated in approx
 
 ## Quick Start
 
-> New users should start with the text guide: [AiNiee-Next Text Quick Start Guide](Docs/README_QUICK_START_EN.md). If you do not have an API key yet, read: [DeepSeek API Key Guide](Docs/DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read: [Prompt, Glossary, Polishing, and Advanced Settings Guide](Docs/TRANSLATION_WORKFLOW_GUIDE_EN.md).
+> Complete beginners and users who want less setup should start with [External Agent Mode](#agent-mode). For traditional API mode, read the [Quick Start Guide](Docs/README_QUICK_START_EN.md) and [DeepSeek API Key Guide](Docs/DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read the [Advanced Settings Guide](Docs/TRANSLATION_WORKFLOW_GUIDE_EN.md).
 
 ### Method 1: One-Click Launch (Recommended)
 
 **1. Get the Code**
+
+Beginners can [download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip), extract it, and open the project folder containing `prepare.bat` and `Launch.bat`. Then continue to step 2.
+
+If you are familiar with Git, you can clone the project for easier updates:
+
 ```bash
 git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
 cd AiNiee-Next
