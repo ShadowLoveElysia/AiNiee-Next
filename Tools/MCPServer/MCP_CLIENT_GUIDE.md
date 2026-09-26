@@ -6,7 +6,7 @@
 
 AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools 暴露出来，让不支持读项目文件的 LLM 客户端也能直接操作项目，同时避免在 MCP 工具发现阶段一次性注入全部端点。根目录 `SKILL.md` 只是必须遵循的使用规则文件，不是 MCP 或 `Tools/Skills/` 服务，不能作为执行通道或降级选项。
 
-推荐任意 LLM 客户端在首次连接后按下面顺序执行：
+推荐任意 LLM 客户端在首次连接后按下面顺序执行。若同一 task 已经预热过，重连时只读取状态并恢复，不重复做下面的全量初始化工作：
 
 1. 调用 `get_mcp_usage_manual`
 2. 调用 `get_mcp_security_policy`
@@ -36,7 +36,7 @@ MCP 代理调用 `POST /api/task/external-agent-mode`；它只覆盖这一次任
 
 推荐的首轮对话流程：
 
-1. 先读取 `get_mcp_usage_manual(section="overview")`
+1. 首次连接先读取 `get_mcp_usage_manual(section="overview")`
 2. 再读取 `get_mcp_security_policy()`
 3. 再读取 `get_mcp_tool_categories()`
 4. 根据目标读取单个分类，例如 `get_mcp_tool_catalog(category="config")` 或 `get_mcp_tool_catalog(category="queue")`
@@ -127,6 +127,9 @@ batch_id/source_hash/revision 必须来自 claim，译文字段是 translation�
 为提交时的权威批次 ID。并行批次共享准备阶段的源 revision，允许乱序领取和提交；缓存正式写回仍由
 writer lease 串行执行，并在每批写回时重新校验 cache revision、source hash 和 current line hash。
 
+stdio 首次连接只完成 MCP initialize 和工具发现，嵌入式 WebServer 在需要 Web/API 或结构化任务上下文时才延迟启动；
+普通 TXT 的 `agent_prepare_project` 不会启动 WebServer。已有缓存账本存在时，重连应优先使用 `agent_recover_task`，不会重新预热。
+
 `agent_claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8。
 用户可在 TUI“设置 → 项目通用设置 → Agent 单次领取批次数”输入任意正整数，包括大于 8 的值；
 没有固定 8 或 64 的配置上限。此设置控制单次领取数量，不改变每批条目数。
@@ -172,9 +175,11 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 直接使用 `agent_prepare_project` 创建新账本时仍只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式会返回稳定错误码
 `STRUCTURED_FORMAT_REQUIRES_MCP_TASK`；但由 Web 的 `external-agent-mode` 任务预热生成的结构化缓存，会由同名工具自动恢复账本（见上文），不需要把结构化文件当作二进制文本切批。
 
-会话断线后不要复用过期的 `session_id`。先用新的 Agent 实例调用 `agent_register`，再调用
-`agent_resume_task(task_id, session_id, previous_session_id)`。旧会话必须已经断开或过期；任务账本
-会把仍在领取中的批次绑定到新会话，保留已经 staging 的结果，并释放旧 writer lease。恢复后直接重试提交或 `agent_commit_cache_batch`，由服务端重新获取 writer lease；也可以显式申请新租约。
+会话断线后不要复用过期的 `session_id`。先用新的 Agent 实例调用 `agent_register` 和
+`agent_request_external_mode`，优先调用 `agent_recover_task(task_id, session_id)`；它会校验持久化的
+source/cache fingerprint，重新绑定 claimed 批次并复用已经预热的缓存，不重新解析 EPUB。只有旧账本没有
+保存可恢复的 session 或需要明确旧会话接管时，才调用 `agent_resume_task(task_id, session_id, previous_session_id)`。
+恢复后直接重试提交或 `agent_commit_cache_batch`，由服务端重新获取 writer lease；不要重新创建 task 或重复预热。
 
 ## Calling Patterns
 

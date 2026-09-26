@@ -94,7 +94,7 @@ class AgentSkill(Skill):
         return SkillMeta(
             name="agent_session",
             description=(
-                "Register, renew, inspect, or disconnect an external Agent session; "
+                "Register, renew, recover, inspect, or disconnect an external Agent session; "
                 "prepare and exchange controlled translation and read-analysis batches. "
                 "Results are validated and automatically committed by the guarded writer; "
                 "repair_required needs corrected items, write_error needs commit retry. "
@@ -107,7 +107,7 @@ class AgentSkill(Skill):
                     description=(
                         "Operation: register, heartbeat, status, unregister, prepare_project, "
                         "prepare_cache_project, project_status, claim_batch, claim_batches, submit_translation_batch, pending_work, get_batch_repair, "
-                        "release_batch, resume_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
+                        "release_batch, resume_task, recover_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
                     ),
                     type="string",
                     required=True,
@@ -115,7 +115,7 @@ class AgentSkill(Skill):
                         "register", "heartbeat", "status", "unregister",
                         "prepare_project", "prepare_cache_project", "project_status",
                         "claim_batch", "claim_batches", "submit_translation_batch", "release_batch", "pending_work", "get_batch_repair",
-                        "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task",
+                        "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task", "recover_task",
                         "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch",
                         "release_read_batch",
                     ],
@@ -150,6 +150,8 @@ class AgentSkill(Skill):
                 SkillParameter(name="writer_lease_id", description="Lease returned by acquire_writer_lease.", type="string"),
                 SkillParameter(name="mode_task_id", description="Optional task scope for request_external_mode.", type="string"),
                 SkillParameter(name="previous_session_id", description="Previous disconnected session id for resume_task.", type="string"),
+                SkillParameter(name="expected_input_hash", description="Optional source hash for recovery validation.", type="string"),
+                SkillParameter(name="expected_cache_revision", description="Optional cache hash for recovery validation.", type="string"),
                 SkillParameter(name="path", description="Controlled source file for read-only Agent analysis batches.", type="string"),
                 SkillParameter(name="project_type", description="Optional format-aware source project type.", type="string", default="auto"),
             ],
@@ -310,6 +312,16 @@ class AgentSkill(Skill):
                 resumed["writer_lease_required"] = True
                 return SkillResult.ok(resumed)
 
+            if action == "recover_task":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.recover_task(
+                    args["task_id"], session_id,
+                    expected_input_hash=args.get("expected_input_hash"),
+                    expected_cache_revision=args.get("expected_cache_revision"),
+                ))
+
             if action == "submit_translation_batch":
                 missing = self._required(args, "task_id", "batch_id", "source_hash", "idempotency_key")
                 if missing:
@@ -358,7 +370,7 @@ class AgentSkill(Skill):
             "capabilities", "supported_modes", "transport", "requested_lease_seconds",
             "user_confirmed_external_processing", "active_only", "last_task_id", "active_batch_id", "reason",
             "input_path", "cache_path", "task_id", "batch_id", "batch_ids", "max_batches", "execution_mode", "source_hash", "revision",
-            "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id",
+            "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id", "expected_input_hash", "expected_cache_revision",
             "path", "project_type", "auto_commit", "repair",
         }
         invalid = reject_unknown_skill_fields(args, allowed, skill_name="agent_session")
@@ -370,7 +382,7 @@ class AgentSkill(Skill):
 
         if action in {
             "prepare_project", "prepare_cache_project", "project_status", "claim_batch", "claim_batches", "submit_translation_batch",
-            "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch", "pending_work", "get_batch_repair",
+            "release_batch", "resume_task", "recover_task", "acquire_writer_lease", "commit_cache_batch", "pending_work", "get_batch_repair",
         }:
             return self._execute_batch(action, args)
 

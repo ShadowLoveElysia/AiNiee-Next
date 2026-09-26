@@ -202,6 +202,10 @@ AGENT_TOOL_DESCRIPTIONS = [
         "purpose": "Rebind a durable task to a newly registered session after the previous Agent disconnected.",
     },
     {
+        "tool_name": "agent_recover_task",
+        "purpose": "Rebind an existing task after transport loss while validating source/cache fingerprints and reusing the prepared cache.",
+    },
+    {
         "tool_name": "agent_acquire_writer_lease",
         "purpose": "Acquire a short-lived task writer lease for deterministic cache commit.",
     },

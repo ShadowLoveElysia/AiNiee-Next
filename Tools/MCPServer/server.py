@@ -146,7 +146,10 @@ def _is_loopback_bind_host(host: str) -> bool:
 
 
 def _mcp_tool_doc(summary: str, details: str = "") -> str:
-    parts = [summary.strip(), get_server_instructions_text().strip()]
+    # FastMCP carries the full server instructions once during initialize.
+    # Repeating them on every tool doc makes WorkBuddy's stdio prewarm payload
+    # unnecessarily large and delays the first MCP handshake.
+    parts = [summary.strip()]
     if details.strip():
         parts.append(details.strip())
     return "\n\n".join(parts)
@@ -915,7 +918,21 @@ def _build_mcp_app(
     path: str,
     host_cli: Any = None,
     register_route_tools: bool = DEFAULT_REGISTER_ROUTE_TOOLS,
+    backend_controller: EmbeddedWebServerController | None = None,
 ):
+    routes: List[Dict[str, str]] = []
+
+    def _ensure_backend():
+        nonlocal ws_module, routes
+        if ws_module is None:
+            if backend_controller is None:
+                raise RuntimeError("MCP backend controller is unavailable")
+            backend_controller.start()
+            ws_module = backend_controller.ws_module
+            api.base_url = backend_controller.base_url
+            routes = _extract_api_routes(ws_module)
+        return ws_module
+
     try:
         _patch_streamable_http_shutdown_for_windows()
         from mcp.server.fastmcp import FastMCP
@@ -940,7 +957,8 @@ def _build_mcp_app(
         streamable_http_path=path,
     )
 
-    routes = _extract_api_routes(ws_module)
+    if ws_module is not None:
+        routes = _extract_api_routes(ws_module)
 
     @_mcp_tool(
         mcp,
@@ -1263,18 +1281,19 @@ def _build_mcp_app(
 
     def _prepare_web_task_ledger_if_needed(task_id: str, session_id: str) -> Dict[str, Any] | None:
         """Create the cache-backed ledger for a prewarmed Web external task."""
-        manager = getattr(ws_module, "task_manager", None)
-        if manager is None or getattr(manager, "task_id", None) != task_id:
-            return None
-        cache_path = getattr(manager, "external_agent_cache_path", None)
-        if not isinstance(cache_path, str) or not cache_path:
-            return None
         batch_service = get_external_agent_batch_service()
         try:
             return batch_service.get_project(task_id, session_id)
         except ExternalAgentBatchError as exc:
             if exc.code != "TASK_NOT_FOUND":
                 raise
+        _ensure_backend()
+        manager = getattr(ws_module, "task_manager", None)
+        if manager is None or getattr(manager, "task_id", None) != task_id:
+            return None
+        cache_path = getattr(manager, "external_agent_cache_path", None)
+        if not isinstance(cache_path, str) or not cache_path:
+            return None
         try:
             prepared = batch_service.prepare_cache_project(
                 cache_path,
@@ -1303,7 +1322,12 @@ def _build_mcp_app(
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
-            result = _prepare_web_task_ledger_if_needed(task_id, session_id)
+            # Direct TXT projects do not need the embedded WebServer merely to
+            # prepare their line ledger. Structured Web tasks are resolved from
+            # the Web task manager only when the durable ledger is absent.
+            result = None
+            if not (isinstance(input_path, str) and input_path.lower().endswith(".txt")):
+                result = _prepare_web_task_ledger_if_needed(task_id, session_id)
             if result is None:
                 result = get_external_agent_batch_service().prepare_project(
                     input_path,
@@ -1446,9 +1470,14 @@ def _build_mcp_app(
 
     def _export_after_commit(result, task_id, session_id):
         if result.get("progress", {}).get("status") == "completed" and not result.get("replayed"):
-            cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
             try:
-                exported = _finalize_external_agent_output(ws_module, task_id, cache_path)
+                cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
+                manager = getattr(ws_module, "task_manager", None) if ws_module is not None else None
+                exported = (
+                    _finalize_external_agent_output(ws_module, task_id, cache_path)
+                    if manager is not None and getattr(manager, "task_id", None) == task_id
+                    else _export_external_agent_task(task_id, session_id)
+                )
                 result["export"] = exported or {"status": "required", "next_action": "agent_export_task"}
             except Exception:
                 result["export"] = {"status": "failed", "next_action": "agent_export_task"}
@@ -1546,6 +1575,29 @@ def _build_mcp_app(
 
     @_mcp_tool(
         mcp,
+        "Recover an existing durable external-Agent task after MCP transport loss.",
+        "Validates persisted source/cache fingerprints, rebinds claimed batches and reuses the prepared cache without reparsing.",
+    )
+    def agent_recover_task(
+        task_id: str,
+        session_id: str,
+        expected_input_hash: Optional[str] = None,
+        expected_cache_revision: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        try:
+            result = get_external_agent_batch_service().recover_task(
+                task_id, session_id,
+                expected_input_hash=expected_input_hash,
+                expected_cache_revision=expected_cache_revision,
+            )
+            _bind_external_agent_context(session_id, task_id=task_id)
+            return result
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
         "Acquire a short-lived writer lease for a cache-backed Agent task.",
         "A task has at most one writer lease; the lease is separate from the MCP and Agent session IDs.",
     )
@@ -1587,6 +1639,7 @@ def _build_mcp_app(
         ),
     )
     def list_web_api_routes(category: str = "all") -> List[Dict[str, str]]:
+        _ensure_backend()
         filtered_routes = _filter_routes_by_category(routes, category)
         return _build_route_index(
             filtered_routes,
@@ -1612,6 +1665,7 @@ def _build_mcp_app(
         confirm_advanced_change: bool = False,
         confirm_agent_batch_change: bool = False,
     ) -> Any:
+        _ensure_backend()
         normalized_path = _normalize_public_api_path(path)
         _ensure_advanced_change_confirmed(normalized_path, body, confirm_advanced_change)
         if normalized_path == "/api/config":
@@ -1625,6 +1679,8 @@ def _build_mcp_app(
     )
     def upload_file(file_path: str, policy: str = "default") -> Dict[str, Any]:
         import requests
+
+        _ensure_backend()
 
         source = Path(file_path).expanduser()
         if not source.exists() or not source.is_file():
@@ -1735,11 +1791,12 @@ def run_mcp_server(
         mcp_auth_token=mcp_auth_token,
         allow_remote_access=allow_remote_access,
     )
-    # MCP 复用现有 WebServer 作为后端宿主，避免再维护一套平行业务层。
-    backend.start()
-    atexit.register(backend.stop)
-
+    # Stdio must reach initialize/tool discovery before importing the full
+    # WebServer. The backend is started lazily when a route or Web task needs it.
     api = AiNieeAPIClient(backend.base_url, mcp_auth_token=mcp_auth_token)
+    if transport != "stdio":
+        backend.start()
+    atexit.register(backend.stop)
     mcp_app = _build_mcp_app(
         api,
         backend.ws_module,
@@ -1748,6 +1805,7 @@ def run_mcp_server(
         path,
         host_cli=host_cli,
         register_route_tools=register_route_tools,
+        backend_controller=backend,
     )
 
     try:

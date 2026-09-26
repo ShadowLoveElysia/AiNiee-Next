@@ -56,6 +56,13 @@ def _sha256(value: bytes | str) -> str:
     return hashlib.sha256(value.encode("utf-8") if isinstance(value, str) else value).hexdigest()
 
 
+def _file_hash(path: str | Path) -> str:
+    try:
+        return _sha256(Path(path).expanduser().resolve(strict=True).read_bytes())
+    except (OSError, RuntimeError) as exc:
+        raise ExternalAgentBatchError("task source or cache file cannot be read", "TASK_SOURCE_UNAVAILABLE") from exc
+
+
 def _safe_id(value: Any, kind: str) -> str:
     if kind == "task_id":
         valid = isinstance(value, str) and bool(_TASK_ID_RE.fullmatch(value))
@@ -225,6 +232,8 @@ class ExternalAgentBatchService:
                 "execution_mode": execution_mode, "input_path": str(path), "source_hash": _sha256(raw),
                 "output_path": str(Path(output_path).expanduser().resolve()) if output_path else str(path.parent / f"{path.stem}_AiNiee_Output"),
                 "source_size": len(raw), "revision": 1, "parallel_batches": True,
+                "input_hash": _sha256(raw),
+                "preparation_fingerprint": _sha256(_canonical({"input_hash": _sha256(raw), "source_hash": _sha256(raw)})),
                 "status": "ready" if batches else "completed",
                 "batch_size": self.batch_size, "total_batches": len(batches), "created_at": now,
                 "updated_at": now, "batches": batches,
@@ -280,12 +289,64 @@ class ExternalAgentBatchService:
                 "cache_revision": manifest["cache_revision"], "manifest_hash": manifest["manifest_hash"],
                 "source_hash": manifest["manifest_hash"], "source_size": manifest["item_count"],
                 "revision": 1, "parallel_batches": True,
+                "input_hash": _file_hash(input_path) if input_path else None,
+                "preparation_fingerprint": _sha256(_canonical({
+                    "cache_revision": manifest["cache_revision"],
+                    "manifest_hash": manifest["manifest_hash"],
+                    "input_hash": _file_hash(input_path) if input_path else None,
+                })),
                 "status": "ready" if batches else "completed",
                 "batch_size": self.batch_size, "total_batches": len(batches), "created_at": now,
                 "updated_at": now, "batches": batches,
             }
             self._write(state)
             return self._project_view(state)
+
+    def recover_task(
+        self,
+        task_id: str,
+        session_id: str,
+        *,
+        expected_input_hash: str | None = None,
+        expected_cache_revision: str | None = None,
+    ) -> dict[str, Any]:
+        """Rebind a durable task after transport loss without reparsing it."""
+        task_id = _safe_id(task_id, "task_id")
+        session_id = _safe_id(session_id, "session_id")
+        with self.transaction(task_id):
+            state = self._read(task_id)
+            current_input_hash = _file_hash(state["input_path"]) if state.get("input_path") else None
+            if state.get("input_hash") and current_input_hash != state.get("input_hash"):
+                raise ExternalAgentBatchError("task input changed since preparation", "SOURCE_HASH_MISMATCH")
+            if expected_input_hash is not None and current_input_hash != expected_input_hash:
+                raise ExternalAgentBatchError("task input hash does not match recovery request", "SOURCE_HASH_MISMATCH")
+            current_cache_revision = _file_hash(state["cache_path"]) if state.get("cache_path") else None
+            if state.get("cache_revision") and current_cache_revision != state.get("cache_revision"):
+                raise ExternalAgentBatchError("task cache changed since preparation", "CACHE_REVISION_CONFLICT")
+            if expected_cache_revision is not None and current_cache_revision != expected_cache_revision:
+                raise ExternalAgentBatchError("task cache revision does not match recovery request", "CACHE_REVISION_CONFLICT")
+            previous_session_id = state.get("session_id")
+            if previous_session_id != session_id:
+                history = state.get("session_history")
+                if not isinstance(history, list):
+                    history = []
+                if previous_session_id:
+                    history.append({"session_id": previous_session_id, "ended_at": self._clock(), "reason": "transport_recovery"})
+                state["session_history"] = history[-32:]
+                state["session_id"] = session_id
+                state["resumed_from_session_id"] = previous_session_id
+                state["resumed_at"] = self._clock()
+                for batch in state.get("batches", []):
+                    if batch.get("claimed_session_id") == previous_session_id:
+                        batch["claimed_session_id"] = session_id
+            self._refresh_status(state)
+            state["updated_at"] = self._clock()
+            self._write(state)
+            return {
+                "status": "recovered", "task": self._project_view(state),
+                "previous_session_id": previous_session_id, "session_id": session_id,
+                "preparation_reused": True,
+            }
 
     def cache_path_for_writer(self, task_id: str, session_id: str) -> str:
         with self.transaction(task_id):

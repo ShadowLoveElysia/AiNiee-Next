@@ -157,6 +157,7 @@ python Tools/Skills/cli.py check
 - 读取敏感配置时应保留 `_mcp_security_notice`，并向用户说明通道鉴权限制。
 - 配置高级项（例如 `mcp_server_port`、`mcp_server_host`）前先说明影响并再次确认。
 - 翻译、润色和队列任务是异步的；不要因收到 `running` 就宣称已经完成，应轮询状态并报告失败原因。
+- stdio MCP 首次连接只应完成 initialize/工具发现；普通 TXT 批次无需启动嵌入式 WebServer。已有 external-Agent task 断线后优先用 `agent_recover_task` 校验 source/cache 指纹并复用预热缓存，不重新创建 task 或解析输入；指纹冲突才停止并报告。
 - 保留原文件和已有输出；通过 Skills/MCP 启动的任务必须使用项目返回的 task_id 跟踪状态，不得覆盖已有输出。
 - 不要把 API key、MCP/Skills token、用户原文或译文写入本文件、日志、提交信息或客户端公开配置。
 
