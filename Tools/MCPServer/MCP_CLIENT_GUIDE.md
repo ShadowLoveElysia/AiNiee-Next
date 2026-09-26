@@ -2,6 +2,8 @@
 
 ## Overview
 
+进入 AiNiee 工作流后，原文获取必须走 MCP，覆盖术语抽取、词频分析、章节预读和翻译，主 Agent 与 SubAgent 均须遵守。外部源文件先 `upload_file`，分析用 `agent_read_file` 或只读批次工具，翻译用 `agent_claim_batch` / `agent_claim_batches` 的 `items`。禁止自行解包 EPUB、编写提取脚本或将文件转换成替代 TXT；工具缺失或解析失败时停止相关处理并报告错误，不得自行换解析器。操作说明和提示词文件可正常阅读。
+
 AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools 暴露出来，让不支持读项目文件的 LLM 客户端也能直接操作项目，同时避免在 MCP 工具发现阶段一次性注入全部端点。根目录 `SKILL.md` 只是必须遵循的使用规则文件，不是 MCP 或 `Tools/Skills/` 服务，不能作为执行通道或降级选项。
 
 推荐任意 LLM 客户端在首次连接后按下面顺序执行：
@@ -124,7 +126,7 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 `call_web_api(method="POST", path="/api/config", body={"external_agent_max_batches":16}, confirm_agent_batch_change=true)`。
 没有同意时不可自行填写确认字段；已有明确授权无需重复询问。设置保存后下一次领取立即使用新值。
 
-术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言。
+术语语义分析可以由外部 Agent 执行，原文解析必须由 AiNiee 负责。外部文件先 `upload_file`，使用其返回的受控路径调用读取工具；不得直接读 Downloads 路径或用自写脚本导出正文。需要语言统计时调用 `agent_detect_file_language` 了解源语言。
 语言识别扫描全本，返回 `scan_scope="full_file"`、`scanned_lines`、`total_lines` 和语言统计，
 不返回正文，也不受 1000 行批次传输上限限制。
 扫描在独立进程内执行，避免 Windows 原生读取依赖的导入阻塞 MCP stdio 消息处理；
@@ -133,6 +135,11 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 再用 `agent_read_file` 分段读取原文。每次最多返回 1000 行，响应中的 `next_start_line`
 用于继续读取。读取工具只提供受控文本，不会自动改写术语表；术语结果若要保存，必须另行
 使用明确的 glossary 写入操作。
+
+主 Agent 可把工具返回的文本分配给 SubAgent 分析，但不能让 SubAgent 自行打开 EPUB/缓存。
+不能以“预处理”“只读”“统计词频”为由运行 `zipfile`、正则/HTML 解析脚本或本地导入 AiNiee 内部模块提取原文。
+可基于 MCP 已返回的文本进行词频和术语分析；正式翻译必须另行领取翻译批次，不能把分析文本拼成批次提交。
+读取工具未挂载、超时或返回 `PATH_NOT_ALLOWED` / `FILE_PARSE_FAILED` 时，报告工具和非敏感错误并停止依赖该数据的处理，修复受控读取路径后再继续，不得静默降级为本地解析。
 
 需要和翻译批次一样可靠领取时，使用 `agent_prepare_read_batches` →
 `agent_claim_read_batch`。每个读取批次最多 1000 行，并返回独立的 `batch_id`、

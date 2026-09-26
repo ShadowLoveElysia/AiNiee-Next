@@ -1105,7 +1105,10 @@ def _build_mcp_app(
         mcp,
         "Read a bounded window of source items for an external Agent.",
         (
-            "Use this for terminology extraction or other Agent-side analysis. "
+            "Use this or read-batch tools to obtain source text for terminology extraction "
+            "and preprocessing; do not unpack EPUBs or run local extraction scripts. "
+            "Analyze only returned text, including in SubAgents. If reading fails, "
+            "report the error and stop dependent work instead of using another parser. "
             "Each call returns at most 1000 logical source lines; use next_start_line "
             "to continue. Paths must be inside the MCP workspace or the controlled "
             "temporary directory. This tool never writes source files, glossary data, "
@@ -1150,7 +1153,7 @@ def _build_mcp_app(
     @_mcp_tool(
         mcp,
         "Prepare a read-only source file into 1000-line Agent analysis batches.",
-        "Use agent_claim_read_batch after this call. This protocol is intended for terminology extraction and does not write glossary or translation output.",
+        "Use agent_claim_read_batch after this call for terminology analysis. Source parsing belongs to AiNiee; do not extract files locally or create substitute TXT inputs. This protocol does not write glossary or translation output.",
     )
     def agent_prepare_read_batches(
         path: str,

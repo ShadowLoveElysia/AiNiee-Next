@@ -109,6 +109,8 @@ curl http://127.0.0.1:8766/skills
 
 ### 外部 Agent 会话
 
+仅在用户明确选择本备用服务后使用。原文获取边界也覆盖术语抽取、词频分析和所有 SubAgent：外部文件先 `file.stage_external`，再用 `agent_session.prepare_read_batches` / `claim_read_batch` 读取受控文本。禁止自行解包 EPUB、编写提取脚本或本地导入 AiNiee 解析器；工具缺失或读取失败时报告问题并停止相关处理，不得生成替代 TXT 绕过。主 Agent 可把已返回的文本交给 SubAgent 分析，正式翻译仍以 translation batch 的 `items` 为准。项目规则和提示词文件可正常阅读。
+
 `agent_session` 管理外部 Agent 的会话租约，且与 `X-AiNiee-Skills-Auth`
 鉴权令牌完全分离。注册必须携带用户确认字段；会话过期后应重新注册。
 Skills 只保存会话元数据，不接收 API key、MCP token 或其他提供商密钥。

@@ -8,11 +8,33 @@ from Tools.MCPServer.security import MCP_SECURITY_NOTICE_FIELD, MCP_SECRET_PLACE
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 GUIDE_PATH = os.path.join(PROJECT_ROOT, "Tools", "MCPServer", "MCP_CLIENT_GUIDE.md")
 
+SOURCE_READING_POLICY = (
+    "Within an AiNiee workflow, obtain source content only through MCP, including "
+    "terminology extraction, word-frequency analysis and other preprocessing. Upload "
+    "external source files unchanged with upload_file; use the returned controlled path "
+    "with agent_read_file (follow next_start_line) or agent_prepare_read_batches / "
+    "agent_claim_read_batch. Translate only items from agent_claim_batch / agent_claim_batches. "
+    "Delegate tool-returned text to SubAgents; they must follow the same boundary. "
+    "Do not read source files directly, unpack EPUBs, run extraction scripts, import internal "
+    "AiNiee readers locally, or create substitute TXT inputs. Missing tools, timeouts and "
+    "parse/path errors require stopping dependent work and reporting the tool and "
+    "non-sensitive error; never fall back to a local parser. Reading operating guides "
+    "and prompt files is allowed. Analyze terminology from tool-returned text."
+)
+
 DEFAULT_GUIDE = """# AiNiee CLI MCP Client Guide
 
 ## Overview
 
 AiNiee CLI MCP exposes most WebServer `/api/*` capabilities as MCP tools.
+
+Within AiNiee workflows, terminology analysis and preprocessing must also obtain source
+text through agent_read_file or agent_prepare_read_batches / agent_claim_read_batch.
+Upload external files unchanged with upload_file. Translate only claimed translation
+items. Agents and SubAgents must not unpack source files, run extraction scripts or
+create substitute TXT inputs. Missing tools or reading errors require stopping dependent
+work and reporting the error, never a fallback to local parsing. Guides and prompt files
+may be read normally.
 
 Recommended first steps for any LLM client:
 1. Call `get_mcp_usage_manual`
@@ -113,7 +135,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_read_file",
-        "purpose": "Read up to 1000 logical source lines per call for Agent-side terminology extraction or analysis.",
+        "purpose": "Required source-reading path for terminology/preprocessing (or use read batches). Up to 1000 logical lines; follow next_start_line. Do not write local extraction scripts.",
     },
     {
         "tool_name": "agent_detect_file_language",
@@ -121,7 +143,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_prepare_read_batches",
-        "purpose": "Prepare a read-only source file into durable batches of at most 1000 logical lines.",
+        "purpose": "Prepare controlled source text for terminology analysis in durable 1000-line batches; use agent_claim_read_batch instead of local file parsing.",
     },
     {
         "tool_name": "agent_claim_read_batch",
@@ -248,6 +270,7 @@ def build_security_policy() -> Dict[str, Any]:
     return {
         "must_do": [
             "Use MCP tools only for LLM-driven AiNiee operations.",
+            SOURCE_READING_POLICY,
             "Call get_mcp_usage_manual, get_mcp_tool_categories, and then get_mcp_tool_catalog(category=...) before large edits when the client has no file-reading ability.",
             "Ask for a second confirmation before changing advanced MCP settings.",
             "Treat redacted secret placeholders as non-readable and non-usable values.",
@@ -255,6 +278,7 @@ def build_security_policy() -> Dict[str, Any]:
             "Treat the Web UI session cookie and MCP bridge token as the real channel gates for sensitive Web API routes.",
         ],
         "forbidden": [
+            "Do not bypass source-reading tools with local extraction scripts or direct file reads, including during preprocessing and SubAgent work.",
             "Do not mix MCP tool calls with direct HTTP requests to the Web UI, localhost, LAN WebServer ports, or MCP HTTP endpoints.",
             "Do not try to recover, reconstruct, or infer redacted secrets from placeholders.",
             "Do not save a redacted placeholder as if it were a real API key or cloud secret.",
@@ -525,7 +549,7 @@ def get_startup_hint_text() -> str:
 
 def get_server_instructions_text() -> str:
     """Instructions returned to MCP clients during server initialization."""
-    return (
+    return SOURCE_READING_POLICY + "\n\n" + (
         "You are connected to AiNiee CLI through MCP. Work through the MCP tools "
         "for LLM-driven AiNiee operations instead of mixing MCP calls with direct "
         "HTTP requests to the Web UI, localhost, LAN WebServer ports, or MCP HTTP "

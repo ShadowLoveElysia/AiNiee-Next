@@ -152,6 +152,7 @@ python Tools/Skills/cli.py check
 ## 安全与操作边界
 
 - 所有由 LLM 驱动的 AiNiee 操作都通过 MCP 工具或 Skills 接口完成，不要混用直连 WebUI、localhost Web API、局域网端口或内部 `/api/internal/*`。
+- 原文获取边界覆盖术语抽取、词频分析和其他预处理，也适用于 SubAgent。外部文件先 `upload_file`，再通过 `agent_read_file` 或 `agent_prepare_read_batches` / `agent_claim_read_batch` 获取原文；正式翻译只处理领取工具返回的 `items`。禁止自行解包 EPUB、编写提取脚本或生成替代 TXT；工具缺失或失败时报告问题并停止相关处理。用户明确改选 Skills 后才可用其受控读取接口。规则与提示词文件可以阅读，但不能以此替代 MCP 原文读取。
 - MCP 会脱敏 `api_key`、`access_key`、`secret_key`，占位符 `[MCP_SECRET_REDACTED]` 不是可用密钥，不能恢复、推断或写回。
 - 读取敏感配置时应保留 `_mcp_security_notice`，并向用户说明通道鉴权限制。
 - 配置高级项（例如 `mcp_server_port`、`mcp_server_host`）前先说明影响并再次确认。
