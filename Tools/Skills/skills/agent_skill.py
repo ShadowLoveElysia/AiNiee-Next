@@ -105,7 +105,7 @@ class AgentSkill(Skill):
                     name="action",
                     description=(
                         "Operation: register, heartbeat, status, unregister, prepare_project, "
-                        "prepare_cache_project, project_status, claim_batch, submit_translation_batch, "
+                        "prepare_cache_project, project_status, claim_batch, claim_batches, submit_translation_batch, "
                         "release_batch, resume_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
                     ),
                     type="string",
@@ -113,7 +113,7 @@ class AgentSkill(Skill):
                     enum=[
                         "register", "heartbeat", "status", "unregister",
                         "prepare_project", "prepare_cache_project", "project_status",
-                        "claim_batch", "submit_translation_batch", "release_batch",
+                        "claim_batch", "claim_batches", "submit_translation_batch", "release_batch",
                         "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task",
                         "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch",
                         "release_read_batch",
@@ -137,6 +137,8 @@ class AgentSkill(Skill):
                 SkillParameter(name="cache_path", description="Controlled AinieeCacheData.json for a cache-backed project.", type="string"),
                 SkillParameter(name="task_id", description="Stable external Agent task id.", type="string"),
                 SkillParameter(name="batch_id", description="Batch id returned by claim_batch.", type="string"),
+                SkillParameter(name="batch_ids", description="Optional batch ids for bounded parallel fan-out; ids may be out of order.", type="array"),
+                SkillParameter(name="max_batches", description="Maximum batches to claim in one call (1-64; default 4 for parallel mode).", type="integer", default=4),
                 SkillParameter(name="execution_mode", description="Must be external_agent for this protocol.", type="string", default="external_agent", enum=["external_agent"]),
                 SkillParameter(name="source_hash", description="SHA-256 hash returned for the claimed batch.", type="string"),
                 SkillParameter(name="revision", description="Task revision returned for the claimed batch.", type="integer"),
@@ -152,6 +154,7 @@ class AgentSkill(Skill):
                 {"action": "register", "agent_instance_id": "desktop-1", "supported_modes": ["external_agent"], "capabilities": ["translation"], "user_confirmed_external_processing": True},
                 {"action": "prepare_project", "input_path": "Resource/input.txt", "task_id": "task_1", "session_id": "sess_example"},
                 {"action": "claim_batch", "task_id": "task_1", "session_id": "sess_example"},
+                {"action": "claim_batches", "task_id": "task_1", "session_id": "sess_example", "max_batches": 4},
                 {"action": "submit_translation_batch", "task_id": "task_1", "session_id": "sess_example", "batch_id": "batch_000001", "source_hash": "<sha256>", "revision": 1, "idempotency_key": "task_1_batch_1", "items": []},
             ],
         )
@@ -247,7 +250,16 @@ class AgentSkill(Skill):
                 missing = self._required(args, "task_id")
                 if missing:
                     return missing
-                return SkillResult.ok(self.batch_service.claim_batch(args["task_id"], session_id))
+                return SkillResult.ok(self.batch_service.claim_batch(args["task_id"], session_id, args.get("batch_id")))
+
+            if action == "claim_batches":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.claim_batches(
+                    args["task_id"], session_id, args.get("batch_ids"),
+                    max_batches=args.get("max_batches", 4),
+                ))
 
             if action == "release_batch":
                 missing = self._required(args, "task_id", "batch_id")
@@ -359,7 +371,7 @@ class AgentSkill(Skill):
             "action", "session_id", "agent_instance_id", "protocol_version", "client_name", "client_version",
             "capabilities", "supported_modes", "transport", "requested_lease_seconds",
             "user_confirmed_external_processing", "active_only", "last_task_id", "active_batch_id", "reason",
-            "input_path", "cache_path", "task_id", "batch_id", "execution_mode", "source_hash", "revision",
+            "input_path", "cache_path", "task_id", "batch_id", "batch_ids", "max_batches", "execution_mode", "source_hash", "revision",
             "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id",
             "path", "project_type",
         }
@@ -371,7 +383,7 @@ class AgentSkill(Skill):
             return SkillResult.fail("action must be a string.", "INVALID_ACTION")
 
         if action in {
-            "prepare_project", "prepare_cache_project", "project_status", "claim_batch", "submit_translation_batch",
+            "prepare_project", "prepare_cache_project", "project_status", "claim_batch", "claim_batches", "submit_translation_batch",
             "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch",
         }:
             return self._execute_batch(action, args)

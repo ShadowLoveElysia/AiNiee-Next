@@ -101,7 +101,8 @@ _mcp_security_notice
 推荐调用顺序：`agent_register` → `agent_request_external_mode` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
 外部 Agent 翻译原型顺序：`agent_register` → `agent_request_external_mode` → `agent_prepare_project` →
-`agent_claim_batch` → `agent_submit_translation_batch`。提交只写入受控批次账本，
+`agent_claim_batches`（或 `agent_claim_batch`）→ `agent_submit_translation_batch`。默认速度优先时，
+`agent_claim_batches` 可一次领取多个批次，`agent_claim_batch` 也可传 `batch_id` 跳批次领取；提交只写入受控批次账本，
 不会直接写入 AiNiee 缓存或最终输出；断线时使用 `agent_release_batch`，不要重用过期 session。
 如果要基于已有 AiNiee 缓存继续翻译，使用 `agent_prepare_cache_project`；它会返回服务端生成的
 opaque item locator 和 cache revision，Agent 不得自行构造 storage_path 或 text_index。
@@ -112,7 +113,8 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 `agent_prepare_project` 的返回值包含 `next_batch_id`、`batch_ids` 和不含正文的 `batches` 摘要；
 如果客户端丢失了准备或领取响应，可用 `agent_project_status` 恢复这些字段，再调用
 `agent_claim_batch` 获取该批次的正文。`agent_claim_batch` 的完整响应仍以 `batch.batch_id`
-为提交时的权威批次 ID。
+为提交时的权威批次 ID。并行批次共享准备阶段的源 revision，允许乱序领取和提交；缓存正式写回仍由
+writer lease 串行执行，并在每批写回时重新校验 cache revision、source hash 和 current line hash。
 
 术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言。
 语言识别扫描全本，返回 `scan_scope="full_file"`、`scanned_lines`、`total_lines` 和语言统计，

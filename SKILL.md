@@ -46,13 +46,20 @@ description: 在用户要求翻译小说、文档、字幕或其他文件内容�
 - AiNiee 项目默认 API 模式不会被永久切换。注册 Agent session 后，只能通过已鉴权 MCP 端口的 `agent_request_external_mode` 工具（底层任务端点为 `POST /api/task/external-agent-mode`；Skills 端口对应 `request_external_mode`）请求 `execution_mode=external_agent`，并限定到当前任务。
 - 用户直接提供的外部路径（例如 `H:\Downloads\ManualTransFile.json`）不能直接加入服务白名单，也不能直接传给 `prepare_project`。先通过原生 MCP 的 `upload_file`，或仅在用户明确选择 `Tools/Skills/` 服务时使用 `file.stage_external` 将文件复制到 AiNiee 受控暂存目录，再使用返回的受控路径准备批次。
 - 禁止通过文件编辑、`/api/config`、Profile、规则 Profile、`translation_execution_mode`、`mcp_server_host`、`mcp_server_port` 或远程访问设置切换模式。不要直接写入缓存、队列、源文件或最终输出。
-- MCP 连接成功后依次读取 `get_mcp_usage_manual(section="overview")`、`get_mcp_security_policy`、`get_mcp_tool_categories`、目标 `get_mcp_tool_catalog`，再注册 Agent 会话、请求任务模式并使用受控批次工具。普通源文件使用 `agent_prepare_project` → `agent_claim_batch` → `agent_submit_translation_batch`；已有缓存使用 `agent_prepare_cache_project` → `agent_claim_batch` → `agent_submit_translation_batch` → `agent_acquire_writer_lease` → `agent_commit_cache_batch`。全部批次 committed 但自动导出未发生时，使用 `agent_export_task`，它只读取已提交缓存并调用格式感知导出器，不重新翻译。断线使用 `agent_release_batch`，恢复使用新的 session 调用 `agent_resume_task`。API key、MCP token 和用户原文不写入提示词、日志或配置。
+- MCP 连接成功后依次读取 `get_mcp_usage_manual(section="overview")`、`get_mcp_security_policy`、`get_mcp_tool_categories`、目标 `get_mcp_tool_catalog`，再注册 Agent 会话、请求任务模式并使用受控批次工具。默认速度优先：普通源文件使用 `agent_prepare_project` → `agent_claim_batches`（有界并行，默认最多 4 批）→ 多个 SubAgent 分别翻译 → `agent_submit_translation_batch`；也可用 `agent_claim_batch(batch_id=...)` 跳批次领取。已有缓存使用 `agent_prepare_cache_project` → `agent_claim_batches` → `agent_submit_translation_batch` → `agent_acquire_writer_lease` → `agent_commit_cache_batch`，领取和 staging 可以乱序，正式写回仍逐批经过 writer lease、cache revision、source hash 和 current line hash 校验。只有用户表达“质量优先”“精翻”“保持上下文/文风”等明确意图时，才切换为逐批串行翻译；此时仍可为当前批次启用 SubAgent 以减少主 Agent 上下文负担。若客户端不支持 SubAgent，退回有界并行或串行，不把 SubAgent 当作服务端必备能力。全部批次 committed 但自动导出未发生时，使用 `agent_export_task`，它只读取已提交缓存并调用格式感知导出器，不重新翻译。断线使用 `agent_release_batch`，恢复使用新的 session 调用 `agent_resume_task`。API key、MCP token 和用户原文不写入提示词、日志或配置。
 - MCP 工具调用必须直接传入结构化参数，不要先把参数写入临时 JSON/TXT 再上传或转交。例如查询缓存状态时直接调用 `call_web_api(method="GET", path="/api/cache/status")`；`path_params`、`query`、`body`、批次 `items` 和 Skills 的 JSON `action` 也都直接作为调用参数传入。`upload_file` 只用于端点明确要求的用户文件本体，不能用来传递普通工具参数或包装后的请求 JSON。
-- 以 `agent_claim_batch` 返回的 `items` 为唯一处理清单；提交必须完整覆盖该批全部条目，并保留 index、item_id、source_hash、current_line_hash、cache_revision 等服务端字段，不得自行添加、删除、重排或伪造条目。新 manifest 会过滤 EXCLUDED/已翻译/校对条目；旧账本若仍包含 EXCLUDED，提交仍按 claim 清单完整返回原样占位，writer 会保留源行并跳过写入。遇到 `ITEM_CONFLICT`、`REVISION_CONFLICT`、`SOURCE_MISMATCH` 时停止当前批次并报告具体错误，不覆盖缓存。
+- 以 `agent_claim_batch` 或 `agent_claim_batches` 返回的 `items` 为唯一处理清单；提交必须完整覆盖对应批次全部条目，并保留 index、item_id、source_hash、current_line_hash、cache_revision 等服务端字段，不得自行添加、删除、重排或伪造条目。并行批次共享准备阶段的源 revision；单批提交不会阻塞其他批次领取或 staging。新 manifest 会过滤 EXCLUDED/已翻译/校对条目；旧账本若仍包含 EXCLUDED，提交仍按 claim 清单完整返回原样占位，writer 会保留源行并跳过写入。正式缓存写回仍由 writer lease 保护；遇到 `ITEM_CONFLICT`、`REVISION_CONFLICT`、`SOURCE_MISMATCH`、`CACHE_REVISION_CONFLICT` 时停止当前批次并报告具体错误，不覆盖缓存。
 - `agent_register` 默认会话租约为 120 秒；长任务可以传入 `requested_lease_seconds: 3600` 将租约延长到 60 分钟。必须按响应中的 `heartbeat_interval_seconds` 调用 `agent_heartbeat`，超过 3600 秒的请求会被拒绝。这个会话租约与独立的 writer lease 分开管理。
 - 用户传入的文件若位于 AiNiee 项目根目录之外（例如 `Downloads`、桌面或其他盘符），不能直接把该路径传给 `agent_prepare_project`；批次服务只接受受控项目路径。应先使用当前 MCP 的 `upload_file` 将原文件上传到 AiNiee 的暂存目录，再使用上传结果返回的项目内 `path` 创建批次。上传后保留原文件，不要把 `Downloads` 等外部目录加入 AiNiee 服务的允许根目录，也不要把上传路径当作任意写入授权。若当前客户端没有可用的 `upload_file`，应报告需要 MCP 连接或由用户明确选择 Skills 文件入口后再继续。
 - HTTP 备用入口同样必须直接发送结构化请求参数；不要先生成参数 JSON/TXT 文件再通过 HTTP 上传。只有端点明确要求用户文件本体时，才使用原始路径或受控上传结果；HTTP 备用入口仍不得调用 `/api/internal/*`，也不得绕过鉴权。
 - 输出目录必须位于 AiNiee 项目受控根内，不能覆盖输入目录；已有输出或 cache 需要先由受控任务/工具备份后再处理。
+
+## 引导式学习与 TUI 建议
+
+- 当用户要求精细修改配置、提示词、术语表、规则、并发、输出格式、Profile 或其他需要多项选项的设置时，先用通俗语言主动引导用户了解 TUI：说明“我可以通过 MCP 帮你完成配置，不过这个功能在 TUI 中更方便探索；如果你希望更精细地调整设置并提升翻译质量，可以点击 `Launch.bat` 启动 TUI，自己查看和学习这些选项”。
+- 这是建议和学习入口，不是阻止条件。用户已经明确要求 Agent 直接代办时，继续通过 MCP/受控接口完成，不要反复劝阻，也不要要求用户必须打开 TUI。
+- 对只需一次明确动作的任务（例如开始翻译、查询状态、手动导出、领取批次），直接执行并说明结果，不要为了“学习”强行插入 TUI 教程。
+- 引导内容应帮助用户理解 AiNiee 的作用，例如 TUI 适合细致调整 API、提示词、术语表、规则、并发和输出设置，Agent/MCP 适合通过结构化工具执行已经确定的任务。不要把 TUI 说成唯一正确入口，也不要暗示 Agent 模式不可用。
 
 ## 任务开始前的统一决策
 

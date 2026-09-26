@@ -153,7 +153,11 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_claim_batch",
-        "purpose": "Claim one translation batch for the registered Agent session.",
+        "purpose": "Claim one translation batch; a session may hold multiple claims and select a batch out of order.",
+    },
+    {
+        "tool_name": "agent_claim_batches",
+        "purpose": "Claim several bounded translation batches for parallel SubAgent fan-out.",
     },
     {
         "tool_name": "agent_submit_translation_batch",

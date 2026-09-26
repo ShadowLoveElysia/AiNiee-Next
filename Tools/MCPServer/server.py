@@ -1310,7 +1310,7 @@ def _build_mcp_app(
     @_mcp_tool(
         mcp,
         "Read the compact status and batch identifiers for an external-Agent task.",
-        "Use this recovery tool when the client lost the prepare or claim response. Full source items are returned only by agent_claim_batch.",
+        "Use this recovery tool when the client lost the prepare or claim response. Full source items are returned only by agent_claim_batch or agent_claim_batches.",
     )
     def agent_project_status(task_id: str, session_id: str) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
@@ -1382,14 +1382,14 @@ def _build_mcp_app(
 
     @_mcp_tool(
         mcp,
-        "Claim the next external-Agent translation batch.",
-        "Only one Agent session can claim a batch at a time.",
+        "Claim one external-Agent translation batch.",
+        "A session may hold multiple claims; pass batch_id to select a pending batch out of order.",
     )
-    def agent_claim_batch(task_id: str, session_id: str) -> Dict[str, Any]:
+    def agent_claim_batch(task_id: str, session_id: str, batch_id: Optional[str] = None) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
             _prepare_web_task_ledger_if_needed(task_id, session_id)
-            result = get_external_agent_batch_service().claim_batch(task_id, session_id)
+            result = get_external_agent_batch_service().claim_batch(task_id, session_id, batch_id)
             manager = getattr(ws_module, "task_manager", None)
             if manager is not None and getattr(manager, "task_id", None) == task_id:
                 manager.update_external_agent_status(
@@ -1398,6 +1398,33 @@ def _build_mcp_app(
             _bind_external_agent_context(
                 session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
             )
+            return result
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Claim multiple independent external-Agent translation batches.",
+        "Use this for bounded fan-out to SubAgents. Claims may be selected out of order; results remain staged until guarded commit.",
+    )
+    def agent_claim_batches(
+        task_id: str,
+        session_id: str,
+        batch_ids: Optional[List[str]] = None,
+        max_batches: int = 4,
+    ) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        try:
+            _prepare_web_task_ledger_if_needed(task_id, session_id)
+            result = get_external_agent_batch_service().claim_batches(
+                task_id, session_id, batch_ids, max_batches=max_batches
+            )
+            manager = getattr(ws_module, "task_manager", None)
+            if manager is not None and getattr(manager, "task_id", None) == task_id:
+                manager.update_external_agent_status(
+                    "running", task_id, "External Agent claimed parallel translation batches."
+                )
+            _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc

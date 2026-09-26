@@ -204,7 +204,7 @@ class ExternalAgentBatchWriter:
             raise ExternalAgentBatchWriterError("cache revision is required", "REVISION_REQUIRED")
         if isinstance(expected_revision, str) and expected_revision.startswith("sha256:"):
             expected_revision = expected_revision.removeprefix("sha256:")
-        if expected_revision != current_revision:
+        if expected_revision != current_revision and not record.get("allow_cache_rebase"):
             raise ExternalAgentBatchWriterError("cache revision is stale", "REVISION_CONFLICT")
 
         files = self._document_files(document)

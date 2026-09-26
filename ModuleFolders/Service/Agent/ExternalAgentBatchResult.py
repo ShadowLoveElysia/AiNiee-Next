@@ -316,6 +316,8 @@ class ExternalAgentBatchResultService:
                 record["cache_revision"] = cache_revision
             if payload.get("manifest_hash") is not None:
                 record["manifest_hash"] = payload["manifest_hash"]
+            if payload.get("allow_cache_rebase"):
+                record["allow_cache_rebase"] = True
             document["results"].append(record)
             document["updated_at"] = record["accepted_at"]
             self._write_document(path, document)

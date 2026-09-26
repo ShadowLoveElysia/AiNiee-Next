@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8766/skills/agent_session \
 
 `resume_task` 用于新会话接管断线任务：新会话必须先注册并通过 `request_external_mode`，`previous_session_id` 必须指向已断开或已过期、且曾获得外部模式授权的旧会话。服务会重新绑定任务中的 claimed 批次，释放旧会话持有的 writer lease；恢复后必须由新会话重新获取 writer lease。旧会话不能继续提交或写回。
 
-`agent_session` 还提供 `request_external_mode`，通过已鉴权的 Skills 端口给当前 session 请求运行时 `external_agent` 模式。它不会写入 Profile、`Resource/config.json` 或 `translation_execution_mode`；请求前必须完成 onboarding、注册 session 并在注册时提供用户确认。随后才可调用受控批次动作：`prepare_project`、`prepare_cache_project`、`project_status`、`claim_batch`、`submit_translation_batch`、`release_batch`、`resume_task`、`acquire_writer_lease` 和 `commit_cache_batch`。批次动作必须携带有效的 Agent session；输入路径受 Skills 工作区边界限制。`submit_translation_batch` 只做结构校验并写入任务专属 staging，`commit_cache_batch` 需要独立 writer lease，并复用确定性 writer 更新缓存。Skills 不接受 API key、MCP token 或任意内部路径，也不会让 Agent 直接改写缓存或输出文件。
+`agent_session` 还提供 `request_external_mode`，通过已鉴权的 Skills 端口给当前 session 请求运行时 `external_agent` 模式。它不会写入 Profile、`Resource/config.json` 或 `translation_execution_mode`；请求前必须完成 onboarding、注册 session 并在注册时提供用户确认。随后才可调用受控批次动作：`prepare_project`、`prepare_cache_project`、`project_status`、`claim_batch`、`claim_batches`、`submit_translation_batch`、`release_batch`、`resume_task`、`acquire_writer_lease` 和 `commit_cache_batch`。默认速度优先时使用 `claim_batches` 进行有界并行领取，也可给 `claim_batch` 传 `batch_id` 跳批次；质量优先时仍可逐批串行处理。批次动作必须携带有效的 Agent session；输入路径受 Skills 工作区边界限制。`submit_translation_batch` 只做结构校验并写入任务专属 staging，`commit_cache_batch` 需要独立 writer lease，并复用确定性 writer 更新缓存。Skills 不接受 API key、MCP token 或任意内部路径，也不会让 Agent 直接改写缓存或输出文件。
 
 `agent_session.prepare_project` 只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式以及其他非 TXT 输入不得传给逐行批次接口；服务会返回稳定错误码
 `STRUCTURED_FORMAT_REQUIRES_MCP_TASK`，必须使用 AiNiee 的格式感知任务入口。
