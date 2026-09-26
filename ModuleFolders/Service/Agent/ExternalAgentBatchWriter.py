@@ -21,6 +21,7 @@ import threading
 from typing import Any, Callable, Mapping, Sequence
 
 from ModuleFolders.Infrastructure.Cache.CacheItem import TranslationStatus
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import _interprocess_lock
 
 
 class ExternalAgentBatchWriterError(ValueError):
@@ -204,8 +205,9 @@ class ExternalAgentBatchWriter:
             raise ExternalAgentBatchWriterError("cache revision is required", "REVISION_REQUIRED")
         if isinstance(expected_revision, str) and expected_revision.startswith("sha256:"):
             expected_revision = expected_revision.removeprefix("sha256:")
-        if expected_revision != current_revision and not record.get("allow_cache_rebase"):
-            raise ExternalAgentBatchWriterError("cache revision is stale", "REVISION_CONFLICT")
+        if expected_revision != current_revision:
+            if not record.get("allow_cache_rebase") or not all(item.get("current_line_hash") for item in items):
+                raise ExternalAgentBatchWriterError("cache revision is stale", "REVISION_CONFLICT")
 
         files = self._document_files(document)
         seen: set[tuple[str, int]] = set()
@@ -237,7 +239,7 @@ class ExternalAgentBatchWriter:
             if "current_line_hash" in entry and entry["current_line_hash"] != _canonical_line_hash(current):
                 raise ExternalAgentBatchWriterError("cache item has changed", "ITEM_CONFLICT")
             translation = entry.get("translation", entry.get("translated_text"))
-            if not isinstance(translation, str) or not translation:
+            if not isinstance(translation, str) or (source.strip() and not translation.strip()):
                 raise ExternalAgentBatchWriterError("translation must be a non-empty string", "ITEM_INVALID")
             status = current.get("translation_status", TranslationStatus.UNTRANSLATED)
             existing = current.get("translated_text", "")
@@ -287,9 +289,9 @@ class ExternalAgentBatchWriter:
             except FileNotFoundError:
                 pass
 
-    def apply_staged_result(self, cache_path: str | Path, staged: Mapping[str, Any] | str | Path, *, writer_lease_id: str, batch_id: str | None = None) -> dict[str, Any]:
+    def apply_staged_result(self, cache_path: str | Path, staged: Mapping[str, Any] | str | Path, *, writer_lease_id: str, batch_id: str | None = None, receipt_path: Path | None = None) -> dict[str, Any]:
         path = self._resolve_cache_path(cache_path)
-        with self._lock:
+        with self._lock, _interprocess_lock(path):
             try:
                 raw = path.read_bytes()
             except OSError as exc:
@@ -305,22 +307,53 @@ class ExternalAgentBatchWriter:
             else:
                 staged_value = staged
             record, items = self._staged_records(staged_value, batch_id)
+            if self.writer_lease_validator and not self.writer_lease_validator(record, writer_lease_id):
+                raise ExternalAgentBatchWriterError("writer lease is not authorized", "WRITER_LEASE_UNAUTHORIZED")
+            if receipt_path is not None and receipt_path.exists():
+                receipt = _load_json(receipt_path)
+                if not isinstance(receipt, dict) or not all(k in receipt for k in ("before_hash", "after_hash", "result")):
+                    raise ExternalAgentBatchWriterError("commit receipt is invalid", "COMMIT_RECEIPT_CONFLICT")
+                if (receipt.get("task_id"), receipt.get("batch_id"), receipt.get("result_hash")) != (
+                    record.get("task_id"), record.get("batch_id"), record.get("result_hash")
+                ):
+                    raise ExternalAgentBatchWriterError("commit receipt differs from staged result", "COMMIT_RECEIPT_CONFLICT")
+                current_hash = _sha256_bytes(raw)
+                if current_hash == receipt["after_hash"]:
+                    return {**receipt["result"], "writer_lease_id": writer_lease_id, "replayed": True}
+                if current_hash != receipt["before_hash"]:
+                    raise ExternalAgentBatchWriterError("cache changed after interrupted commit", "ITEM_CONFLICT")
             candidate = deepcopy(document)
             self._validate_and_apply(candidate, record, items, raw, writer_lease_id)
             encoded = json.dumps(candidate, ensure_ascii=False, indent=2).encode("utf-8")
             backup = self._backup(path, raw)
-            try:
-                self._atomic_write(path, encoded)
-            except Exception:
-                # The pre-commit backup remains available and the old cache is
-                # still intact when os.replace itself fails.
-                raise
-            return {
+            result = {
                 "status": "persisted", "task_id": record.get("task_id"),
                 "batch_id": record.get("batch_id"), "writer_lease_id": writer_lease_id,
                 "backup_path": str(backup), "item_count": len(items),
                 "cache_revision": _sha256_bytes(encoded),
             }
+            if receipt_path is not None:
+                # Write-ahead receipt reconciles a crash between cache replacement
+                # and ledger acknowledgement without reapplying a translation.
+                receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                receipt = {
+                    "task_id": record.get("task_id"), "batch_id": record.get("batch_id"),
+                    "result_hash": record.get("result_hash"),
+                    "before_hash": _sha256_bytes(raw), "after_hash": result["cache_revision"],
+                    "result": result,
+                }
+                self._atomic_write(receipt_path, json.dumps(receipt, ensure_ascii=False).encode("utf-8"))
+            try:
+                if self.writer_lease_validator and not self.writer_lease_validator(record, writer_lease_id):
+                    raise ExternalAgentBatchWriterError("writer lease expired before persistence", "WRITER_LEASE_UNAUTHORIZED")
+                if path.read_bytes() != raw:
+                    raise ExternalAgentBatchWriterError("cache changed before persistence", "ITEM_CONFLICT")
+                self._atomic_write(path, encoded)
+            except Exception:
+                # The pre-commit backup remains available and the old cache is
+                # still intact when os.replace itself fails.
+                raise
+            return result
 
 
 __all__ = ["ExternalAgentBatchWriter", "ExternalAgentBatchWriterError", "BatchWriterError"]

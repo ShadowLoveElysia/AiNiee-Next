@@ -183,7 +183,15 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_submit_translation_batch",
-        "purpose": "Submit a structured batch with source hash, revision, and idempotency checks.",
+        "purpose": "Submit {index, translation} items; validate and auto-commit cache batches, returning compact receipts. auto_commit=false stages only; repair=true patches a rejected candidate.",
+    },
+    {
+        "tool_name": "agent_pending_work",
+        "purpose": "List unfinished batches and write errors without source text; check all_committed before final export.",
+    },
+    {
+        "tool_name": "agent_get_batch_repair",
+        "purpose": "Read issues and affected source/candidate items for one rejected batch; fix only those indexes with repair=true.",
     },
     {
         "tool_name": "agent_release_batch",
@@ -199,7 +207,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_commit_cache_batch",
-        "purpose": "Commit a staged cache-backed batch through the guarded deterministic writer.",
+        "purpose": "Retry writeback or manually commit a staged batch. Omit writer_lease_id for server-managed leasing; committed retries are idempotent.",
     },
     {
         "tool_name": "agent_export_task",
@@ -573,6 +581,12 @@ def get_server_instructions_text() -> str:
         " Batch claims default to the active Profile's external_agent_max_batches (8 if unset). "
         "Users may set any positive integer in TUI. Obtain explicit user consent before changing "
         "this setting, then pass confirm_agent_batch_change=true when saving it through /api/config."
+        " Submit items as {index, translation}. Cache-backed submissions auto-commit by default; "
+        "do not acquire a lease and commit each successful batch again. Use auto_commit=false only for staging. "
+        "Inspect repair_required via agent_get_batch_repair; submit corrected indexes with repair=true and a new key. "
+        "Retry identical requests with the same key. Stop automatic repair after needs_review. "
+        "Write errors require commit retries or conflict review, not retranslation. Refill idle SubAgent slots "
+        "as batches finish, and use agent_pending_work before final export."
     )
 
 

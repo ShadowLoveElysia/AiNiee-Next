@@ -7,9 +7,11 @@ normal deterministic writer to validate and persist later.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import threading
@@ -19,6 +21,7 @@ from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import (
     load_agent_max_batches,
     validate_agent_max_batches,
 )
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import _interprocess_lock
 
 SCHEMA = "ainiee.external_agent.batch.v1"
 DEFAULT_BATCH_SIZE = 50
@@ -86,7 +89,38 @@ class ExternalAgentBatchService:
         roots = allowed_input_roots if allowed_input_roots is not None else (self.project_root,)
         self.allowed_input_roots = tuple(Path(root).expanduser().resolve() for root in roots)
         self._lock = threading.RLock()
+        self._transactions = threading.local()
         self.state_root.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def transaction(self, task_id: str):
+        """Serialize a complete task operation, including nested workflow calls."""
+        path = self._task_path(task_id)
+        with self._lock:
+            active = getattr(self._transactions, "active", set())
+            if task_id in active:
+                yield
+                return
+            with _interprocess_lock(path):
+                self._transactions.active = active | {task_id}
+                try:
+                    yield
+                finally:
+                    self._transactions.active = active
+
+    @staticmethod
+    def _refresh_status(state: dict[str, Any]) -> None:
+        statuses = [b.get("status") for b in state["batches"]]
+        if all(s == "committed" for s in statuses):
+            state["status"] = "completed"
+        elif any(s == "claimed" for s in statuses):
+            state["status"] = "translating"
+        elif any(s in {"repair_required", "needs_review"} for s in statuses):
+            state["status"] = "needs_attention"
+        elif all(s in {"submitted", "committed"} for s in statuses):
+            state["status"] = "awaiting_commit"
+        else:
+            state["status"] = "ready"
 
     def _task_path(self, task_id: str) -> Path:
         task_id = _safe_id(task_id, "task_id")
@@ -112,7 +146,10 @@ class ExternalAgentBatchService:
     def _write(self, state: Mapping[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))
         temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(dict(state), ensure_ascii=False, indent=2), encoding="utf-8")
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(dict(state), handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary.replace(path)
 
     @staticmethod
@@ -179,7 +216,7 @@ class ExternalAgentBatchService:
                 "batch_id": f"batch_{len(batches) + 1:06d}", "index": len(batches), "status": "pending",
                 "revision": None, "source_hash": self._batch_hash(source_items), "items": source_items,
             })
-        with self._lock:
+        with self.transaction(task_id):
             if self._task_path(task_id).exists():
                 raise ExternalAgentBatchError("task already exists", "TASK_ALREADY_EXISTS")
             now = self._clock()
@@ -230,7 +267,7 @@ class ExternalAgentBatchService:
                 "revision": None, "source_hash": self._batch_hash(batch_items),
                 "cache_revision": manifest["cache_revision"], "items": batch_items,
             })
-        with self._lock:
+        with self.transaction(task_id):
             if self._task_path(task_id).exists():
                 raise ExternalAgentBatchError("task already exists", "TASK_ALREADY_EXISTS")
             now = self._clock()
@@ -251,7 +288,7 @@ class ExternalAgentBatchService:
             return self._project_view(state)
 
     def cache_path_for_writer(self, task_id: str, session_id: str) -> str:
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             cache_path = state.get("cache_path")
@@ -261,7 +298,7 @@ class ExternalAgentBatchService:
 
     def export_metadata(self, task_id: str, session_id: str) -> dict[str, Any]:
         """Return persisted paths and completion state for a manual export."""
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             return {
@@ -282,7 +319,7 @@ class ExternalAgentBatchService:
         except ValueError as exc:
             raise ExternalAgentBatchError(str(exc), "INVALID_BATCH_LIMIT_CONFIG") from exc
 
-    def _project_view(self, state: Mapping[str, Any]) -> dict[str, Any]:
+    def _project_view(self, state: Mapping[str, Any], *, include_batches: bool = True) -> dict[str, Any]:
         submitted_batches = sum(x.get("status") in {"submitted", "committed"} for x in state["batches"])
         committed_batches = sum(x.get("status") == "committed" for x in state["batches"])
         batch_summaries = [
@@ -294,6 +331,8 @@ class ExternalAgentBatchService:
                 "source_hash": item.get("source_hash"),
                 "item_count": len(item.get("items") or []),
                 "cache_revision": item.get("cache_revision"),
+                "issue_count": len(item.get("issues", [])),
+                "write_error": item.get("write_error"),
             }
             for item in state.get("batches", [])
         ]
@@ -312,11 +351,17 @@ class ExternalAgentBatchService:
             "submitted_batches": submitted_batches,
             "committed_batches": committed_batches,
             "completed_batches": committed_batches,
+            "pending_batches": sum(b.get("status") == "pending" for b in state["batches"]),
+            "claimed_batches": sum(b.get("status") == "claimed" for b in state["batches"]),
+            "repair_required_batches": sum(b.get("status") == "repair_required" for b in state["batches"]),
+            "needs_review_batches": sum(b.get("status") == "needs_review" for b in state["batches"]),
+            "awaiting_commit_batches": sum(b.get("status") == "submitted" for b in state["batches"]),
             # Keep batch identifiers available immediately after prepare and
             # through project_status. Source items remain on claim_batch so
             # discovery responses stay small enough for LLM clients.
-            "batches": batch_summaries,
-            "batch_ids": [item["batch_id"] for item in batch_summaries if item.get("batch_id")],
+            **({"batches": batch_summaries,
+                "batch_ids": [item["batch_id"] for item in batch_summaries if item.get("batch_id")]}
+               if include_batches else {}),
             "next_batch_id": next_batch.get("batch_id") if next_batch else None,
         }
 
@@ -329,7 +374,7 @@ class ExternalAgentBatchService:
     def claim_batch(
         self, task_id: str, session_id: str, batch_id: str | None = None
     ) -> dict[str, Any]:
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             if state["status"] == "completed":
@@ -344,7 +389,7 @@ class ExternalAgentBatchService:
                     raise ExternalAgentBatchError("batch has already been completed", "BATCH_NOT_AVAILABLE")
                 if batch.get("status") == "claimed":
                     if batch.get("claimed_session_id") == session_id:
-                        return {"status": "claimed", "task": self._project_view(state), "batch": self._batch_view(batch)}
+                        return {"status": "claimed", "task": self._project_view(state, include_batches=False), "batch": self._batch_view(batch)}
                     raise ExternalAgentBatchError("batch is claimed by another session", "BATCH_IN_USE")
             else:
                 # A resumed session must regain its in-flight claim before it
@@ -355,14 +400,16 @@ class ExternalAgentBatchService:
                     None,
                 )
                 if batch is not None:
-                    return {"status": "claimed", "task": self._project_view(state), "batch": self._batch_view(batch)}
+                    return {"status": "claimed", "task": self._project_view(state, include_batches=False), "batch": self._batch_view(batch)}
                 batch = next((x for x in state["batches"] if x["status"] == "pending"), None)
             if batch is None:
                 raise ExternalAgentBatchError("project has no remaining batches", "NO_BATCH_AVAILABLE")
+            if batch.get("status") != "pending":
+                raise ExternalAgentBatchError("use repair tools for this batch", "BATCH_REPAIR_REQUIRED")
             batch.update({"status": "claimed", "revision": state["revision"], "claimed_session_id": session_id, "claimed_at": self._clock()})
             state.update({"status": "translating", "updated_at": self._clock()})
             self._write(state)
-            return {"status": "claimed", "task": self._project_view(state), "batch": self._batch_view(batch)}
+            return {"status": "claimed", "task": self._project_view(state, include_batches=False), "batch": self._batch_view(batch)}
 
     def claim_batches(
         self,
@@ -391,7 +438,7 @@ class ExternalAgentBatchService:
                 raise ExternalAgentBatchError("batch_ids exceeds max_batches", "INVALID_BATCH_IDS")
         else:
             requested = []
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             if state["status"] == "completed":
@@ -408,6 +455,8 @@ class ExternalAgentBatchService:
                         raise ExternalAgentBatchError("batch does not exist", "BATCH_NOT_FOUND")
                     if batch.get("status") in {"submitted", "committed"}:
                         raise ExternalAgentBatchError("batch has already been completed", "BATCH_NOT_AVAILABLE")
+                    if batch.get("status") in {"repair_required", "needs_review"}:
+                        raise ExternalAgentBatchError("use repair tools for this batch", "BATCH_REPAIR_REQUIRED")
                     if batch.get("status") == "claimed" and batch.get("claimed_session_id") != session_id:
                         raise ExternalAgentBatchError("batch is claimed by another session", "BATCH_IN_USE")
                     batches.append(batch)
@@ -425,13 +474,13 @@ class ExternalAgentBatchService:
             state.update({"status": "translating", "updated_at": now})
             self._write(state)
             return {
-                "status": "claimed", "task": self._project_view(state),
+                "status": "claimed", "task": self._project_view(state, include_batches=False),
                 "batches": [self._batch_view(batch) for batch in batches],
             }
 
     def release_batch(self, task_id: str, session_id: str, batch_id: str) -> dict[str, Any]:
         """Release a claimed batch after a disconnect without accepting results."""
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             batch = next((item for item in state["batches"] if item.get("batch_id") == batch_id), None)
@@ -444,7 +493,8 @@ class ExternalAgentBatchService:
             if batch.get("claimed_session_id") != session_id:
                 raise ExternalAgentBatchError("session does not own this batch", "SESSION_MISMATCH")
             batch.update({"status": "pending", "claimed_session_id": None, "claimed_at": None})
-            state.update({"status": "ready", "updated_at": self._clock()})
+            self._refresh_status(state)
+            state["updated_at"] = self._clock()
             self._write(state)
             return {"status": "released", "task": self._project_view(state), "batch": self._batch_view(batch)}
 
@@ -470,7 +520,7 @@ class ExternalAgentBatchService:
             raise ExternalAgentBatchError(
                 "a resumed task requires a different session", "SESSION_ALREADY_ACTIVE"
             )
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, previous_session_id)
             if state.get("status") == "completed":
@@ -486,18 +536,10 @@ class ExternalAgentBatchService:
             state["resumed_at"] = self._clock()
 
             for batch in state.get("batches", []):
-                if batch.get("status") == "claimed" and batch.get("claimed_session_id") == previous_session_id:
+                if batch.get("claimed_session_id") == previous_session_id:
                     batch["claimed_session_id"] = session_id
 
-            statuses = [item.get("status") for item in state.get("batches", [])]
-            if statuses and all(status == "committed" for status in statuses):
-                state["status"] = "completed"
-            elif any(status == "claimed" for status in statuses):
-                state["status"] = "translating"
-            elif statuses and all(status in {"submitted", "committed"} for status in statuses):
-                state["status"] = "awaiting_commit"
-            else:
-                state["status"] = "ready"
+            self._refresh_status(state)
             state["updated_at"] = self._clock()
             self._write(state)
             return {
@@ -518,7 +560,7 @@ class ExternalAgentBatchService:
             if not isinstance(item, Mapping):
                 raise ExternalAgentBatchError("each item must be an object", "INVALID_RESULT_ITEMS")
             index = item.get("index")
-            if index is None and item.get("item_id") in expected_by_item_id:
+            if index is None and isinstance(item.get("item_id"), str) and item["item_id"] in expected_by_item_id:
                 index = expected_by_item_id[item["item_id"]]["index"]
             if isinstance(index, bool) or not isinstance(index, int) or index not in expected_by_index or index in seen:
                 raise ExternalAgentBatchError("result item index does not match claimed batch", "INVALID_RESULT_ITEMS")
@@ -540,8 +582,9 @@ class ExternalAgentBatchService:
         return sorted(result, key=lambda x: x["index"])
 
     def submit_translation_batch(self, task_id: str, session_id: str, batch_id: str, source_hash: str,
-                                 revision: int, idempotency_key: str, items: Any) -> dict[str, Any]:
-        with self._lock:
+                                 revision: int, idempotency_key: str, items: Any, *,
+                                 request_fingerprint: str | None = None) -> dict[str, Any]:
+        with self.transaction(task_id):
             state = self._read(task_id); self._validate_session(state, session_id)
             if not isinstance(batch_id, str) or not batch_id:
                 raise ExternalAgentBatchError("batch_id is required", "INVALID_BATCH_ID")
@@ -556,13 +599,13 @@ class ExternalAgentBatchService:
                 raise ExternalAgentBatchError("batch does not exist", "BATCH_NOT_FOUND")
             result_items = self._validate_result_items(batch["items"], items)
             fingerprint = _sha256(_canonical({"source_hash": source_hash, "revision": revision, "items": result_items}))
-            if batch["status"] == "submitted":
+            if batch["status"] in {"submitted", "committed"}:
                 if batch.get("idempotency_key") != idempotency_key:
                     raise ExternalAgentBatchError("batch has already been submitted", "BATCH_ALREADY_SUBMITTED")
                 if batch.get("result_fingerprint") != fingerprint:
                     raise ExternalAgentBatchError("idempotency key reused with different data", "IDEMPOTENCY_CONFLICT")
                 response = deepcopy(batch["submission"]); response["replayed"] = True; return response
-            if batch["status"] != "claimed":
+            if batch["status"] not in {"claimed", "repair_required", "needs_review"}:
                 raise ExternalAgentBatchError("batch is not currently claimed", "BATCH_NOT_CLAIMED")
             if batch.get("claimed_session_id") != session_id:
                 raise ExternalAgentBatchError("session does not own this batch", "SESSION_MISMATCH")
@@ -570,6 +613,11 @@ class ExternalAgentBatchService:
                 raise ExternalAgentBatchError("source hash does not match claimed batch", "SOURCE_HASH_MISMATCH")
             if batch.get("revision") != revision:
                 raise ExternalAgentBatchError("task revision is stale", "REVISION_CONFLICT")
+            from ModuleFolders.Service.Agent.ExternalAgentBatchResult import ExternalAgentBatchResultService
+
+            # Reject invalid translations before consuming the accepted-result key.
+            expected = ExternalAgentBatchResultService._expected_items(batch)
+            ExternalAgentBatchResultService._validate_items(expected, result_items)
             submission = {"status": "accepted", "task_id": task_id, "batch_id": batch_id, "revision": revision,
                           "next_revision": revision, "result_hash": _sha256(_canonical(result_items)),
                           "items": deepcopy(result_items), "replayed": False}
@@ -579,19 +627,23 @@ class ExternalAgentBatchService:
                 submission["allow_cache_rebase"] = bool(state.get("parallel_batches"))
             batch.update({"status": "submitted", "idempotency_key": idempotency_key, "result_fingerprint": fingerprint,
                           "submitted_at": self._clock(), "submission": submission})
-            state["status"] = "awaiting_commit" if all(x["status"] == "submitted" for x in state["batches"]) else "ready"
+            if request_fingerprint is not None:
+                batch["accepted_request"] = request_fingerprint
+            for key in ("candidate_items", "issues", "failed_request", "write_error"):
+                batch.pop(key, None)
+            self._refresh_status(state)
             state["updated_at"] = self._clock(); self._write(state)
             return deepcopy(submission)
 
     def get_project(self, task_id: str, session_id: str | None = None) -> dict[str, Any]:
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             if session_id is not None: self._validate_session(state, session_id)
             return self._project_view(state)
 
     def get_ledger(self, task_id: str, session_id: str | None = None) -> dict[str, Any]:
         """Return a session-authorized ledger snapshot for result staging."""
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             if session_id is not None:
                 self._validate_session(state, session_id)
@@ -606,7 +658,7 @@ class ExternalAgentBatchService:
         commit_result: Mapping[str, Any],
     ) -> dict[str, Any]:
         """Finalize ledger state only after the deterministic writer succeeds."""
-        with self._lock:
+        with self.transaction(task_id):
             state = self._read(task_id)
             self._validate_session(state, session_id)
             batch = next((item for item in state["batches"] if item.get("batch_id") == batch_id), None)
@@ -627,18 +679,17 @@ class ExternalAgentBatchService:
                 "backup_path_recorded": bool(commit_result.get("backup_path")),
                 "committed_at": self._clock(),
             })
+            batch.pop("write_error", None)
             if state.get("cache_path") and commit_result.get("cache_revision"):
                 state["cache_revision"] = commit_result["cache_revision"]
-                # Uncommitted batches carry the latest revision for observability.
-                # Their staged records keep the original snapshot and are
-                # rebased only after per-item conflict checks in the writer.
+                # Claimed/staged batches retain immutable fingerprints for retries.
                 for pending in state["batches"]:
-                    if pending.get("status") not in {"committed"}:
+                    if pending.get("status") == "pending":
                         pending["cache_revision"] = commit_result["cache_revision"]
                         for item in pending.get("items", []):
                             if isinstance(item, dict):
                                 item["cache_revision"] = commit_result["cache_revision"]
-            state["status"] = "completed" if all(item.get("status") == "committed" for item in state["batches"]) else "ready"
+            self._refresh_status(state)
             state["updated_at"] = self._clock()
             self._write(state)
             return {"status": "committed", "task": self._project_view(state), "batch": self._batch_view(batch)}

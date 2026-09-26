@@ -29,8 +29,9 @@ from ModuleFolders.Service.Agent.ExternalAgentBatch import (
     ExternalAgentBatchError,
     get_external_agent_batch_service,
 )
+from ModuleFolders.Service.Agent.ExternalAgentWorkflow import ExternalAgentWorkflow
 from ModuleFolders.Service.Agent.ExternalAgentBatchResult import get_external_agent_batch_result_service
-from ModuleFolders.Service.Agent.ExternalAgentBatchWriter import ExternalAgentBatchWriter, ExternalAgentBatchWriterError
+from ModuleFolders.Service.Agent.ExternalAgentBatchWriter import ExternalAgentBatchWriterError
 from ModuleFolders.Service.Agent.ExternalAgentWriterLease import get_external_agent_writer_lease_registry
 from Tools.MCPServer.docs import (
     build_security_policy,
@@ -1437,40 +1438,62 @@ def _build_mcp_app(
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc
 
+    def _agent_workflow():
+        return ExternalAgentWorkflow(
+            get_external_agent_batch_service(), get_external_agent_batch_result_service(),
+            get_external_agent_writer_lease_registry(),
+        )
+
+    def _export_after_commit(result, task_id, session_id):
+        if result.get("progress", {}).get("status") == "completed" and not result.get("replayed"):
+            cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
+            try:
+                exported = _finalize_external_agent_output(ws_module, task_id, cache_path)
+                result["export"] = exported or {"status": "required", "next_action": "agent_export_task"}
+            except Exception:
+                result["export"] = {"status": "failed", "next_action": "agent_export_task"}
+            if result["export"].get("status") != "exported":
+                result["next_action"] = "agent_export_task"
+        return result
+
     @_mcp_tool(
         mcp,
-        "Submit one structured external-Agent translation batch.",
-        "Validates source hash, revision, item indices and idempotency; it does not write AiNiee cache or output files.",
+        "Submit a translation batch; validate and automatically commit cache-backed results.",
+        'items must contain {"index": <claimed index>, "translation": "<translated text>"} for every '
+        "claimed item. Copy batch_id/source_hash/revision from claim. Do not use translated_text or target_text. "
+        "By default the server acquires the writer lease, serializes writeback and returns a compact receipt. "
+        "auto_commit=false retains staging-only behavior. repair=true merges only supplied corrected indexes "
+        "with a saved rejected candidate. Changed repairs use a new idempotency_key; retries use the same key. "
+        "repair_required/needs_review are not completed; query agent_get_batch_repair. Submitted with write_error "
+        "means retry commit, not retranslation. Refill available worker slots as receipts arrive.",
     )
     def agent_submit_translation_batch(
-        task_id: str,
-        session_id: str,
-        batch_id: str,
-        source_hash: str,
-        revision: int,
-        idempotency_key: str,
-        items: List[Dict[str, Any]],
+        task_id: str, session_id: str, batch_id: str, source_hash: str,
+        revision: int, idempotency_key: str, items: List[Dict[str, Any]],
+        auto_commit: bool = True, repair: bool = False,
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
-            batch_service = get_external_agent_batch_service()
-            result = batch_service.submit_translation_batch(
-                task_id, session_id, batch_id, source_hash, revision, idempotency_key, items
+            result = _agent_workflow().submit(
+                task_id, session_id, batch_id, source_hash, revision, idempotency_key, items,
+                auto_commit=auto_commit, repair=repair,
             )
             _bind_external_agent_context(session_id, task_id=task_id, batch_id=batch_id)
-            ledger = batch_service.get_ledger(task_id, session_id)
-            staged = get_external_agent_batch_result_service().validate_and_stage(
-                ledger,
-                result,
-                idempotency_key=idempotency_key,
-            )
-            result["staging_status"] = "replayed" if staged.get("replayed") else "staged"
-            result["staged_result_hash"] = staged.get("result_hash")
-            return result
-        except ExternalAgentBatchError as exc:
-            raise ValueError(f"{exc.code}: {exc}") from exc
+            return _export_after_commit(result, task_id, session_id)
         except ValueError as exc:
-            raise ValueError(str(exc)) from exc
+            raise ValueError(f"{getattr(exc, 'code', 'INVALID_BATCH')}: {exc}") from exc
+
+    @_mcp_tool(mcp, "List unfinished batches without source text.",
+               "Check before final export. Resolve repair_required, needs_review and write errors; only all_committed permits completion.")
+    def agent_pending_work(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        return _agent_workflow().pending_work(task_id, session_id)
+
+    @_mcp_tool(mcp, "Read rejected candidate details for one batch.",
+               "Returns issues and affected source items with candidate_translation. Fix only those items, submit repair=true with a new key. After three rejected candidates stop automatic retries and report needs_review.")
+    def agent_get_batch_repair(task_id: str, session_id: str, batch_id: str) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        return _agent_workflow().get_repair(task_id, session_id, batch_id)
 
     @_mcp_tool(
         mcp,
@@ -1492,7 +1515,7 @@ def _build_mcp_app(
         (
             "Register the new Agent session first. Pass the previous session_id; it must be expired or "
             "disconnected (or no longer visible after a service restart). The task claim is rebound, "
-            "old writer leases are released, and the new session must acquire a writer lease again."
+            "old writer leases are released. The automatic submission/commit path acquires a fresh lease for the new session."
         ),
     )
     def agent_resume_task(
@@ -1535,78 +1558,23 @@ def _build_mcp_app(
 
     @_mcp_tool(
         mcp,
-        "Commit one staged cache-backed Agent batch through the deterministic writer.",
-        "Requires a valid writer lease and staged items containing opaque cache locators and cache revision.",
+        "Retry or manually commit a validated cache batch.",
+        "Normally submit auto-commits. Omit writer_lease_id to let the server acquire it. "
+        "Retry accepted batches after transient write errors; do not retranslate cache conflicts.",
     )
     def agent_commit_cache_batch(
-        task_id: str,
-        session_id: str,
-        writer_lease_id: str,
+        task_id: str, session_id: str, writer_lease_id: Optional[str] = None,
         batch_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         if not isinstance(batch_id, str) or not batch_id.strip():
             raise ValueError("BATCH_ID_REQUIRED: batch_id is required for commit")
-        leases = get_external_agent_writer_lease_registry()
-        if not leases.validate(writer_lease_id, task_id, session_id):
-            raise ValueError("WRITER_LEASE_UNAUTHORIZED: writer lease is invalid or expired")
         try:
-            batch_service = get_external_agent_batch_service()
-            ledger = batch_service.get_ledger(task_id, session_id)
-            batch = next(
-                (item for item in ledger.get("batches", []) if item.get("batch_id") == batch_id),
-                None,
-            )
-            if batch is None:
-                raise ExternalAgentBatchError("batch does not exist", "BATCH_NOT_FOUND")
-            if batch.get("status") != "submitted":
-                raise ExternalAgentBatchError("batch is not submitted", "BATCH_NOT_SUBMITTED")
-            cache_path = batch_service.cache_path_for_writer(task_id, session_id)
-            staged_result = get_external_agent_batch_result_service().read_staged(task_id)
-            writer = ExternalAgentBatchWriter(
-                PROJECT_ROOT,
-                writer_lease_validator=lambda record, lease: leases.validate(lease, task_id, session_id),
-            )
-            result = writer.apply_staged_result(
-                cache_path,
-                staged_result,
-                writer_lease_id=writer_lease_id,
-                batch_id=batch_id,
-            )
-            ledger_result = batch_service.mark_batch_committed(
-                task_id, session_id, batch_id, writer_lease_id, result
-            )
-            leases.release(writer_lease_id, task_id, session_id)
+            result = _agent_workflow().commit(task_id, session_id, batch_id, writer_lease_id)
             _bind_external_agent_context(session_id, task_id=task_id, batch_id=batch_id)
-            result["ledger"] = ledger_result
-            if ledger_result.get("task", {}).get("status") == "completed":
-                try:
-                    exported = _finalize_external_agent_output(
-                        ws_module,
-                        task_id,
-                        cache_path,
-                    )
-                    if exported:
-                        result["export"] = exported
-                except Exception as exc:
-                    manager = getattr(ws_module, "task_manager", None)
-                    if manager is not None:
-                        manager.update_external_agent_status(
-                            "failed",
-                            task_id,
-                            f"Cache committed but final export failed: {exc}",
-                        )
-                    result["export"] = {
-                        "status": "failed",
-                        "error": str(exc),
-                        "cache_path": cache_path,
-                    }
-            return result
-        except ExternalAgentBatchWriterError as exc:
-            raise ValueError(f"{exc.code}: {exc}") from exc
+            return _export_after_commit(result, task_id, session_id)
         except ValueError as exc:
-            code = getattr(exc, "code", None)
-            raise ValueError(f"{code}: {exc}" if code else str(exc)) from exc
+            raise ValueError(f"{getattr(exc, 'code', 'COMMIT_FAILED')}: {exc}") from exc
 
     # Keep the remaining Web/API tools below this point.
     @_mcp_tool(

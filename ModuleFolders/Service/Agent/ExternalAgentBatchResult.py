@@ -17,6 +17,7 @@ import re
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import _interprocess_lock
 
 SCHEMA = "ainiee.external_agent.batch_result.v1"
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
@@ -183,6 +184,8 @@ class ExternalAgentBatchResultService:
             if "source" in item and _as_text(item["source"], "source") != source:
                 raise ExternalAgentBatchResultError("result source does not match ledger", "SOURCE_MISMATCH")
             translation = _as_text(item.get("translation"), "translation")
+            if source.strip() and not translation.strip():
+                raise ExternalAgentBatchResultError("translation must not be empty", "EMPTY_TRANSLATION")
             if translation.count("\n") != source.count("\n"):
                 raise ExternalAgentBatchResultError(
                     "translation newline structure does not match source", "NEWLINE_MISMATCH"
@@ -269,14 +272,14 @@ class ExternalAgentBatchResultService:
             raise ExternalAgentBatchResultError("result revision is stale", "REVISION_CONFLICT")
 
         # Cache-backed ledgers have a second, independent revision.  The task
-        # revision protects claim/submit ordering; the cache revision protects
+        # revision binds the claim snapshot; the cache revision protects
         # the deterministic writer from applying a result to a changed JSON
         # document.  Preserve it on the staged record instead of allowing the
         # numeric task revision to masquerade as a cache revision.
         cache_revision = payload.get("cache_revision")
-        expected_cache_revision = ledger_value.get("cache_revision")
+        expected_cache_revision = batch.get("cache_revision")
         if expected_cache_revision is None:
-            expected_cache_revision = batch.get("cache_revision")
+            expected_cache_revision = ledger_value.get("cache_revision")
         if expected_cache_revision is None:
             item_revisions = {
                 item.get("cache_revision") for item in expected if item.get("cache_revision") is not None
@@ -294,7 +297,7 @@ class ExternalAgentBatchResultService:
             raise ExternalAgentBatchResultError("idempotency_key is invalid", "INVALID_IDEMPOTENCY_KEY")
         result_hash = _sha256(_canonical(accepted_items))
         fingerprint = _sha256(_canonical({"batch_id": batch_id, "source_hash": provided_hash, "revision": provided_revision, "items": accepted_items}))
-        with self._lock:
+        with self._lock, _interprocess_lock(self._results_path(task_id)):
             path = self._results_path(task_id)
             document = self._read_document(path, task_id)
             for record in document["results"]:
@@ -316,7 +319,7 @@ class ExternalAgentBatchResultService:
                 record["cache_revision"] = cache_revision
             if payload.get("manifest_hash") is not None:
                 record["manifest_hash"] = payload["manifest_hash"]
-            if payload.get("allow_cache_rebase"):
+            if ledger_value.get("parallel_batches"):
                 record["allow_cache_rebase"] = True
             document["results"].append(record)
             document["updated_at"] = record["accepted_at"]
@@ -327,7 +330,7 @@ class ExternalAgentBatchResultService:
 
     def read_staged(self, task_id: str) -> dict[str, Any]:
         """Read staged records for integration by a later deterministic writer."""
-        with self._lock:
+        with self._lock, _interprocess_lock(self._results_path(task_id)):
             return deepcopy(self._read_document(self._results_path(_safe_task_id(task_id)), _safe_task_id(task_id)))
 
 

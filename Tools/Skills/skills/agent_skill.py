@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from ModuleFolders.Service.Agent.ExternalAgentWorkflow import ExternalAgentWorkflow
 from ModuleFolders.Service.Agent.ExternalAgentBatch import (
     ExternalAgentBatchError,
     ExternalAgentBatchService,
@@ -20,7 +21,6 @@ from ModuleFolders.Service.Agent.ExternalAgentBatchResult import (
     get_external_agent_batch_result_service,
 )
 from ModuleFolders.Service.Agent.ExternalAgentBatchWriter import (
-    ExternalAgentBatchWriter,
     ExternalAgentBatchWriterError,
 )
 from ModuleFolders.Service.Agent.ExternalAgentSession import (
@@ -96,8 +96,9 @@ class AgentSkill(Skill):
             description=(
                 "Register, renew, inspect, or disconnect an external Agent session; "
                 "prepare and exchange controlled translation and read-analysis batches. "
-                "Results are validated and staged before a separate writer commits "
-                "a cache; structured formats use the Web prewarmed cache route."
+                "Results are validated and automatically committed by the guarded writer; "
+                "repair_required needs corrected items, write_error needs commit retry. "
+                "TXT without cache stays staged; this adapter does not export final files."
             ),
             category="agent",
             parameters=[
@@ -105,7 +106,7 @@ class AgentSkill(Skill):
                     name="action",
                     description=(
                         "Operation: register, heartbeat, status, unregister, prepare_project, "
-                        "prepare_cache_project, project_status, claim_batch, claim_batches, submit_translation_batch, "
+                        "prepare_cache_project, project_status, claim_batch, claim_batches, submit_translation_batch, pending_work, get_batch_repair, "
                         "release_batch, resume_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
                     ),
                     type="string",
@@ -113,7 +114,7 @@ class AgentSkill(Skill):
                     enum=[
                         "register", "heartbeat", "status", "unregister",
                         "prepare_project", "prepare_cache_project", "project_status",
-                        "claim_batch", "claim_batches", "submit_translation_batch", "release_batch",
+                        "claim_batch", "claim_batches", "submit_translation_batch", "release_batch", "pending_work", "get_batch_repair",
                         "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task",
                         "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch",
                         "release_read_batch",
@@ -143,7 +144,9 @@ class AgentSkill(Skill):
                 SkillParameter(name="source_hash", description="SHA-256 hash returned for the claimed batch.", type="string"),
                 SkillParameter(name="revision", description="Task revision returned for the claimed batch.", type="integer"),
                 SkillParameter(name="idempotency_key", description="Stable key for safe submission retries.", type="string"),
-                SkillParameter(name="items", description="Complete structured translation result for every claimed item.", type="array"),
+                SkillParameter(name="items", description="Array of {index: claimed index, translation: translated text}. Complete batch, or corrected indexes when repair=true.", type="array"),
+                SkillParameter(name="auto_commit", description="Automatically validate and commit cache results; default true.", type="boolean", default=True),
+                SkillParameter(name="repair", description="Merge corrected indexes into a rejected candidate; use a new idempotency key for changes.", type="boolean", default=False),
                 SkillParameter(name="writer_lease_id", description="Lease returned by acquire_writer_lease.", type="string"),
                 SkillParameter(name="mode_task_id", description="Optional task scope for request_external_mode.", type="string"),
                 SkillParameter(name="previous_session_id", description="Previous disconnected session id for resume_task.", type="string"),
@@ -314,17 +317,22 @@ class AgentSkill(Skill):
                 for field in ("revision", "items"):
                     if field not in args:
                         return SkillResult.fail(f"Missing required parameter: {field}", "MISSING_PARAM")
-                result = self.batch_service.submit_translation_batch(
+                result = ExternalAgentWorkflow(self.batch_service, self.result_service, self.writer_lease_registry).submit(
                     args["task_id"], session_id, args["batch_id"], args["source_hash"],
                     args["revision"], args["idempotency_key"], args["items"],
+                    auto_commit=args.get("auto_commit", True), repair=args.get("repair", False),
                 )
-                ledger = self.batch_service.get_ledger(args["task_id"], session_id)
-                staged = self.result_service.validate_and_stage(
-                    ledger, result, idempotency_key=args["idempotency_key"]
-                )
-                result["staging_status"] = "replayed" if staged.get("replayed") else "staged"
-                result["staged_result_hash"] = staged.get("result_hash")
                 return SkillResult.ok(result)
+
+            if action in {"pending_work", "get_batch_repair"}:
+                missing = self._required(args, "task_id", *(["batch_id"] if action == "get_batch_repair" else []))
+                if missing:
+                    return missing
+                workflow = ExternalAgentWorkflow(self.batch_service, self.result_service, self.writer_lease_registry)
+                return SkillResult.ok(
+                    workflow.pending_work(args["task_id"], session_id) if action == "pending_work" else
+                    workflow.get_repair(args["task_id"], session_id, args["batch_id"])
+                )
 
             if action == "acquire_writer_lease":
                 missing = self._required(args, "task_id")
@@ -333,34 +341,12 @@ class AgentSkill(Skill):
                 return SkillResult.ok(self.writer_lease_registry.acquire(args["task_id"], session_id))
 
             if action == "commit_cache_batch":
-                missing = self._required(args, "task_id", "batch_id", "writer_lease_id")
+                missing = self._required(args, "task_id", "batch_id")
                 if missing:
                     return missing
-                lease_id = args["writer_lease_id"]
-                leases = self.writer_lease_registry
-                if not leases.validate(lease_id, args["task_id"], session_id):
-                    return SkillResult.fail("writer lease is invalid or expired", "WRITER_LEASE_UNAUTHORIZED")
-                ledger = self.batch_service.get_ledger(args["task_id"], session_id)
-                batch = next((item for item in ledger.get("batches", []) if item.get("batch_id") == args["batch_id"]), None)
-                if batch is None:
-                    return SkillResult.fail("batch does not exist", "BATCH_NOT_FOUND")
-                if batch.get("status") != "submitted":
-                    return SkillResult.fail("batch is not submitted", "BATCH_NOT_SUBMITTED")
-                cache_path = self.batch_service.cache_path_for_writer(args["task_id"], session_id)
-                staged = self.result_service.read_staged(args["task_id"])
-                writer = ExternalAgentBatchWriter(
-                    self.batch_service.project_root,
-                    writer_lease_validator=lambda record, lease: leases.validate(lease, args["task_id"], session_id),
-                )
-                result = writer.apply_staged_result(
-                    cache_path, staged, writer_lease_id=lease_id, batch_id=args["batch_id"]
-                )
-                ledger_result = self.batch_service.mark_batch_committed(
-                    args["task_id"], session_id, args["batch_id"], lease_id, result
-                )
-                leases.release(lease_id, args["task_id"], session_id)
-                result["ledger"] = ledger_result
-                return SkillResult.ok(result)
+                return SkillResult.ok(ExternalAgentWorkflow(
+                    self.batch_service, self.result_service, self.writer_lease_registry
+                ).commit(args["task_id"], session_id, args["batch_id"], args.get("writer_lease_id")))
 
             return SkillResult.fail(f"Unknown agent batch action: {action}", "INVALID_ACTION")
         except (ExternalAgentSessionError, ExternalAgentBatchError, ExternalAgentBatchResultError, ExternalAgentBatchWriterError, ExternalAgentWriterLeaseError, SkillPathError, ValueError) as exc:
@@ -373,7 +359,7 @@ class AgentSkill(Skill):
             "user_confirmed_external_processing", "active_only", "last_task_id", "active_batch_id", "reason",
             "input_path", "cache_path", "task_id", "batch_id", "batch_ids", "max_batches", "execution_mode", "source_hash", "revision",
             "idempotency_key", "items", "writer_lease_id", "mode_task_id", "previous_session_id",
-            "path", "project_type",
+            "path", "project_type", "auto_commit", "repair",
         }
         invalid = reject_unknown_skill_fields(args, allowed, skill_name="agent_session")
         if invalid:
@@ -384,7 +370,7 @@ class AgentSkill(Skill):
 
         if action in {
             "prepare_project", "prepare_cache_project", "project_status", "claim_batch", "claim_batches", "submit_translation_batch",
-            "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch",
+            "release_batch", "resume_task", "acquire_writer_lease", "commit_cache_batch", "pending_work", "get_batch_repair",
         }:
             return self._execute_batch(action, args)
 

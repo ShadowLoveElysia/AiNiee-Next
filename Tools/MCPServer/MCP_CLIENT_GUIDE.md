@@ -102,15 +102,24 @@ _mcp_security_notice
 
 推荐调用顺序：`agent_register` → `agent_request_external_mode` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
-外部 Agent 翻译原型顺序：`agent_register` → `agent_request_external_mode` → `agent_prepare_project` →
-`agent_claim_batches`（或 `agent_claim_batch`）→ `agent_submit_translation_batch`。默认速度优先时，
-`agent_claim_batches` 可一次领取多个批次，`agent_claim_batch` 也可传 `batch_id` 跳批次领取；提交只写入受控批次账本，
-不会直接写入 AiNiee 缓存或最终输出；断线时使用 `agent_release_batch`，不要重用过期 session。
-如果要基于已有 AiNiee 缓存继续翻译，使用 `agent_prepare_cache_project`；它会返回服务端生成的
-opaque item locator 和 cache revision，Agent 不得自行构造 storage_path 或 text_index。
-正式写回还必须先调用 `agent_acquire_writer_lease`，再调用 `agent_commit_cache_batch`。
-提交时只需传任务、批次和 writer lease；缓存路径与 staged 结果由 AiNiee 服务端绑定和读取。
-没有 writer lease、cache revision 或 opaque locator 时，结果只能停留在 staging，不能写入正式缓存。
+外部 Agent 翻译顺序：注册会话 → 请求 external_agent 模式 → 准备项目/缓存 →
+`agent_claim_batches`（或 `agent_claim_batch`）→ `agent_submit_translation_batch`。
+缓存任务默认 `auto_commit=true`：服务端校验完整批次、暂存有效结果、自动获取 writer lease、串行安全写回；
+回执 `status="committed"` 才表示缓存落盘。已成功写回的批次无需再调用租约/提交工具。
+正式写回仍保留源/hash/行冲突检查、备份和原子替换。提交、暂存和缓存写入使用任务锁与文件锁，MCP/Skills 共用此路径。
+直接 `agent_prepare_project` 的普通 TXT 若无受控缓存，仍只暂存，不能冒充完成或导出。
+使用 `auto_commit=false` 保留旧的暂存模式，之后调用 `agent_commit_cache_batch`；writer_lease_id 可省略，由服务端管理，旧租约调用仍兼容。
+
+提交 items 示例：`[{"index":0,"translation":"译文"}]`（示例单条；首次请求必须覆盖该批全部 index）。
+batch_id/source_hash/revision 必须来自 claim，译文字段是 translation，不是 translated_text/target_text。
+响应默认只返回批次标识、状态、进度和问题，不重复回传全文；领取也不重复返回全任务批次目录。
+完整目录用 `agent_project_status` 按需查询。
+
+- `repair_required`：调用 `agent_get_batch_repair` 获得受影响的原文和 candidate_translation，使用新 idempotency_key、`repair=true` 提交修正的 index/translation；服务端保留有效条目并合成完整批次重新校验。有效批次不受阻塞。
+- 三次不同的无效候选后标记 `needs_review`，Agent 必须停止该批自动重试并报告；完全相同的失败重放不累计次数。此校验针对结构完整性，不保证语义正确。
+- `submitted` 加 `write_error`：有效译文已保存，缓存写回未确认。解决 I/O/租约问题后重试 `agent_commit_cache_batch`；源文/人工编辑冲突需检查受控状态，不能覆盖或盲目重译。
+- 相同请求重试必须复用 idempotency_key；修改译文使用新 key。已 committed 的相同请求返回幂等收据，不再次导出或写入。
+- 维持有限 SubAgent 工作池，完成即补批，不等整轮；最后调用 `agent_pending_work`，未完成清单为空且 `all_committed=true` 后才能最终导出。语义复核为可选阶段。
 
 `agent_prepare_project` 的返回值包含 `next_batch_id`、`batch_ids` 和不含正文的 `batches` 摘要；
 如果客户端丢失了准备或领取响应，可用 `agent_project_status` 恢复这些字段，再调用
@@ -152,7 +161,7 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 端会先执行无 API 的解析预热并生成受控 `AinieeCacheData.json`，随后首次调用
 `agent_prepare_project`、`agent_project_status` 或 `agent_claim_batch` 会自动建立缓存账本，
 不再需要先跑一次普通翻译。全部缓存批次提交并写回后，MCP 会自动触发最终格式导出；提交接口
-返回的 `export` 字段包含输出目录。若只完成 staging 或没有 writer lease，则不会导出。
+返回的 `export` 字段包含输出目录。若只完成 staging、仍有修复项或写入错误，则不会导出。
 
 如果任务已经显示全部批次 `committed`，但自动导出没有发生（例如 WebServer 重启、任务状态回到
 `idle` 或自动导出阶段中断），调用 `agent_export_task(task_id, session_id)` 手动导出。旧账本
@@ -165,8 +174,7 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 
 会话断线后不要复用过期的 `session_id`。先用新的 Agent 实例调用 `agent_register`，再调用
 `agent_resume_task(task_id, session_id, previous_session_id)`。旧会话必须已经断开或过期；任务账本
-会把仍在领取中的批次绑定到新会话，保留已经 staging 的结果，并释放旧 writer lease。恢复后必须
-重新调用 `agent_acquire_writer_lease`，然后才能提交写回。
+会把仍在领取中的批次绑定到新会话，保留已经 staging 的结果，并释放旧 writer lease。恢复后直接重试提交或 `agent_commit_cache_batch`，由服务端重新获取 writer lease；也可以显式申请新租约。
 
 ## Calling Patterns
 
