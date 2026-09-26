@@ -1,4 +1,6 @@
 {
+    "setting_external_agent_max_batches": "Agent の一度の取得バッチ数",
+    "setting_external_agent_max_batches_desc": "既定値は 8。8 を超える値を含む正の整数を設定できます。現在の Profile の設定を使用し、各バッチの項目数は変わりません。大きい値は並列処理とリソース使用量を増やします。Agent が変更するにはユーザーの明示的な同意が必要です。",
     "setting_epub_language_follow_source": "自動言語タグの追従先",
     "setting_epub_language_follow_source_desc": "EPUB 言語タグが自動の場合のみ有効。表示言語または翻訳先言語を選択できます。既定は表示言語で、言語の直接指定と無効設定は変わりません。",
     "setting_epub_paragraph_preset": "本文段落の組版プリセット",

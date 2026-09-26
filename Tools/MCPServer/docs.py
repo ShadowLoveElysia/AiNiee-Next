@@ -157,7 +157,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_claim_batches",
-        "purpose": "Claim several bounded translation batches for parallel SubAgent fan-out.",
+        "purpose": "Claim batches for parallel SubAgents; omit max_batches to follow the TUI setting (default 8, configurable above 8). Changing that setting requires explicit user consent.",
     },
     {
         "tool_name": "agent_submit_translation_batch",
@@ -546,6 +546,9 @@ def get_server_instructions_text() -> str:
         "lease is 120 seconds; request up to 3600 seconds (60 minutes) with "
         "requested_lease_seconds when a long task needs it. Use "
         "agent_status to inspect connection state."
+        " Batch claims default to the active Profile's external_agent_max_batches (8 if unset). "
+        "Users may set any positive integer in TUI. Obtain explicit user consent before changing "
+        "this setting, then pass confirm_agent_batch_change=true when saving it through /api/config."
     )
 
 
@@ -722,6 +725,9 @@ def _build_call_pattern(route: Dict[str, str]) -> Dict[str, Any]:
     }
 
     if path == "/api/config":
+        pattern["confirm_agent_batch_change"] = (
+            "set true only with explicit user consent to change external_agent_max_batches"
+        )
         pattern["confirm_advanced_change"] = (
             "set to true only after the user explicitly confirms MCP host/port changes"
         )

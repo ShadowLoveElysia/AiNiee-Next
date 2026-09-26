@@ -228,6 +228,17 @@ register_config(ConfigItem(
 ))
 
 register_config(ConfigItem(
+    key="external_agent_max_batches",
+    default=8,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.INT,
+    i18n_key="setting_external_agent_max_batches",
+    i18n_desc_key="setting_external_agent_max_batches_desc",
+    min_value=1,
+    category="project_general"
+))
+
+register_config(ConfigItem(
     key="external_agent_mcp_guide",
     default={},
     level=ConfigLevel.USER,

@@ -6,6 +6,7 @@ import rapidjson as json
 
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.default_config import DEFAULT_CONFIG
+from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import AGENT_MAX_BATCHES_KEY, validate_agent_max_batches
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -242,6 +243,8 @@ def normalize_rules_payload(payload: dict, *, infer_missing_switches: bool = Tru
 
 
 def split_effective_config(config: dict, *, prefer_sdk_request_mode: bool = False) -> tuple[dict, dict, dict]:
+    if isinstance(config, dict) and AGENT_MAX_BATCHES_KEY in config:
+        validate_agent_max_batches(config[AGENT_MAX_BATCHES_KEY])
     sync_sdk_request_mode_config(config, prefer_sdk_request_mode=prefer_sdk_request_mode)
 
     settings = {}

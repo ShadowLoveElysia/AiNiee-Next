@@ -23,6 +23,7 @@ ROOT_CONFIG_FILE = os.path.join(RESOURCE_ROOT, "config.json")
 PROFILES_PATH = os.path.join(RESOURCE_ROOT, "profiles")
 
 from Tools.MCPServer.runtime import inspect_mcp_runtime
+from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import ensure_agent_batch_change_confirmed
 from Tools.MCPServer.agent_session import get_external_agent_session_registry
 from ModuleFolders.Service.Agent.ExternalAgentBatch import (
     ExternalAgentBatchError,
@@ -729,6 +730,7 @@ def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str
                 query: Optional[Dict[str, Any]] = None,
                 body: Optional[Any] = None,
                 confirm_advanced_change: bool = False,
+                confirm_agent_batch_change: bool = False,
             ) -> Any:
                 """
                 Proxy one WebServer API route through MCP.
@@ -737,8 +739,11 @@ def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str
                 query maps to URL query params.
                 body maps to the JSON request body.
                 confirm_advanced_change must be true before changing MCP advanced settings.
+                confirm_agent_batch_change requires explicit user consent for batch limit changes.
                 """
                 _ensure_advanced_change_confirmed(route_path, body, confirm_advanced_change)
+                if route_path == "/api/config":
+                    ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
                 rendered_path = _render_path_template(route_path, path_params)
                 return api.request(route_method, rendered_path, params=query, payload=body)
 
@@ -1405,13 +1410,13 @@ def _build_mcp_app(
     @_mcp_tool(
         mcp,
         "Claim multiple independent external-Agent translation batches.",
-        "Use this for bounded fan-out to SubAgents. Claims may be selected out of order; results remain staged until guarded commit.",
+        "Omit max_batches to follow the TUI external_agent_max_batches setting (default 8, user-configurable above 8). A smaller request is allowed; raising the setting requires explicit user consent. Claims may be selected out of order.",
     )
     def agent_claim_batches(
         task_id: str,
         session_id: str,
         batch_ids: Optional[List[str]] = None,
-        max_batches: int = 4,
+        max_batches: Optional[int] = None,
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
@@ -1623,7 +1628,8 @@ def _build_mcp_app(
         (
             "Use get_mcp_tool_categories and get_mcp_tool_catalog(category=...) to choose "
             "the route. Do not guess endpoint paths or mix this MCP proxy with direct Web UI HTTP calls. "
-            "Internal routes are blocked."
+            "Internal routes are blocked. Changing external_agent_max_batches via /api/config "
+            "requires explicit user consent and confirm_agent_batch_change=true."
         ),
     )
     def call_web_api(
@@ -1633,9 +1639,12 @@ def _build_mcp_app(
         query: Optional[Dict[str, Any]] = None,
         body: Optional[Any] = None,
         confirm_advanced_change: bool = False,
+        confirm_agent_batch_change: bool = False,
     ) -> Any:
         normalized_path = _normalize_public_api_path(path)
         _ensure_advanced_change_confirmed(normalized_path, body, confirm_advanced_change)
+        if normalized_path == "/api/config":
+            ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
         rendered_path = _render_path_template(normalized_path, path_params)
         return api.request(method.upper(), rendered_path, params=query, payload=body)
 

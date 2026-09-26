@@ -138,7 +138,7 @@ class AgentSkill(Skill):
                 SkillParameter(name="task_id", description="Stable external Agent task id.", type="string"),
                 SkillParameter(name="batch_id", description="Batch id returned by claim_batch.", type="string"),
                 SkillParameter(name="batch_ids", description="Optional batch ids for bounded parallel fan-out; ids may be out of order.", type="array"),
-                SkillParameter(name="max_batches", description="Maximum batches to claim in one call (1-64; default 4 for parallel mode).", type="integer", default=4),
+                SkillParameter(name="max_batches", description="Omit to use the TUI external_agent_max_batches setting (default 8, configurable above 8). A smaller request is allowed; changing the setting requires explicit user consent.", type="integer"),
                 SkillParameter(name="execution_mode", description="Must be external_agent for this protocol.", type="string", default="external_agent", enum=["external_agent"]),
                 SkillParameter(name="source_hash", description="SHA-256 hash returned for the claimed batch.", type="string"),
                 SkillParameter(name="revision", description="Task revision returned for the claimed batch.", type="integer"),
@@ -154,7 +154,7 @@ class AgentSkill(Skill):
                 {"action": "register", "agent_instance_id": "desktop-1", "supported_modes": ["external_agent"], "capabilities": ["translation"], "user_confirmed_external_processing": True},
                 {"action": "prepare_project", "input_path": "Resource/input.txt", "task_id": "task_1", "session_id": "sess_example"},
                 {"action": "claim_batch", "task_id": "task_1", "session_id": "sess_example"},
-                {"action": "claim_batches", "task_id": "task_1", "session_id": "sess_example", "max_batches": 4},
+                {"action": "claim_batches", "task_id": "task_1", "session_id": "sess_example"},
                 {"action": "submit_translation_batch", "task_id": "task_1", "session_id": "sess_example", "batch_id": "batch_000001", "source_hash": "<sha256>", "revision": 1, "idempotency_key": "task_1_batch_1", "items": []},
             ],
         )
@@ -258,7 +258,7 @@ class AgentSkill(Skill):
                     return missing
                 return SkillResult.ok(self.batch_service.claim_batches(
                     args["task_id"], session_id, args.get("batch_ids"),
-                    max_batches=args.get("max_batches", 4),
+                    max_batches=args.get("max_batches"),
                 ))
 
             if action == "release_batch":

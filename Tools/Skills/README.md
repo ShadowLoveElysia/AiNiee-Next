@@ -134,6 +134,8 @@ curl -X POST http://127.0.0.1:8766/skills/agent_session \
 
 `agent_session` 还提供 `request_external_mode`，通过已鉴权的 Skills 端口给当前 session 请求运行时 `external_agent` 模式。它不会写入 Profile、`Resource/config.json` 或 `translation_execution_mode`；请求前必须完成 onboarding、注册 session 并在注册时提供用户确认。随后才可调用受控批次动作：`prepare_project`、`prepare_cache_project`、`project_status`、`claim_batch`、`claim_batches`、`submit_translation_batch`、`release_batch`、`resume_task`、`acquire_writer_lease` 和 `commit_cache_batch`。默认速度优先时使用 `claim_batches` 进行有界并行领取，也可给 `claim_batch` 传 `batch_id` 跳批次；质量优先时仍可逐批串行处理。批次动作必须携带有效的 Agent session；输入路径受 Skills 工作区边界限制。`submit_translation_batch` 只做结构校验并写入任务专属 staging，`commit_cache_batch` 需要独立 writer lease，并复用确定性 writer 更新缓存。Skills 不接受 API key、MCP token 或任意内部路径，也不会让 Agent 直接改写缓存或输出文件。
 
+`claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8，可由用户在 TUI 项目通用设置中设为任意正整数，包括大于 8 或 64 的值。`project_status.max_batches` 可只读查询。Agent 修改此设置前必须获得用户对新值的明确同意，然后调用 `config` Skill：`{"action":"set","key":"external_agent_max_batches","value":16,"confirm_agent_batch_change":true}`。缺少明确同意标记会返回 `AGENT_BATCH_CHANGE_CONFIRMATION_REQUIRED`。单次领取可请求更少批次，但不能超过配置值。
+
 `agent_session.prepare_project` 只适用于普通逐行 TXT。EPUB、DOCX、SRT、ASS、VTT、LRC、JSON、PO、Paratranz 等结构化格式以及其他非 TXT 输入不得传给逐行批次接口；服务会返回稳定错误码
 `STRUCTURED_FORMAT_REQUIRES_MCP_TASK`，必须使用 AiNiee 的格式感知任务入口。
 

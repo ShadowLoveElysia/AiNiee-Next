@@ -1,4 +1,6 @@
 {
+    "setting_external_agent_max_batches": "Agent 單次領取批次數",
+    "setting_external_agent_max_batches_desc": "預設 8，可設為任意正整數（可以大於 8）。批次領取讀取目前 Profile 的此設定，每批項目數不變。調大會增加平行任務與資源消耗；Agent 修改此設定必須先取得使用者明確同意。",
     "setting_epub_language_follow_source": "自動語言標記跟隨來源",
     "setting_epub_language_follow_source_desc": "僅在 EPUB 語言標記為自動時生效，可跟隨介面語言或翻譯目標。預設保留跟隨介面語言；指定語言及關閉不受影響。",
     "setting_epub_paragraph_preset": "正文排版預設",

@@ -15,6 +15,11 @@ import re
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
+from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import (
+    load_agent_max_batches,
+    validate_agent_max_batches,
+)
+
 SCHEMA = "ainiee.external_agent.batch.v1"
 DEFAULT_BATCH_SIZE = 50
 LINE_BATCH_INPUT_SUFFIXES = frozenset({".txt"})
@@ -69,6 +74,7 @@ class ExternalAgentBatchService:
         batch_size: int = DEFAULT_BATCH_SIZE,
         clock: Callable[[], str] | None = None,
         allowed_input_roots: Sequence[str | Path] | None = None,
+        batch_limit_provider: Callable[[], int] | None = None,
     ) -> None:
         self.project_root = Path(project_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
         self.state_root = Path(state_root or self.project_root / "Resource" / "automation_progress" / "external_agent_batches").expanduser().resolve()
@@ -76,6 +82,7 @@ class ExternalAgentBatchService:
             raise ValueError("batch_size must be an integer between 1 and 1000")
         self.batch_size = batch_size
         self._clock = clock or _utc_now
+        self._batch_limit_provider = batch_limit_provider or load_agent_max_batches
         roots = allowed_input_roots if allowed_input_roots is not None else (self.project_root,)
         self.allowed_input_roots = tuple(Path(root).expanduser().resolve() for root in roots)
         self._lock = threading.RLock()
@@ -269,8 +276,13 @@ class ExternalAgentBatchService:
                 ],
             }
 
-    @staticmethod
-    def _project_view(state: Mapping[str, Any]) -> dict[str, Any]:
+    def _max_batches_limit(self) -> int:
+        try:
+            return validate_agent_max_batches(self._batch_limit_provider())
+        except ValueError as exc:
+            raise ExternalAgentBatchError(str(exc), "INVALID_BATCH_LIMIT_CONFIG") from exc
+
+    def _project_view(self, state: Mapping[str, Any]) -> dict[str, Any]:
         submitted_batches = sum(x.get("status") in {"submitted", "committed"} for x in state["batches"])
         committed_batches = sum(x.get("status") == "committed" for x in state["batches"])
         batch_summaries = [
@@ -293,6 +305,7 @@ class ExternalAgentBatchService:
             "schema": state["schema"], "task_id": state["task_id"], "execution_mode": state["execution_mode"],
             "source_hash": state["source_hash"], "source_size": state["source_size"], "revision": state["revision"],
             "status": state["status"], "total_batches": state["total_batches"],
+            "max_batches": self._max_batches_limit(),
             # ``submitted`` means only that the result passed validation and
             # was staged.  A project is complete only after the deterministic
             # writer has committed every batch.
@@ -357,11 +370,19 @@ class ExternalAgentBatchService:
         session_id: str,
         batch_ids: Sequence[str] | None = None,
         *,
-        max_batches: int = 1,
+        max_batches: int | None = None,
     ) -> dict[str, Any]:
         """Claim independent batches for fan-out to parallel Agent workers."""
-        if isinstance(max_batches, bool) or not isinstance(max_batches, int) or not 1 <= max_batches <= 64:
-            raise ExternalAgentBatchError("max_batches must be between 1 and 64", "INVALID_MAX_BATCHES")
+        configured_limit = self._max_batches_limit()
+        if max_batches is None:
+            max_batches = configured_limit
+        if isinstance(max_batches, bool) or not isinstance(max_batches, int) or max_batches < 1:
+            raise ExternalAgentBatchError("max_batches must be a positive integer", "INVALID_MAX_BATCHES")
+        if max_batches > configured_limit:
+            raise ExternalAgentBatchError(
+                "max_batches exceeds external_agent_max_batches; obtain explicit user consent "
+                "before changing the configured limit", "BATCH_LIMIT_EXCEEDED"
+            )
         if batch_ids is not None:
             if not isinstance(batch_ids, Sequence) or isinstance(batch_ids, (str, bytes)):
                 raise ExternalAgentBatchError("batch_ids must be an array", "INVALID_BATCH_IDS")
@@ -648,7 +669,7 @@ def claim_batches(
     session_id: str,
     batch_ids: Sequence[str] | None = None,
     *,
-    max_batches: int = 1,
+    max_batches: int | None = None,
 ) -> dict[str, Any]:
     return get_external_agent_batch_service().claim_batches(
         task_id, session_id, batch_ids, max_batches=max_batches

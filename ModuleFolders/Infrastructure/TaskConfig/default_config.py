@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
     "main_menu_layout": "flat",
     "external_agent_onboarding": True,
     "external_agent_onboarding_status": "pending",
+    "external_agent_max_batches": 8,
     "translation_execution_mode": "default_api",
     "enable_api_failover": False,
     "backup_apis": [],

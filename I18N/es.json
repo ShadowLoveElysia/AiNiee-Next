@@ -1,4 +1,6 @@
 {
+    "setting_external_agent_max_batches": "Lotes por solicitud del Agent",
+    "setting_external_agent_max_batches_desc": "Valor predeterminado: 8. Admite cualquier entero positivo, incluidos valores superiores a 8. Usa el ajuste del Profile activo sin cambiar el tamaño de cada lote. Un valor mayor aumenta el trabajo paralelo y el consumo de recursos. El Agent necesita consentimiento explícito del usuario para modificar este ajuste.",
     "setting_epub_language_follow_source": "Origen de la etiqueta automática de idioma",
     "setting_epub_language_follow_source_desc": "Solo con idioma EPUB en Automático. Seguir el idioma de interfaz o el destino de traducción. Por defecto, interfaz; no altera el idioma explícito ni Desactivado.",
     "setting_epub_paragraph_preset": "Formato de párrafos del cuerpo",

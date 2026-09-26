@@ -1,4 +1,6 @@
 {
+    "setting_external_agent_max_batches": "Agent batches per claim",
+    "setting_external_agent_max_batches_desc": "Default 8. Enter any positive integer, including values above 8. Batch claims follow this setting in the active Profile; each batch keeps its current size. Larger values increase parallel work and resource use. Agents must obtain explicit user consent before changing this setting.",
     "setting_epub_language_follow_source": "Automatic language tag follows",
     "setting_epub_language_follow_source_desc": "Only applies when EPUB language tagging is Auto. Follow the interface language or translation target. Defaults to interface language; explicit language and Disabled remain unchanged.",
     "setting_epub_paragraph_preset": "Body paragraph preset",

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import (
+    AGENT_MAX_BATCHES_KEY, DEFAULT_AGENT_MAX_BATCHES, ensure_agent_batch_change_confirmed,
+)
+
 from Tools.Skills.skill_base import (
     Skill,
     SkillMeta,
@@ -51,6 +55,11 @@ class ConfigSkill(Skill):
             category="config",
             parameters=[
                 SkillParameter(
+                    name="confirm_agent_batch_change",
+                    description="Set true only after explicit user consent to change external_agent_max_batches.",
+                    type="boolean", default=False,
+                ),
+                SkillParameter(
                     name="action",
                     description="Operation: get, set, list_keys.",
                     type="string",
@@ -86,7 +95,7 @@ class ConfigSkill(Skill):
 
     def execute(self, args: Dict[str, Any]) -> SkillResult:
         invalid = reject_unknown_skill_fields(
-            args, {"action", "key", "value", "profile"}, skill_name="config"
+            args, {"action", "key", "value", "profile", "confirm_agent_batch_change"}, skill_name="config"
         )
         if invalid:
             return invalid
@@ -122,6 +131,10 @@ class ConfigSkill(Skill):
                 value = root.get(key, _MISSING)
                 source = "root"
 
+            if value is _MISSING and key == AGENT_MAX_BATCHES_KEY:
+                value = DEFAULT_AGENT_MAX_BATCHES
+                source = "default"
+
             found = value is not _MISSING
             exposed_value = None if not found else sanitize_config_value(value, key)
             return SkillResult.ok({
@@ -138,6 +151,14 @@ class ConfigSkill(Skill):
                 return key
             if "value" not in args:
                 return SkillResult.fail("Missing required parameter: value", "MISSING_PARAM")
+            try:
+                ensure_agent_batch_change_confirmed(
+                    {key: args["value"]}, args.get("confirm_agent_batch_change", False)
+                )
+            except PermissionError as exc:
+                return SkillResult.fail(str(exc), "AGENT_BATCH_CHANGE_CONFIRMATION_REQUIRED")
+            except ValueError as exc:
+                return SkillResult.fail(str(exc), "INVALID_ARGUMENTS")
             try:
                 profile_arg = (
                     args.get("profile")

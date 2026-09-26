@@ -116,6 +116,14 @@ opaque item locator 和 cache revision，Agent 不得自行构造 storage_path �
 为提交时的权威批次 ID。并行批次共享准备阶段的源 revision，允许乱序领取和提交；缓存正式写回仍由
 writer lease 串行执行，并在每批写回时重新校验 cache revision、source hash 和 current line hash。
 
+`agent_claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8。
+用户可在 TUI“设置 → 项目通用设置 → Agent 单次领取批次数”输入任意正整数，包括大于 8 的值；
+没有固定 8 或 64 的配置上限。此设置控制单次领取数量，不改变每批条目数。
+`agent_project_status` 的 `max_batches` 返回当前设置；单次调用可以请求更少批次，超过当前设置则返回
+`BATCH_LIMIT_EXCEEDED`。Agent 调整持久设置必须先得到用户对新值的明确同意，再调用
+`call_web_api(method="POST", path="/api/config", body={"external_agent_max_batches":16}, confirm_agent_batch_change=true)`。
+没有同意时不可自行填写确认字段；已有明确授权无需重复询问。设置保存后下一次领取立即使用新值。
+
 术语表提取可以由外部 Agent 执行：先调用 `agent_detect_file_language` 了解源语言。
 语言识别扫描全本，返回 `scan_scope="full_file"`、`scanned_lines`、`total_lines` 和语言统计，
 不返回正文，也不受 1000 行批次传输上限限制。
