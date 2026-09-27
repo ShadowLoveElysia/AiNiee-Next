@@ -190,7 +190,9 @@ class ExternalAgentSessionRegistry:
             raise ExternalAgentSessionError("agent_instance_id is required", "INVALID_AGENT_INSTANCE_ID")
         if data.get("user_confirmed_external_processing") is not True:
             raise ExternalAgentSessionError(
-                "external processing must be confirmed by the user", "EXTERNAL_PROCESSING_NOT_CONFIRMED"
+                "Ask the user to approve external processing of the selected files and operations for this task, "
+                "then set user_confirmed_external_processing=true. TUI onboarding is not required.",
+                "EXTERNAL_PROCESSING_NOT_CONFIRMED",
             )
         capabilities = data.get("capabilities", [])
         if not isinstance(capabilities, (list, tuple)) or any(not isinstance(item, str) or not item for item in capabilities):
@@ -222,6 +224,7 @@ class ExternalAgentSessionRegistry:
                 "capabilities": list(capabilities),
                 "supported_modes": list(modes),
                 "external_processing_confirmed": True,
+                "approval_scope": "current_task",
                 "transport": str(data.get("transport", "")),
                 "lease_seconds": lease,
                 "heartbeat_interval_seconds": max(1, lease // 3),
@@ -331,8 +334,8 @@ class ExternalAgentSessionRegistry:
         The mode grant is runtime session state.  It is intentionally separate
         from Profile configuration: MCP callers can request it through the
         authenticated port, while the default API mode on disk remains intact.
-        Registration already requires onboarding acceptance and an explicit
-        user confirmation, so an Agent cannot self-authorize through this call.
+        Registration requires a client declaration of the user's task approval.
+        The declaration is not proof of a conversation; clients must not invent it.
         """
         with self._lock:
             now = self._now()
@@ -349,6 +352,12 @@ class ExternalAgentSessionRegistry:
             if modes and "external_agent" not in modes:
                 raise ExternalAgentSessionError(
                     "external_agent mode is not supported", "AGENT_MODE_UNSUPPORTED"
+                )
+            scoped_task = record.get("mode_task_id")
+            if scoped_task is not None and task_id not in (None, scoped_task):
+                raise ExternalAgentSessionError(
+                    "This session is approved for another task. Ask for approval of the new task "
+                    "and register a new session.", "TASK_APPROVAL_SCOPE_MISMATCH"
                 )
             if task_id is not None:
                 if not isinstance(task_id, str) or not task_id.strip():

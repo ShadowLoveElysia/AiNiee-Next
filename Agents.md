@@ -151,6 +151,7 @@ python Tools/Skills/cli.py check
 
 ## 安全与操作边界
 
+- 外部 Agent 处理新任务前在当前对话询问用户是否批准本次文件、目标语言与操作，并说明由当前外部 Agent/平台处理；明确批准后才上传或读取原文、注册和运行。已有明确的本次批准可复用，不重复询问。注册传 `user_confirmed_external_processing=true`，`agent_request_external_mode` 在 task_id 已知时绑定任务；创建结构化任务的 `/api/task/external-agent-mode` body 同样传此标记。无需回 TUI 确认，也不写入全局 accepted；同一任务恢复沿用授权，新任务重新批准并使用新会话。
 - 所有由 LLM 驱动的 AiNiee 操作都通过 MCP 工具或 Skills 接口完成，不要混用直连 WebUI、localhost Web API、局域网端口或内部 `/api/internal/*`。
 - 原文获取边界覆盖术语抽取、词频分析和其他预处理，也适用于 SubAgent。外部文件先 `upload_file`，再通过 `agent_read_file` 或 `agent_prepare_read_batches` / `agent_claim_read_batch` 获取原文；正式翻译只处理领取工具返回的 `items`。禁止自行解包 EPUB、编写提取脚本或生成替代 TXT；工具缺失或失败时报告问题并停止相关处理。用户明确改选 Skills 后才可用其受控读取接口。规则与提示词文件可以阅读，但不能以此替代 MCP 原文读取。
 - MCP 会脱敏 `api_key`、`access_key`、`secret_key`，占位符 `[MCP_SECRET_REDACTED]` 不是可用密钥，不能恢复、推断或写回。

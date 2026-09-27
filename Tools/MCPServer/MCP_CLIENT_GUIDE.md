@@ -14,7 +14,14 @@ AiNiee CLI MCP 会把大部分 WebServer `/api/*` 能力通过少量 MCP tools �
 4. 按任务需要调用 `get_mcp_tool_catalog(category="...")`
 5. 再通过 `call_web_api` 或 `upload_file` 调用具体能力
 
-外部 Agent 接入后，应先调用 `agent_register` 获取连接租约，并在租约到期前调用
+外部 Agent 处理新任务前，在当前对话询问是否批准处理选定文件、目标语言及本次操作，并说明内容由当前外部 Agent/平台处理。
+用户明确批准后，调用 `agent_register(user_confirmed_external_processing=true)`；未回答或拒绝时不处理用户文件。
+已有明确的本次授权不重复询问，同一任务的批次、修复、重试及重连沿用批准。
+不要求 TUI onboarding 为 accepted，不将本次批准保存为全局接入同意；历史 TUI 同意也不能替代本次批准。
+取得 task_id 后调用 `agent_request_external_mode(session_id, task_id)` 绑定任务；绑定后不能改绑其他任务。
+新任务或范围变化需先获得新批准，新任务注册新会话。确认参数是客户端授权声明，不能自行伪造。
+
+`agent_register` 返回连接租约，在租约到期前调用
 `agent_heartbeat`。默认连接租约为 120 秒；长任务可在注册时传入
 `requested_lease_seconds: 3600`，服务端允许的最大会话租约为 3600 秒（60 分钟）。
 超过上限的请求会被拒绝；无论租约长短，客户端都应按返回的
@@ -160,8 +167,10 @@ stdio 首次连接只完成 MCP initialize 和工具发现，嵌入式 WebServer
 不会直接写入术语表。
 如果 Agent 在一批处理中断，调用 `agent_release_read_batch` 后可以重新领取该批次。
 
-对于由 `POST /api/task/external-agent-mode` 创建的全新 EPUB/DOCX 等结构化任务，Web
-端会先执行无 API 的解析预热并生成受控 `AinieeCacheData.json`，随后首次调用
+对于由 `POST /api/task/external-agent-mode` 创建的全新 EPUB/DOCX 等结构化任务，
+请求 body 需携带 `user_confirmed_external_processing=true`，复用上述本次批准，不额外询问。
+这个接口保留 MCP bridge 鉴权；没有本次批准时返回 `EXTERNAL_PROCESSING_NOT_CONFIRMED`。
+Web 端会先执行无 API 的解析预热并生成受控 `AinieeCacheData.json`，随后首次调用
 `agent_prepare_project`、`agent_project_status` 或 `agent_claim_batch` 会自动建立缓存账本，
 不再需要先跑一次普通翻译。全部缓存批次提交并写回后，MCP 会自动触发最终格式导出；提交接口
 返回的 `export` 字段包含输出目录。若只完成 staging、仍有修复项或写入错误，则不会导出。

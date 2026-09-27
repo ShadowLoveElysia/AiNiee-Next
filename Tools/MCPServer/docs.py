@@ -50,6 +50,16 @@ clients may request up to 3600 seconds (60 minutes) with
 all project and task mutations remain behind domain tools and the deterministic
 AiNiee data plane.
 
+Before handling a new task, ask the user to approve its files, target language and
+operations, including processing by the external Agent/platform. Only after approval
+set `user_confirmed_external_processing=true` in `agent_register`. TUI onboarding
+is optional and cannot substitute for task approval. Reuse existing approval for
+the same task's batches, retries and recovery; ask again if the scope changes.
+Bind `agent_request_external_mode(task_id=...)` as soon as the task ID is known.
+When starting a structured task through `POST /api/task/external-agent-mode`, also
+include `user_confirmed_external_processing: true` in the body for that same approval.
+These flags are client declarations, not independent proof of user consent.
+
 The project stays in its configured API mode by default. To request one
 external-Agent task, call the authenticated MCP route
 `POST /api/task/external-agent-mode`; this changes only that task snapshot and
@@ -115,7 +125,7 @@ CATEGORY_DESCRIPTIONS = {
 AGENT_TOOL_DESCRIPTIONS = [
     {
         "tool_name": "agent_register",
-        "purpose": "Register an external Agent and receive a renewable connection lease.",
+        "purpose": "Register after the user approves this task; pass user_confirmed_external_processing=true. No TUI onboarding is required. Receive a renewable connection lease.",
     },
     {
         "tool_name": "agent_heartbeat",
@@ -131,7 +141,7 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_request_external_mode",
-        "purpose": "Request a session-scoped external-Agent mode through the authenticated MCP port without changing Profile/config files.",
+        "purpose": "Request external-Agent mode for the approved task without editing config; bind task_id when known. A bound session cannot be reassigned to another task.",
     },
     {
         "tool_name": "agent_read_file",
@@ -236,7 +246,8 @@ EXACT_ROUTE_PURPOSES = {
     "/api/task/run": "Start a translation / polish / export task.",
     "/api/task/external-agent-mode": (
         "Start one task in external-Agent mode through the authenticated MCP bridge; "
-        "this changes only the task snapshot and never edits the active profile setting."
+        "include user_confirmed_external_processing=true only after the user approves this task. "
+        "No TUI onboarding required; changes only the task snapshot, never profile settings."
     ),
     "/api/task/runtime-parameters": "List runtime override fields, types, ranges and dependencies.",
     "/api/task/stop": "Stop the current running task.",
@@ -447,7 +458,9 @@ def build_tool_catalog(
         result.update(
             {
                 "usage": (
-                    "Use agent_register first, then renew its lease with agent_heartbeat. "
+                    "Ask the user to approve this task before agent_register; pass "
+                    "user_confirmed_external_processing=true only after approval, without TUI onboarding. "
+                    "Then renew its lease with agent_heartbeat. "
                     "The default lease is 120 seconds; requested_lease_seconds may be "
                     "set up to 3600 seconds (60 minutes)."
                 ),
@@ -582,7 +595,9 @@ def get_server_instructions_text() -> str:
         f"{MCP_SECRET_PLACEHOLDER} as a redacted placeholder, not a usable "
         "secret, and ask the user for a second confirmation before changing MCP "
         "host or port settings. When an external Agent connects, call "
-        "agent_register first and renew its lease with agent_heartbeat. The default "
+        "agent_register after asking the user to approve this task; set "
+        "user_confirmed_external_processing=true only after approval. TUI onboarding is not required. "
+        "Reuse same-task approval for recovery, and renew the lease with agent_heartbeat. The default "
         "lease is 120 seconds; request up to 3600 seconds (60 minutes) with "
         "requested_lease_seconds when a long task needs it. Use "
         "agent_status to inspect connection state."

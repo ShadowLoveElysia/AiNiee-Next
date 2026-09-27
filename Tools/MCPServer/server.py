@@ -135,12 +135,6 @@ DEFAULT_REGISTER_ROUTE_TOOLS = (
 AGENT_SESSION_REGISTRY = get_external_agent_session_registry()
 
 
-def _external_agent_onboarding_accepted() -> bool:
-    """Require an explicit project-level acceptance before registering an Agent."""
-    root = _safe_load_json(ROOT_CONFIG_FILE)
-    return root.get("external_agent_onboarding_status") == "accepted"
-
-
 def _is_loopback_bind_host(host: str) -> bool:
     return is_loopback_bind_host(host)
 
@@ -1026,6 +1020,9 @@ def _build_mcp_app(
         (
             "Call this when an external Agent begins using AiNiee. The returned session_id "
             "is required for heartbeat and unregister. Registration records connection metadata only. "
+            "First ask the user to approve the selected files and operations for this task; "
+            "set user_confirmed_external_processing=true only after approval. Reuse approval "
+            "for retries/reconnection of the same task. No TUI onboarding is required. "
             "The default lease is 120 seconds; requested_lease_seconds may be set up to 3600 "
             "seconds (60 minutes)."
         ),
@@ -1041,11 +1038,6 @@ def _build_mcp_app(
         requested_lease_seconds: Optional[int] = None,
         user_confirmed_external_processing: bool = False,
     ) -> Dict[str, Any]:
-        if not _external_agent_onboarding_accepted():
-            raise ValueError(
-                "External Agent onboarding has not been accepted by the user. "
-                "Complete the AiNiee onboarding flow before registering a session."
-            )
         return AGENT_SESSION_REGISTRY.register(
             {
                 "protocol_version": protocol_version,
@@ -1101,18 +1093,15 @@ def _build_mcp_app(
         "Request the runtime MCP external-Agent mode for a registered session.",
         (
             "This is a port-only runtime request. It does not edit Profile/config.json or change "
-            "AiNiee's default API mode. Registration must already include onboarding and explicit "
-            "user confirmation; pass task_id to scope the grant to one task when available."
+            "AiNiee's default API mode. Registration must include the user's approval of this task. "
+            "Pass task_id as soon as it is known. A bound task cannot be replaced or unscoped; "
+            "a new task needs its own user approval and registration, not TUI onboarding."
         ),
     )
     def agent_request_external_mode(
         session_id: str,
         task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if not _external_agent_onboarding_accepted():
-            raise ValueError(
-                "ONBOARDING_NOT_ACCEPTED: external Agent onboarding has not been accepted by the user"
-            )
         _require_external_agent_session(session_id)
         try:
             return AGENT_SESSION_REGISTRY.request_external_mode(session_id, task_id=task_id)

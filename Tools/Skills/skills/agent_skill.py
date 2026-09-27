@@ -95,6 +95,8 @@ class AgentSkill(Skill):
             name="agent_session",
             description=(
                 "Register, renew, recover, inspect, or disconnect an external Agent session; "
+                "ask the user to approve the current files and operations before registration. "
+                "TUI onboarding is not required; same-task retries reuse the approval. "
                 "prepare and exchange controlled translation and read-analysis batches. "
                 "Results are validated and automatically committed by the guarded writer; "
                 "repair_required needs corrected items, write_error needs commit retry. "
@@ -129,7 +131,7 @@ class AgentSkill(Skill):
                 SkillParameter(name="supported_modes", description="Supported AiNiee execution modes.", type="array"),
                 SkillParameter(name="transport", description="Transport label (for diagnostics only).", type="string"),
                 SkillParameter(name="requested_lease_seconds", description="Requested session lease in seconds (default 120, maximum 3600 / 60 minutes).", type="integer"),
-                SkillParameter(name="user_confirmed_external_processing", description="User confirmed sending work to the external Agent.", type="boolean"),
+                SkillParameter(name="user_confirmed_external_processing", description="Set true only after the user approves external processing for this task; never infer approval from TUI onboarding.", type="boolean"),
                 SkillParameter(name="active_only", description="Only return a live session for status.", type="boolean"),
                 SkillParameter(name="last_task_id", description="Optional task id carried by heartbeat.", type="string"),
                 SkillParameter(name="active_batch_id", description="Optional batch id carried by heartbeat.", type="string"),
@@ -167,15 +169,6 @@ class AgentSkill(Skill):
     @staticmethod
     def _error(exc: Exception) -> SkillResult:
         return SkillResult.fail(str(exc), getattr(exc, "code", "SKILL_ERROR"))
-
-    @staticmethod
-    def _onboarding_accepted() -> bool:
-        try:
-            from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import load_root_config
-
-            return load_root_config().get("external_agent_onboarding_status") == "accepted"
-        except Exception:
-            return False
 
     def _require_session(self, session_id: Any) -> SkillResult | None:
         if not isinstance(session_id, str) or not session_id.strip():
@@ -436,11 +429,6 @@ class AgentSkill(Skill):
         try:
             session_id = args.get("session_id")
             if action == "register":
-                if not self._onboarding_accepted():
-                    return SkillResult.fail(
-                        "External Agent onboarding has not been accepted by the user.",
-                        "ONBOARDING_NOT_ACCEPTED",
-                    )
                 fields = {
                     key: args[key]
                     for key in (
@@ -453,11 +441,6 @@ class AgentSkill(Skill):
                 return SkillResult.ok(self.registry.register(fields))
 
             if action == "request_external_mode":
-                if not self._onboarding_accepted():
-                    return SkillResult.fail(
-                        "External Agent onboarding has not been accepted by the user.",
-                        "ONBOARDING_NOT_ACCEPTED",
-                    )
                 missing = self._required(args, "session_id")
                 if missing:
                     return missing

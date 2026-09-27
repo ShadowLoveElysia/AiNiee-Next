@@ -21,7 +21,7 @@ try:
     from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request, APIRouter
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse, JSONResponse
-    from pydantic import BaseModel, ConfigDict, model_validator
+    from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 except ImportError:
     # This error will be caught and handled in ainiee_cli.py
     raise ImportError("Required packages are missing. Please run 'uv add fastapi uvicorn[standard] pydantic python-multipart'.,Or run 'uv sync'")
@@ -992,6 +992,10 @@ class TaskPayload(BaseModel):
 
     def to_task_spec(self) -> TaskSpec:
         return TaskSpec.from_mapping(self.model_dump(exclude_none=True))
+
+
+class ExternalAgentTaskPayload(TaskPayload):
+    user_confirmed_external_processing: StrictBool = Field(default=False, exclude=True)
 
 
 class TaskControlPayload(BaseModel):
@@ -3348,7 +3352,7 @@ async def run_task(payload: TaskPayload):
 
 
 @app.post("/api/task/external-agent-mode")
-async def request_external_agent_mode(payload: TaskPayload, request: Request):
+async def request_external_agent_mode(payload: ExternalAgentTaskPayload, request: Request):
     """Start one MCP-scoped task in external-Agent mode.
 
     The mode is applied to this task snapshot only.  This endpoint is exposed
@@ -3361,14 +3365,11 @@ async def request_external_agent_mode(payload: TaskPayload, request: Request):
             detail="External-Agent mode must be requested through the authenticated MCP bridge.",
         )
 
-    try:
-        root_config = load_root_config()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read onboarding state: {exc}") from exc
-    if root_config.get("external_agent_onboarding_status") != "accepted":
+    if payload.user_confirmed_external_processing is not True:
         raise HTTPException(
             status_code=409,
-            detail="External-Agent onboarding has not been accepted by the user.",
+            detail="EXTERNAL_PROCESSING_NOT_CONFIRMED: ask the user to approve this task, "
+            "then pass user_confirmed_external_processing=true. TUI onboarding is not required.",
         )
 
     # Pydantic's model copy keeps the caller's payload intact while forcing the
