@@ -179,7 +179,11 @@ AGENT_TOOL_DESCRIPTIONS = [
     },
     {
         "tool_name": "agent_claim_batches",
-        "purpose": "Claim batches for parallel SubAgents; omit max_batches to follow the TUI setting (default 8, configurable above 8). Changing that setting requires explicit user consent.",
+        "purpose": "Fill the initial bounded worker window for parallel SubAgents; the active claimed/submitted count is enforced by the current TUI setting (default 8, configurable above 8). Changing that setting requires explicit user consent.",
+    },
+    {
+        "tool_name": "agent_claim_next_batch",
+        "purpose": "Claim exactly one pending line batch after a worker finishes; the service returns BATCH_CAPACITY_EXHAUSTED when the current dynamic active limit is full.",
     },
     {
         "tool_name": "agent_submit_translation_batch",

@@ -106,7 +106,7 @@ class AgentSkill(Skill):
                     name="action",
                     description=(
                         "Operation: register, heartbeat, status, unregister, prepare_project, "
-                        "prepare_cache_project, project_status, claim_batch, claim_batches, submit_translation_batch, pending_work, get_batch_repair, "
+                        "prepare_cache_project, project_status, claim_batch, claim_batches, claim_next_batch, submit_translation_batch, pending_work, get_batch_repair, "
                         "release_batch, resume_task, recover_task, acquire_writer_lease, commit_cache_batch, or request_external_mode."
                     ),
                     type="string",
@@ -114,7 +114,7 @@ class AgentSkill(Skill):
                     enum=[
                         "register", "heartbeat", "status", "unregister",
                         "prepare_project", "prepare_cache_project", "project_status",
-                        "claim_batch", "claim_batches", "submit_translation_batch", "release_batch", "pending_work", "get_batch_repair",
+                        "claim_batch", "claim_batches", "claim_next_batch", "submit_translation_batch", "release_batch", "pending_work", "get_batch_repair",
                         "acquire_writer_lease", "commit_cache_batch", "request_external_mode", "resume_task", "recover_task",
                         "prepare_read_batches", "claim_read_batch", "read_batch_status", "complete_read_batch",
                         "release_read_batch",
@@ -265,6 +265,12 @@ class AgentSkill(Skill):
                     args["task_id"], session_id, args.get("batch_ids"),
                     max_batches=args.get("max_batches"),
                 ))
+
+            if action == "claim_next_batch":
+                missing = self._required(args, "task_id")
+                if missing:
+                    return missing
+                return SkillResult.ok(self.batch_service.claim_next_batch(args["task_id"], session_id))
 
             if action == "release_batch":
                 missing = self._required(args, "task_id", "batch_id")

@@ -103,7 +103,7 @@ _mcp_security_notice
 推荐调用顺序：`agent_register` → `agent_request_external_mode` → 业务 MCP 工具 → 周期性 `agent_heartbeat` → `agent_unregister`。
 
 外部 Agent 翻译顺序：注册会话 → 请求 external_agent 模式 → 准备项目/缓存 →
-`agent_claim_batches`（或 `agent_claim_batch`）→ `agent_submit_translation_batch`。
+`agent_claim_batches`（或 `agent_claim_batch`）→ `agent_submit_translation_batch`；速度优先时每个批次提交完成后调用 `agent_claim_next_batch` 立即补位。
 缓存任务默认 `auto_commit=true`：服务端校验完整批次、暂存有效结果、自动获取 writer lease、串行安全写回；
 回执 `status="committed"` 才表示缓存落盘。已成功写回的批次无需再调用租约/提交工具。
 正式写回仍保留源/hash/行冲突检查、备份和原子替换。提交、暂存和缓存写入使用任务锁与文件锁，MCP/Skills 共用此路径。
@@ -119,7 +119,7 @@ batch_id/source_hash/revision 必须来自 claim，译文字段是 translation�
 - 三次不同的无效候选后标记 `needs_review`，Agent 必须停止该批自动重试并报告；完全相同的失败重放不累计次数。此校验针对结构完整性，不保证语义正确。
 - `submitted` 加 `write_error`：有效译文已保存，缓存写回未确认。解决 I/O/租约问题后重试 `agent_commit_cache_batch`；源文/人工编辑冲突需检查受控状态，不能覆盖或盲目重译。
 - 相同请求重试必须复用 idempotency_key；修改译文使用新 key。已 committed 的相同请求返回幂等收据，不再次导出或写入。
-- 维持有限 SubAgent 工作池，完成即补批，不等整轮；最后调用 `agent_pending_work`，未完成清单为空且 `all_committed=true` 后才能最终导出。语义复核为可选阶段。
+- 维持由当前 Profile `external_agent_max_batches` 决定的有限 SubAgent 工作池，初始用 `agent_claim_batches` 填满活动窗口；任一批次完成后立即调用 `agent_claim_next_batch` 补一个槽位，不等整轮。服务端会统计当前 `claimed` 批次并拒绝超额补批；最后调用 `agent_pending_work`，未完成清单为空且 `all_committed=true` 后才能最终导出。语义复核为可选阶段。
 
 `agent_prepare_project` 的返回值包含 `next_batch_id`、`batch_ids` 和不含正文的 `batches` 摘要；
 如果客户端丢失了准备或领取响应，可用 `agent_project_status` 恢复这些字段，再调用
@@ -130,9 +130,9 @@ writer lease 串行执行，并在每批写回时重新校验 cache revision、s
 stdio 首次连接只完成 MCP initialize 和工具发现，嵌入式 WebServer 在需要 Web/API 或结构化任务上下文时才延迟启动；
 普通 TXT 的 `agent_prepare_project` 不会启动 WebServer。已有缓存账本存在时，重连应优先使用 `agent_recover_task`，不会重新预热。
 
-`agent_claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8。
+`agent_claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8；服务端同时统计当前 `claimed`/`submitted` 批次数，不能超过这个动态上限。
 用户可在 TUI“设置 → 项目通用设置 → Agent 单次领取批次数”输入任意正整数，包括大于 8 的值；
-没有固定 8 或 64 的配置上限。此设置控制单次领取数量，不改变每批条目数。
+没有固定 8 或 64 的配置上限。此设置控制活动批次窗口，不改变每批条目数。初始领取填满窗口后，任意批次提交成功都应立即调用 `agent_claim_next_batch` 补一个槽位；不要等待整轮完成，也不要重复调用导致窗口超额。
 `agent_project_status` 的 `max_batches` 返回当前设置；单次调用可以请求更少批次，超过当前设置则返回
 `BATCH_LIMIT_EXCEEDED`。Agent 调整持久设置必须先得到用户对新值的明确同意，再调用
 `call_web_api(method="POST", path="/api/config", body={"external_agent_max_batches":16}, confirm_agent_batch_change=true)`。

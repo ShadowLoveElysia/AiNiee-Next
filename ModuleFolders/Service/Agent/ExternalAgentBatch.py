@@ -380,7 +380,17 @@ class ExternalAgentBatchService:
         except ValueError as exc:
             raise ExternalAgentBatchError(str(exc), "INVALID_BATCH_LIMIT_CONFIG") from exc
 
+    @staticmethod
+    def _active_batch_count(state: Mapping[str, Any]) -> int:
+        """Count worker slots currently occupied by claimed batches."""
+        return sum(
+            batch.get("status") == "claimed"
+            for batch in state.get("batches", [])
+        )
+
     def _project_view(self, state: Mapping[str, Any], *, include_batches: bool = True) -> dict[str, Any]:
+        max_batches = self._max_batches_limit()
+        active_batch_count = self._active_batch_count(state)
         submitted_batches = sum(x.get("status") in {"submitted", "committed"} for x in state["batches"])
         committed_batches = sum(x.get("status") == "committed" for x in state["batches"])
         batch_summaries = [
@@ -405,7 +415,9 @@ class ExternalAgentBatchService:
             "schema": state["schema"], "task_id": state["task_id"], "execution_mode": state["execution_mode"],
             "source_hash": state["source_hash"], "source_size": state["source_size"], "revision": state["revision"],
             "status": state["status"], "total_batches": state["total_batches"],
-            "max_batches": self._max_batches_limit(),
+            "max_batches": max_batches,
+            "active_batch_count": active_batch_count,
+            "available_batch_slots": max(0, max_batches - active_batch_count),
             # ``submitted`` means only that the result passed validation and
             # was staged.  A project is complete only after the deterministic
             # writer has committed every batch.
@@ -467,6 +479,11 @@ class ExternalAgentBatchService:
                 raise ExternalAgentBatchError("project has no remaining batches", "NO_BATCH_AVAILABLE")
             if batch.get("status") != "pending":
                 raise ExternalAgentBatchError("use repair tools for this batch", "BATCH_REPAIR_REQUIRED")
+            if self._active_batch_count(state) >= self._max_batches_limit():
+                raise ExternalAgentBatchError(
+                    "the configured active batch limit is full; wait for a batch to commit before claiming another",
+                    "BATCH_CAPACITY_EXHAUSTED",
+                )
             batch.update({"status": "claimed", "revision": state["revision"], "claimed_session_id": session_id, "claimed_at": self._clock()})
             state.update({"status": "translating", "updated_at": self._clock()})
             self._write(state)
@@ -522,9 +539,25 @@ class ExternalAgentBatchService:
                         raise ExternalAgentBatchError("batch is claimed by another session", "BATCH_IN_USE")
                     batches.append(batch)
             else:
-                batches = [x for x in state["batches"] if x.get("status") == "pending"][:max_batches]
+                active_count = self._active_batch_count(state)
+                available_slots = max(0, configured_limit - active_count)
+                if available_slots == 0:
+                    if any(x.get("status") == "pending" for x in state["batches"]):
+                        raise ExternalAgentBatchError(
+                            "the configured active batch limit is full; wait for a batch to commit before claiming another",
+                            "BATCH_CAPACITY_EXHAUSTED",
+                        )
+                    raise ExternalAgentBatchError("project has no remaining batches", "NO_BATCH_AVAILABLE")
+                batches = [x for x in state["batches"] if x.get("status") == "pending"][:min(max_batches, available_slots)]
             if not batches:
                 raise ExternalAgentBatchError("project has no remaining batches", "NO_BATCH_AVAILABLE")
+            active_count = self._active_batch_count(state)
+            new_claims = sum(batch.get("status") == "pending" for batch in batches)
+            if active_count + new_claims > configured_limit:
+                raise ExternalAgentBatchError(
+                    "the configured active batch limit would be exceeded",
+                    "BATCH_CAPACITY_EXCEEDED",
+                )
             now = self._clock()
             for batch in batches:
                 if batch.get("status") != "claimed":
@@ -538,6 +571,21 @@ class ExternalAgentBatchService:
                 "status": "claimed", "task": self._project_view(state, include_batches=False),
                 "batches": [self._batch_view(batch) for batch in batches],
             }
+
+    def claim_next_batch(self, task_id: str, session_id: str) -> dict[str, Any]:
+        """Claim one pending batch for a worker that has just become idle.
+
+        This is intentionally a one-batch operation. It gives event-driven
+        clients an explicit refill primitive so they do not need to wait for a
+        whole fan-out wave before claiming more line batches.
+        """
+        result = self.claim_batches(task_id, session_id, max_batches=1)
+        batch = result["batches"][0]
+        return {
+            "status": result["status"],
+            "task": result["task"],
+            "batch": batch,
+        }
 
     def release_batch(self, task_id: str, session_id: str, batch_id: str) -> dict[str, Any]:
         """Release a claimed batch after a disconnect without accepting results."""
@@ -788,6 +836,10 @@ def claim_batches(
     )
 
 
+def claim_next_batch(task_id: str, session_id: str) -> dict[str, Any]:
+    return get_external_agent_batch_service().claim_next_batch(task_id, session_id)
+
+
 def resume_task(task_id: str, previous_session_id: str, session_id: str) -> dict[str, Any]:
     return get_external_agent_batch_service().resume_task(task_id, previous_session_id, session_id)
 
@@ -796,4 +848,4 @@ def submit_translation_batch(task_id: str, session_id: str, batch_id: str, sourc
     return get_external_agent_batch_service().submit_translation_batch(task_id, session_id, batch_id, source_hash, revision, idempotency_key, items)
 
 
-__all__ = ["SCHEMA", "DEFAULT_BATCH_SIZE", "ExternalAgentBatchError", "BatchError", "ExternalAgentBatchService", "get_external_agent_batch_service", "prepare_project", "claim_batch", "claim_batches", "resume_task", "submit_translation_batch"]
+__all__ = ["SCHEMA", "DEFAULT_BATCH_SIZE", "ExternalAgentBatchError", "BatchError", "ExternalAgentBatchService", "get_external_agent_batch_service", "prepare_project", "claim_batch", "claim_batches", "claim_next_batch", "resume_task", "submit_translation_batch"]

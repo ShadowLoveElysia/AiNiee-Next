@@ -1438,7 +1438,7 @@ def _build_mcp_app(
     @_mcp_tool(
         mcp,
         "Claim multiple independent external-Agent translation batches.",
-        "Omit max_batches to follow the TUI external_agent_max_batches setting (default 8, user-configurable above 8). A smaller request is allowed; raising the setting requires explicit user consent. Claims may be selected out of order.",
+        "Use this for the initial worker window; omit max_batches to fill the configured limit (default 8). The service counts claimed batches and rejects claims that would exceed the active limit. After any batch commits, call agent_claim_next_batch once to refill that worker slot; do not wait for the whole wave. A smaller request is allowed; raising the setting requires explicit user consent. Claims may be selected out of order.",
     )
     def agent_claim_batches(
         task_id: str,
@@ -1458,6 +1458,28 @@ def _build_mcp_app(
                     "running", task_id, "External Agent claimed parallel translation batches."
                 )
             _bind_external_agent_context(session_id, task_id=task_id)
+            return result
+        except ExternalAgentBatchError as exc:
+            raise ValueError(f"{exc.code}: {exc}") from exc
+
+    @_mcp_tool(
+        mcp,
+        "Claim one pending external-Agent translation batch to refill an idle worker slot.",
+        "Call after one claimed batch has been submitted/committed. The service tracks active claimed batches and rejects duplicate refill calls when the configured limit is already full; it never creates a batch beyond the prepared line batches.",
+    )
+    def agent_claim_next_batch(task_id: str, session_id: str) -> Dict[str, Any]:
+        _require_external_agent_mode(session_id, task_id)
+        try:
+            _prepare_web_task_ledger_if_needed(task_id, session_id)
+            result = get_external_agent_batch_service().claim_next_batch(task_id, session_id)
+            manager = getattr(ws_module, "task_manager", None)
+            if manager is not None and getattr(manager, "task_id", None) == task_id:
+                manager.update_external_agent_status(
+                    "running", task_id, "External Agent refilled an available translation worker slot."
+                )
+            _bind_external_agent_context(
+                session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
+            )
             return result
         except ExternalAgentBatchError as exc:
             raise ValueError(f"{exc.code}: {exc}") from exc

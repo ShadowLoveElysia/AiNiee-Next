@@ -36,7 +36,12 @@ class ExternalAgentWorkflow:
 
     def _receipt(self, state, batch, *, replayed=False):
         view = self.batches._project_view(state, include_batches=False)
-        progress = {k: v for k, v in view.items() if k.endswith("_batches") or k in {"status", "max_batches"}}
+        progress = {
+            k: v for k, v in view.items()
+            if k.endswith("_batches") or k in {
+                "status", "max_batches", "active_batch_count", "available_batch_slots",
+            }
+        }
         result = {
             "task_id": state["task_id"], "batch_id": batch["batch_id"],
             "status": batch["status"], "replayed": replayed,
@@ -51,6 +56,7 @@ class ExternalAgentWorkflow:
             "get_batch_repair_then_submit_patch" if batch["status"] == "repair_required" else
             "report_unresolved_items" if batch["status"] == "needs_review" else
             "check_pending_work_then_export" if state["status"] == "completed" else
+            "claim_next_batch" if batch["status"] == "committed" and view.get("pending_batches", 0) and view.get("available_batch_slots", 0) else
             "continue_other_batches" if batch["status"] == "committed" else
             "commit_cache_batch" if state.get("cache_path") else "staging_only"
         )
