@@ -1,6 +1,9 @@
 import os
 import sys
 
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "live":
+    os.execv(sys.executable, [sys.executable, "-m", "ModuleFolders.Media", *sys.argv[2:]])
+
 # Silence TF and other C++ logs that break TUI
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['GLOG_minloglevel'] = '3'
@@ -913,6 +916,7 @@ class CLIMenu:
             "start_mcp_server": self.start_mcp_server,
             "start_skills_server": self.start_skills_server,
             "manga_runtime_manager": self.manga_runtime_menu_handler.show,
+            "start_live_translation": self.start_live_translation,
         }
 
     def _log_main_menu_action(self, label: str):
@@ -921,8 +925,8 @@ class CLIMenu:
     def _show_flat_main_menu(self) -> bool:
         self.display_banner()
         table = Table(show_header=False, box=None)
-        menus = ["start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "automation", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "start_skills_server", "manga_runtime_manager", "acknowledgements"]
-        colors = ["green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "bold yellow", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "bold cyan", "cyan", "bold yellow"]
+        menus = ["start_live_translation", "start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "automation", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "start_skills_server", "manga_runtime_manager", "acknowledgements"]
+        colors = ["bold cyan", "green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "bold yellow", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "bold cyan", "cyan", "bold yellow"]
         actions = self._main_menu_actions()
 
         for i, (menu_key, color) in enumerate(zip(menus, colors), 1):
@@ -943,6 +947,7 @@ class CLIMenu:
         self.display_banner()
         groups = [
             ("main_menu_group_tasks", "green", [
+                ("start_live_translation", "bold cyan"),
                 ("start_translation", "green"),
                 ("start_manga_translation", "cyan"),
                 ("start_polishing", "green"),
@@ -2498,6 +2503,12 @@ class CLIMenu:
     def start_web_server(self):
         self.web_runtime_bridge.start_web_server()
 
+    def start_live_translation(self):
+        subprocess.Popen(
+            [sys.executable, "-m", "ModuleFolders.Media"],
+            cwd=PROJECT_ROOT,
+        )
+
     def start_mcp_server(self):
         self.mcp_runtime_bridge.start_mcp_server()
 
@@ -2511,6 +2522,8 @@ class CLIMenu:
         self.task_queue_menu_handler.show()
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "live":
+        return subprocess.call([sys.executable, "-m", "ModuleFolders.Media", *sys.argv[2:]])
     parser = argparse.ArgumentParser(description="AiNiee-Next - A powerful tool for AI-driven translation and polishing.", add_help=False)
     
     # 将 --help 参数单独处理，以便自定义帮助信息

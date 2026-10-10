@@ -47,7 +47,7 @@ dependencies = [
     "bitstring>=4.3.0",
     "configargparse>=1.7",
     "huggingface-hub>=0.27.0",
-    "tokenizers>=0.21,<0.22",
+    "tokenizers>=0.21,<0.23",
     "onnx>=1.18.0",
     "onnxruntime>=1.20.1",
     "babeldoc>=0.6.3",
@@ -73,6 +73,33 @@ dependencies = [
     "uvicorn[standard]>=0.40.0",
     "mcp>=1.27.0",
 ]
+
+[project.optional-dependencies]
+media-index-echo = [
+    "torch==2.9.1+cu126; sys_platform == 'win32'",
+    "transformers==5.6.0",
+    "tokenizers==0.22.2",
+    "safetensors>=0.5",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "silero-vad>=5.1",
+    "soundcard>=0.4.4",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126-nju", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126-nju"
+url = "https://mirror.nju.edu.cn/pytorch/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi-nju"
+url = "https://mirror.nju.edu.cn/pypi/web/simple"
+default = true
 
 [project.scripts]
 ainiee = "ainiee_cli:main"

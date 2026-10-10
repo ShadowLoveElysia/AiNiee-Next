@@ -1,0 +1,20 @@
+{
+  "opacity": 35,
+  "font_size": 41,
+  "show_source": false,
+  "topmost": true,
+  "model_root": "G:\\AiNiee-Models",
+  "family": "index",
+  "source": "ja",
+  "target": "zh",
+  "width": 900,
+  "height": 120,
+  "locked": false,
+  "font_family": "字魂扁桃体",
+  "font_bold": true,
+  "translation_color": "#dfa3e0",
+  "source_color": "#4b7e83",
+  "background_color": "#000000",
+  "stroke_width": 5,
+  "stroke_color": "#ffffff"
+}
