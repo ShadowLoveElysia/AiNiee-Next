@@ -32,6 +32,8 @@ class DesktopApp:
         self.setup_busy = False
         self.install_prompted = False
         self.runtime_ready = False
+        self._checked_runtime_signature = None
+        self._checked_compute = None
         self.auto_start_requested = auto_start
         self.runtime_interpreter = ""
         self._last_saved_preferences = None
@@ -125,7 +127,9 @@ class DesktopApp:
         ttk.Label(languages, text="  →  ").pack(side="left")
         ttk.Combobox(languages, textvariable=self.target, values=("zh", "en", "ja", "ko"), state="readonly", width=10).pack(side="left")
         ttk.Label(languages, text=self.t("device")).pack(side="left")
-        ttk.Combobox(languages, textvariable=self.device, values=("auto", "cuda:0", "vulkan", "cpu"), state="readonly", width=9).pack(side="left")
+        self.compute_selector = ttk.Combobox(languages, textvariable=self.device, values=("auto", "cuda:0", "vulkan", "cpu"), state="readonly", width=9)
+        self.compute_selector.pack(side="left")
+        self.compute_selector.bind("<<ComboboxSelected>>", self.compute_changed)
         ttk.Label(frame, text=self.t("audio")).grid(row=5, column=0, sticky="w", pady=12)
         self.devices = ttk.Combobox(frame, textvariable=self.speaker, state="readonly")
         self.devices.grid(row=5, column=1, sticky="ew")
@@ -372,6 +376,19 @@ class DesktopApp:
         from ModuleFolders.Media.desktop_setup import prepare_runtime
         prepare_runtime(self, action, confirmed=confirmed, model_key=model_key)
 
+    def runtime_signature(self):
+        return (self.runtime_interpreter, self.device.get(), self.family.get(), self.model_root.get())
+
+    def compute_changed(self, event=None):
+        if self.session.active or self.setup_busy:
+            self.environment_status.set(self.t("stop_before_setup"))
+            return
+        self.runtime_ready = False
+        self._checked_runtime_signature = None
+        self._checked_compute = None
+        self.start_button.configure(state="disabled")
+        self.prepare_runtime("check")
+
     def browse_record_directory(self):
         from tkinter import filedialog
         selected = filedialog.askdirectory(parent=self.root, initialdir=self.record_directory.get())
@@ -569,7 +586,12 @@ class DesktopApp:
         for button in self.setup_buttons:
             button.configure(state="normal")
         report = event.get("report")
-        self.runtime_ready = bool(report and report.get("ready"))
+        signature = event.get("runtime_signature")
+        current = self.runtime_signature()
+        self.runtime_ready = bool(report and report.get("ready") and
+                                  (signature is None or tuple(signature) == current))
+        self._checked_runtime_signature = current if self.runtime_ready else None
+        self._checked_compute = report.get("compute") if self.runtime_ready else None
         if event.get("action") in {"install", "configure"} and self.runtime_ready:
             self.refresh_devices()
         if not self.session.active:
@@ -768,12 +790,18 @@ class DesktopApp:
         from tkinter import messagebox
         if self.session.active or self.setup_busy or not self.runtime_ready:
             return
+        if self._checked_runtime_signature != self.runtime_signature():
+            self.runtime_ready = False
+            self.auto_start_requested = True
+            self.prepare_runtime("check")
+            return
         try:
             config = LiveConfig(
                 model_root=str(Path(self.model_root.get()).expanduser().resolve()), family=self.family.get(),
                 source_lang=self.source.get(), target_lang=self.target.get(),
                 speaker="" if self.speaker.get() == self.t("default_output") else self.speaker.get(),
-                device=self.device.get(), asr_device="auto",
+                device=(self._checked_compute or {}).get("translation_device", self.device.get()),
+                asr_device=(self._checked_compute or {}).get("asr_device", "auto"),
                 context_segments=self.context_segments.get(),
             )
             self.session.start(config, interpreter=self.runtime_interpreter)
@@ -785,6 +813,7 @@ class DesktopApp:
         self.translation_label.configure(text=self.t("loading"))
         self.state = "loading"
         self.context_spin.configure(state="disabled")
+        self.compute_selector.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(self.t("starting_worker"))
@@ -853,6 +882,7 @@ class DesktopApp:
             self.history.end_recording()
             self.record_status.set(self.t("recording_wait" if self.recording.get() else "recording_off"))
             self.context_spin.configure(state="normal")
+            self.compute_selector.configure(state="readonly")
             if self.state != "error":
                 self.status.set(self.t("stopped") if event.get("requested") or event.get("exit_code") == 0
                                 else self.t("process_exit", code=event.get("exit_code")))

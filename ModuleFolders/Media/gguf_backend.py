@@ -17,7 +17,8 @@ from ModuleFolders.Media.local_backends import translation_prompt
 
 
 class GgufTranslator:
-    def __init__(self, model_path, *, family, device="cuda:0", max_new_tokens=256, on_partial=None):
+    def __init__(self, model_path, *, family, device="cuda:0", max_new_tokens=256, on_partial=None,
+                 cpu_threads=4):
         from ModuleFolders.Media.gguf_runtime import find_server
         from ModuleFolders.Media.model_catalog import get_model
         from ModuleFolders.Media.runtime import subprocess_environment
@@ -26,6 +27,8 @@ class GgufTranslator:
         self.family = checkpoint.family
         self.on_partial = on_partial
         self.max_new_tokens = max_new_tokens
+        if not isinstance(cpu_threads, int) or cpu_threads < 1:
+            raise ValueError("CPU threads must be positive")
         backend = {"cuda:0": "cuda", "vulkan": "vulkan", "cpu": "cpu"}.get(device)
         if backend is None:
             raise ValueError("GGUF requires CUDA, Vulkan or CPU")
@@ -55,7 +58,7 @@ class GgufTranslator:
         self._url = f"http://127.0.0.1:{port}"
         args = [str(server), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
                 "--api-key", self._key, "-ngl", "0" if backend == "cpu" else "99",
-                "-c", "2048", "--parallel", "1", "--threads", "4", "--jinja",
+                "-c", "2048", "--parallel", "1", "--threads", str(cpu_threads), "--jinja",
                 "--chat-template-kwargs", '{"enable_thinking":false}']
         self._process = subprocess.Popen(args, cwd=server.parent, env=subprocess_environment(),
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

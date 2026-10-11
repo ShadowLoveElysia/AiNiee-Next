@@ -92,15 +92,23 @@ Audio output enumeration runs independently first, using the saved media Python
 and falling back to available installed environments. Child probes receive empty
 standard input and sanitized Python path variables, so the core's lifetime pipe
 is not inherited by probes. The core pauses ordinary background prewarming while
-the live window is active. The TUI and CLI supervisor use the same chosen media
-interpreter to launch the desktop.
+the live window is active. The TUI and CLI supervisor launch the desktop with
+the core Python environment (including Tk/Tcl and UI dependencies). The chosen
+media interpreter is used for audio discovery, environment checks and inference.
+Missing Torch or model files do not prevent the controller from opening.
+Desktop startup failures appear in the terminal and managed diagnostic panel.
 If required dependencies are missing or broken, a consent dialog offers automatic setup;
 declining does not install or start capture. The installation button can retry.
 Torch and other media libraries remain outside base dependencies and are installed
 into `Resource/MediaRuntime`. CUDA and CPU builds are selected explicitly.
 The model-download button separately asks permission, downloads SenseVoice plus
 the selected translator into the chosen model directory, resumes partial files,
-and verifies pinned official revisions and hashes. No automatic model download
+and verifies pinned official ModelScope revisions and SHA-256 hashes. Downloads
+use `https://modelscope.cn` directly, including SenseVoice (`iic/SenseVoiceSmall`),
+Index (`IndexTeam`) and HY-MT2 (`Tencent-Hunyuan`), with no Hugging Face fallback.
+Only the selected GGUF file is fetched for quantized models. Existing model
+directory names remain compatible; `HF_ENDPOINT` does not affect this downloader.
+No automatic model download
 runs when the window opens. Network failures leave settings and downloaded parts
 available for retry. A source Python 3.12 environment (or uv) is required for setup;
 frozen-distribution installation and cross-platform capture need separate validation.

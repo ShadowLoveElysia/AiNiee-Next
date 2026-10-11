@@ -15,15 +15,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def run_managed_desktop(arguments=(), *, interpreter=None) -> int:
     if not sys.stdout.isatty() and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    from ModuleFolders.Media.runtime import subprocess_environment, selected_python
-    from ModuleFolders.Media.preferences import read_preferences
-    interpreter = interpreter or selected_python(read_preferences().get("runtime_python", ""))
+    from ModuleFolders.Media.runtime import subprocess_environment
+    # Keep GUI dependencies in the core environment; inference selects its own Python.
+    interpreter = interpreter or sys.executable
     if any(argument in {"-h", "--help"} for argument in arguments):
         return subprocess.call([interpreter or sys.executable, "-m", "ModuleFolders.Media", *arguments], cwd=PROJECT_ROOT)
     process = subprocess.Popen(
         [interpreter or sys.executable, "-m", "ModuleFolders.Media", "--managed", *arguments],
         cwd=PROJECT_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=None,
         text=True, encoding="utf-8", errors="replace",
         env=subprocess_environment(),
     )

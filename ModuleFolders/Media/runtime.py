@@ -19,11 +19,16 @@ PACKAGES = ("torch", "torchaudio", "transformers", "accelerate", "funasr", "sent
             "silero_vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
             "huggingface_hub", "safetensors")
 MODELS = {
-    "sensevoice": ("FunAudioLLM/SenseVoiceSmall", "3847d57b6bdf2dd8875cb1508d2af43d80a16bf7"),
-    "index": ("IndexTeam/Index-Translate-2B", "a516854233b170140b57d36b48d7148c0edebabb"),
-    "hymt": ("tencent/Hy-MT2-1.8B", "9a341cd1b679d3efd23b46e847b01745a71ed792"),
+    "sensevoice": ("iic/SenseVoiceSmall", "7bf452403abd7353a300cd760f7adae7701c92c1"),
+    "index": ("IndexTeam/Index-Translate-2B", "3473f22736a89e12ece274e2130be2d5898dbda3"),
+    "hymt": ("Tencent-Hunyuan/Hy-MT2-1.8B", "09fd81b4d8952bad2906e5c72f167bc84b0c6921"),
+    "index-9b": ("IndexTeam/Index-Translate-9B", "6ae85e9af278d70007d869d21c263d7d00c3d8dc"),
+    "hymt-7b": ("Tencent-Hunyuan/Hy-MT2-7B", "e4352246d81541283e5b27590c9ca2833ac6ca06"),
+    "index-q4": ("IndexTeam/Index-Translate-2B-GGUF", "b92a7c7bf499a6f05da1a66fab8549da3de5b603"),
+    "index-q6": ("IndexTeam/Index-Translate-2B-GGUF", "b92a7c7bf499a6f05da1a66fab8549da3de5b603"),
+    "hymt-q4": ("Tencent-Hunyuan/Hy-MT2-1.8B-GGUF", "e97e6af0ec0950385644d7c0a8e5c899071f722b"),
+    "hymt-q6": ("Tencent-Hunyuan/Hy-MT2-1.8B-GGUF", "e97e6af0ec0950385644d7c0a8e5c899071f722b"),
 }
-MODELS.update({model.key: (model.repo, model.revision) for model in TRANSLATION_MODELS})
 
 
 def runtime_python() -> Path:
@@ -149,39 +154,14 @@ def install(device: str) -> None:
 
 
 def download(root: Path, family: str) -> None:
-    import hashlib
-    from huggingface_hub import HfApi, snapshot_download
+    from ModuleFolders.Media.modelscope_download import download_model
 
-    family = get_model(family).key
-    api = HfApi(token=False)
-    for key in ("sensevoice", family):
+    model = get_model(family)
+    for key in ("sensevoice", model.key):
         repo, revision = MODELS[key]
-        info = api.model_info(repo, revision=revision, files_metadata=True)
-        files = [f for f in info.siblings if "/" not in f.rfilename and not f.rfilename.startswith(".")
-                 and (f.rfilename.endswith((".safetensors", ".json", ".txt", ".yaml", ".jinja", ".model", ".pt", ".mvn"))
-                      or f.rfilename.startswith("README"))]
-        if key != "sensevoice" and get_model(family).backend == "gguf":
-            files = [f for f in info.siblings if f.rfilename == get_model(family).filename]
-        target = root / repo.split("/")[-1]
-        print(json.dumps({"model": repo, "stage": "download", "bytes": sum(f.size or 0 for f in files)}), flush=True)
-        snapshot_download(repo, revision=revision, local_dir=target, token=False,
-                          allow_patterns=[f.rfilename for f in files], max_workers=3)
-        for item in files:
-            path = target / item.rfilename
-            if path.stat().st_size != item.size:
-                raise RuntimeError("Model size verification failed")
-            digest = hashlib.sha256() if item.lfs else hashlib.sha1()
-            if not item.lfs:
-                digest.update(f"blob {item.size}\0".encode())
-            with path.open("rb") as stream:
-                for data in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-                    digest.update(data)
-            expected = item.lfs.sha256 if item.lfs else item.blob_id
-            if digest.hexdigest() != expected:
-                raise RuntimeError("Model checksum verification failed")
-        (target / "MODEL_INFO.json").write_text(json.dumps({"repo": repo, "revision": revision,
-                                                          "status": "verified"}, indent=2), encoding="utf-8")
-        print(json.dumps({"model": repo, "status": "verified"}), flush=True)
+        target = root / ("SenseVoiceSmall" if key == "sensevoice" else model.directory)
+        filename = model.filename if key != "sensevoice" and model.backend == "gguf" else ""
+        download_model(repo, revision, target, filename=filename)
 
 
 def main():

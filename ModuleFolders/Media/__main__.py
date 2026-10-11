@@ -15,7 +15,10 @@ def main(argv=None) -> int:
         from ModuleFolders.Media.desktop import DesktopApp
         app = DesktopApp(model_root=args.model_root, auto_start=args.start, managed=args.managed)
         app.run()
-    except (ImportError, RuntimeError) as exc:
+    except Exception as exc:
+        if args.managed:
+            from ModuleFolders.Media.diagnostics import emit_diagnostic
+            emit_diagnostic({"type": "error", "message": type(exc).__name__})
         print(f"Cannot open live translation: {exc}", file=sys.stderr)
         return 1
     return 0

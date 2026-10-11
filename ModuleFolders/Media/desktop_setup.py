@@ -115,6 +115,8 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 message = text["setup_complete"]
         except Exception as exc:
             message = text["setup_failed"].format(detail=type(exc).__name__)
-        results.put({"type": "finished", "message": message, "report": report, "action": action})
+        results.put({"type": "finished", "message": message, "report": report, "action": action,
+                     "runtime_signature": (app.runtime_interpreter if action in {"install", "configure"} else interpreter,
+                                           device, family, model_root)})
 
     threading.Thread(target=work, name="media-setup", daemon=True).start()
