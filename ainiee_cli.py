@@ -747,7 +747,12 @@ class CLIMenu:
 
     def run_wizard(self):
         self.display_banner()
-        console.print(Panel("[bold cyan]Welcome to AiNiee-Next! Let's run a quick setup wizard.[/bold cyan]"))
+        console.print(Panel(i18n.get("first_run_mode_title")))
+        console.print(f"1. {i18n.get('first_run_full_setup')}\n2. {i18n.get('first_run_live_only')}")
+        mode = IntPrompt.ask(i18n.get("prompt_select"), choices=["1", "2"], default=1)
+        if mode == 2:
+            self.start_live_translation()
+            return "live"
         
         self.first_time_lang_setup()
         use_agent = self._maybe_offer_external_agent_onboarding(open_prompt=False)
@@ -787,7 +792,8 @@ class CLIMenu:
         self._check_terminal_compatibility()
 
         if not self.root_config.get("wizard_completed"):
-            self.run_wizard()
+            if self.run_wizard() == "live":
+                return
         else:
             self._maybe_offer_external_agent_onboarding()
 

@@ -23,6 +23,11 @@ RTX 2080 Ti; AMD driver compatibility and performance require the AMD device.
 
 ## Desktop live translation
 
+On first launch, choose Use live translation only to open the controller without
+language/provider/Agent setup. Closing the controller ends that launch; the
+general wizard remains pending for the next normal launch. Environment checks
+and dependency/model preparation remain available inside the live controller.
+
 The desktop and TUI list concrete checkpoints. Model selection and download
 use the same catalog, with separate directories so installed models coexist:
 The desktop catalog uses a selectable table of model names, download sizes,
@@ -64,6 +69,15 @@ While the desktop is open through the core, the TUI blocks menu interaction and
 monitors its process. Closing the controller resumes the TUI; terminating the
 core closes the desktop via a control-pipe watchdog. Inference also watches its
 GUI parent so it does not retain audio/CUDA resources after abnormal termination.
+While locked, the core displays a diagnostic panel refreshed four times per
+second. It includes current local time, runtime/stage elapsed time, recent
+events, audio segment duration, ASR/translation/first-text times, queue and
+endpoint waits, end-of-segment-to-caption latency, backlog/drop counts and
+per-second capture/VAD heartbeats. Narrow terminals show a compact event list
+with the latest metrics above it. Frame capture time includes waiting for audio;
+it is not CPU compute time. The diagnostic channel contains no source or
+translated text and does not write a diagnostic log file by default; text
+recording remains controlled by the recording option.
 Inference uses an explicit `python -u -m ModuleFolders.Media.worker` subprocess
 in the selected environment, avoiding the multiprocessing spawn handshake.
 Startup reports worker start, runtime imports, translation loading, ASR loading

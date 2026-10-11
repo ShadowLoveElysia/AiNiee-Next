@@ -198,6 +198,7 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         current.update(source=transcript.text, started=time.monotonic(), first_ms=None, last_sent=0.0)
         emit({"type": "transcript", "source_text": transcript.text,
               "source_lang": transcript.language})
+        emit({"type": "status", "message": "translating"})
 
     def on_partial(text: str) -> None:
         now = time.monotonic()
@@ -235,17 +236,23 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         try:
             while not stop.is_set():
                 try:
-                    segment, queued = pending.get(timeout=0.1)
+                    segment, queued, endpoint_wait_ms = pending.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if stop.is_set():
                     break
                 began = time.monotonic()
+                emit({"type": "status", "message": "recognizing",
+                      "audio_duration_ms": segment.end_ms - segment.start_ms,
+                      "queue_wait_ms": round((began - queued) * 1000)})
                 event = processor.process(segment)
                 if event:
                     payload = asdict(event)
                     payload["type"] = "caption"
                     payload["metadata"].update(
+                        audio_duration_ms=segment.end_ms - segment.start_ms,
+                        endpoint_wait_ms=endpoint_wait_ms,
+                        queue_depth=pending.qsize(), dropped_segments=dropped,
                         queue_wait_ms=round((began - queued) * 1000),
                         translation_first_text_ms=current["first_ms"],
                         latency_from_segment_end_ms=round((time.monotonic() - started) * 1000 - segment.end_ms),
@@ -260,14 +267,30 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
             started = time.monotonic()
             worker.start()
             emit({"type": "ready", "speaker": speaker.name})
+            frame_count = 0
+            capture_ms = vad_ms = 0.0
+            frame_samples = 0
+            last_telemetry = time.monotonic()
             while not stop.is_set():
                 if not failures.empty():
                     raise failures.get()
+                capture_began = time.perf_counter()
                 samples = recorder.record(numframes=512).mean(axis=1)
+                capture_ms += (time.perf_counter() - capture_began) * 1000
                 pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
-                for segment in endpoint.push(pcm, vad.probability(pcm)):
+                vad_began = time.perf_counter()
+                probability = vad.probability(pcm)
+                vad_ms += (time.perf_counter() - vad_began) * 1000
+                frame_count += 1
+                frame_samples += len(samples)
+                audio_position_ms = frame_samples * 1000 // 16000
+                for segment in endpoint.push(pcm, probability):
+                    endpoint_wait_ms = max(0, audio_position_ms - segment.end_ms)
+                    emit({"type": "segment", "start_ms": segment.start_ms, "end_ms": segment.end_ms,
+                          "audio_duration_ms": segment.end_ms - segment.start_ms,
+                          "endpoint_wait_ms": endpoint_wait_ms, "queue_depth": pending.qsize()})
                     try:
-                        pending.put_nowait((segment, time.monotonic()))
+                        pending.put_nowait((segment, time.monotonic(), endpoint_wait_ms))
                     except queue.Full:
                         try:
                             pending.get_nowait()
@@ -276,7 +299,15 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
                         else:
                             dropped += 1
                             emit({"type": "backlog", "dropped_segments": dropped})
-                        pending.put_nowait((segment, time.monotonic()))
+                        pending.put_nowait((segment, time.monotonic(), endpoint_wait_ms))
+                if time.monotonic() - last_telemetry >= 1:
+                    emit({"type": "capture", "audio_position_ms": audio_position_ms,
+                          "capture_ms": round(capture_ms / frame_count, 2),
+                          "vad_ms": round(vad_ms / frame_count, 2),
+                          "queue_depth": pending.qsize(), "dropped_segments": dropped})
+                    last_telemetry = time.monotonic()
+                    frame_count = 0
+                    capture_ms = vad_ms = 0.0
     finally:
         stop.set()
         if worker.ident is not None:

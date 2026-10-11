@@ -4,11 +4,17 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import json
+import queue
+import threading
+import time
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_managed_desktop(arguments=(), *, interpreter=None) -> int:
+    if not sys.stdout.isatty() and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     from ModuleFolders.Media.runtime import subprocess_environment, selected_python
     from ModuleFolders.Media.preferences import read_preferences
     interpreter = interpreter or selected_python(read_preferences().get("runtime_python", ""))
@@ -16,17 +22,65 @@ def run_managed_desktop(arguments=(), *, interpreter=None) -> int:
         return subprocess.call([interpreter or sys.executable, "-m", "ModuleFolders.Media", *arguments], cwd=PROJECT_ROOT)
     process = subprocess.Popen(
         [interpreter or sys.executable, "-m", "ModuleFolders.Media", "--managed", *arguments],
-        cwd=PROJECT_ROOT, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        cwd=PROJECT_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace",
         env=subprocess_environment(),
     )
+    from ModuleFolders.Media.diagnostics import PREFIX, DiagnosticState
+    from ModuleFolders.UserInterface.AppI18N import initialize_i18n
+    from rich.console import Console
+    from rich.live import Live
+    _, locale = initialize_i18n(str(PROJECT_ROOT))
+    updates = queue.Queue(maxsize=256)
+    state = DiagnosticState()
+    def read_events():
+        try:
+            for line in process.stdout:
+                if not line.startswith(PREFIX):
+                    continue
+                try:
+                    event = json.loads(line[len(PREFIX):])
+                except ValueError:
+                    continue
+                try:
+                    updates.put_nowait(event)
+                except queue.Full:
+                    try:
+                        updates.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        updates.put_nowait(event)
+                    except queue.Full:
+                        pass
+        finally:
+            process.stdout.close()
+    reader = threading.Thread(target=read_events, name="media-tui-diagnostics", daemon=True)
+    reader.start()
     try:
         # No TUI prompts run until the desktop process has exited.
-        while True:
-            try:
-                return process.wait(timeout=.2)
-            except subprocess.TimeoutExpired:
-                continue
+        console = Console()
+        with Live(state.render(locale.get, width=console.width), console=console, refresh_per_second=4, transient=False,
+                  auto_refresh=False) as display:
+            while True:
+                while True:
+                    try:
+                        state.accept(updates.get_nowait())
+                    except queue.Empty:
+                        break
+                display.update(state.render(locale.get, width=console.width), refresh=True)
+                code = process.poll()
+                if code is not None:
+                    reader.join(timeout=.5)
+                    while True:
+                        try:
+                            state.accept(updates.get_nowait())
+                        except queue.Empty:
+                            break
+                    display.update(state.render(locale.get, width=console.width), refresh=True)
+                    return code
+                time.sleep(.25)
     finally:
         if process.stdin:
             process.stdin.close()

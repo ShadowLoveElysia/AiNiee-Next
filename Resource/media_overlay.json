@@ -13,14 +13,14 @@
   "locked": true,
   "width": 900,
   "height": 452,
-  "family": "index",
+  "family": "index-q6",
   "source": "ja",
   "target": "zh",
-  "device": "cuda:0",
+  "device": "auto",
   "runtime_python": "D:\\AiNiee-Next-main\\AiNiee-Next\\.venv-win\\Scripts\\python.exe",
-  "context_segments": 0,
+  "context_segments": 3,
   "history_segments": 3,
-  "recording": true,
+  "recording": false,
   "record_directory": "D:\\AiNiee-Next-main\\AiNiee-Next\\Resource\\MediaRecords",
   "model_root": "G:\\AiNiee-Models"
 }

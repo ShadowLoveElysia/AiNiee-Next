@@ -42,6 +42,9 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
     for button in app.setup_buttons:
         button.configure(state="disabled")
     app.environment_status.set(app.t("checking_environment" if action == "check" else "preparing_runtime"))
+    if app.managed:
+        from ModuleFolders.Media.diagnostics import emit_diagnostic
+        emit_diagnostic({"type": "status", "message": "checking_environment" if action == "check" else "preparing_runtime"})
     interpreter, device = app.runtime_interpreter, app.device.get()
     model_root, family = app.model_root.get(), model_key or app.family.get()
     results = app.setup_results

@@ -803,6 +803,9 @@ class DesktopApp:
 
     def handle_event(self, event: dict) -> None:
         kind = event.get("type")
+        if self.managed:
+            from ModuleFolders.Media.diagnostics import emit_diagnostic
+            emit_diagnostic(event)
         if self.state == "stopping" and kind not in {"stopped", "error"}:
             return
         if kind in {"transcript", "caption"}:
