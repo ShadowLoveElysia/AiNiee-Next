@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import multiprocessing
 from pathlib import Path
 import queue
 import threading
 import time
 import uuid
+import subprocess
+import sys
+import json
 
 
 @dataclass(frozen=True)
@@ -23,15 +25,16 @@ class LiveConfig:
     endpoint_silence_ms: int = 450
     target_segment_ms: int = 3000
     max_segment_ms: int = 8000
+    context_segments: int = 0
 
     @property
     def translation_dir(self) -> Path:
-        name = "Index-Translate-2B" if self.family == "index" else "Hy-MT2-1.8B"
-        return Path(self.model_root) / name
+        from ModuleFolders.Media.model_catalog import get_model
+        return Path(self.model_root) / get_model(self.family).directory
 
     def validate(self) -> None:
-        if self.family not in {"index", "hymt"}:
-            raise ValueError("Unsupported translation model")
+        from ModuleFolders.Media.model_catalog import get_model, model_files_present
+        get_model(self.family)
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
             raise ValueError("Unsupported recognition language")
         if self.target_lang not in {"zh", "en", "ja", "ko"}:
@@ -40,111 +43,115 @@ class LiveConfig:
             raise ValueError("Invalid segment duration")
         if self.endpoint_silence_ms <= 0:
             raise ValueError("Invalid endpoint duration")
+        if self.context_segments not in {0, 1, 2, 3}:
+            raise ValueError("Context must contain 0 to 3 segments (0 disables context)")
         root = Path(self.model_root).expanduser()
         required = [root / "SenseVoiceSmall/model.pt", root / "SenseVoiceSmall/config.yaml",
                     self.translation_dir / "config.json", self.translation_dir / "tokenizer_config.json"]
         for path in required:
             if not path.is_file():
                 raise ValueError(f"Model file is missing: {path}")
-        if not any(self.translation_dir.glob("*.safetensors")):
-            raise ValueError(f"Translation weights are missing: {self.translation_dir}")
+        if not model_files_present(root, self.family):
+            raise ValueError(f"Translation model files are missing or incomplete: {self.translation_dir}")
 
 
 class LiveSession:
     """The GUI owns this controller; model and capture imports stay in a child."""
 
     def __init__(self) -> None:
-        self._context = multiprocessing.get_context("spawn")
         self._process = None
-        self._receiver = None
-        self._stop = None
+        self._events = queue.Queue()
         self._stop_deadline = None
+        self._startup_deadline = None
+        self._worker_started = False
 
     @property
     def active(self) -> bool:
         return self._process is not None
 
-    def start(self, config: LiveConfig) -> None:
+    def start(self, config: LiveConfig, *, interpreter: str | None = None) -> None:
         if self.active:
             raise RuntimeError("A live session is already active")
         config.validate()
         config = LiveConfig(**{**asdict(config), "model_root": str(Path(config.model_root).expanduser().resolve())})
-        receiver, sender = self._context.Pipe(duplex=False)
-        stop = self._context.Event()
-        process = self._context.Process(
-            target=_run_worker, args=(config, sender, stop), name="AiNiee-Live", daemon=True,
+        from ModuleFolders.Media.runtime import subprocess_environment
+        self._events = queue.Queue()
+        process = subprocess.Popen(
+            [interpreter or sys.executable, "-u", "-m", "ModuleFolders.Media.worker"],
+            cwd=Path(__file__).resolve().parents[2], env=subprocess_environment(),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, encoding="utf-8", errors="replace",
         )
         try:
-            process.start()
+            process.stdin.write(json.dumps(asdict(config)) + "\n")
+            process.stdin.flush()
         except Exception:
-            receiver.close()
-            sender.close()
+            process.terminate()
+            process.wait(timeout=3)
             raise
-        sender.close()
-        self._receiver, self._stop, self._process = receiver, stop, process
+        self._process = process
+        events = self._events
+        def receive():
+            try:
+                for line in process.stdout:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and "type" in event:
+                        events.put(event)
+            finally:
+                process.stdout.close()
+        threading.Thread(target=receive, name="media-events", daemon=True).start()
         self._stop_deadline = None
+        self._startup_deadline = time.monotonic() + 60
+        self._worker_started = False
 
     def stop(self) -> None:
         if self.active and self._stop_deadline is None:
-            self._stop.set()
+            self._process.stdin.close()
             self._stop_deadline = time.monotonic() + 5
 
     def poll(self) -> list[dict]:
         events = []
         if not self.active:
             return events
-        try:
-            for _ in range(100):
-                if not self._receiver.poll():
-                    break
-                events.append(self._receiver.recv())
-        except (EOFError, OSError):
-            pass
+        for _ in range(100):
+            try:
+                event = self._events.get_nowait()
+            except queue.Empty:
+                break
+            events.append(event)
+            self._worker_started = True
+        if not self._worker_started and self._stop_deadline is None and time.monotonic() >= self._startup_deadline:
+            events.append({"type": "error", "message": "ModelWorkerStartupTimeout"})
+            self.stop()
         if self._stop_deadline and time.monotonic() >= self._stop_deadline:
-            if self._process.is_alive():
+            if self._process.poll() is None:
                 self._process.terminate()
-        if not self._process.is_alive():
-            code = self._process.exitcode
+        if self._process.poll() is not None:
+            code = self._process.returncode
             stopping = self._stop_deadline is not None
-            self._process.join(timeout=0)
-            self._process.close()
-            self._receiver.close()
-            self._process = self._receiver = self._stop = None
+            if not self._process.stdin.closed:
+                self._process.stdin.close()
+            self._process = None
             self._stop_deadline = None
             events.append({"type": "stopped", "exit_code": code, "requested": stopping})
         return events
 
     def close(self) -> None:
         if self.active:
-            self._stop.set()
-            if self._process.is_alive():
-                self._process.terminate()
-            self._process.join(timeout=2)
-            if self._process.is_alive():
+            self.stop()
+            try:
+                self._process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
                 self._process.kill()
-                self._process.join(timeout=1)
-            self._receiver.close()
-            self._process.close()
-            self._process = self._receiver = self._stop = None
-
-
-def _run_worker(config: LiveConfig, sender, stop) -> None:
-    send_lock = threading.Lock()
-
-    def emit(payload: dict) -> None:
-        with send_lock:
-            sender.send(payload)
-
-    try:
-        _capture_and_translate(config, emit, stop)
-    except Exception as exc:
-        if not stop.is_set():
-            emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
-    finally:
-        sender.close()
+                self._process.wait(timeout=3)
+            self._process = None
 
 
 def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
+    emit({"type": "status", "message": "importing_runtime"})
     import numpy as np
     import soundcard as sc
     import torch
@@ -158,6 +165,7 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     torch.set_num_threads(4)
     emit({"type": "status", "message": "loading_translation"})
     translator = LocalTextTranslator(config.translation_dir, family=config.family, device=config.device)
+    emit({"type": "status", "message": "translation_loaded"})
     if stop.is_set():
         return
     emit({"type": "status", "message": "loading_asr"})
@@ -176,7 +184,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
 
     def on_transcript(transcript) -> None:
         current.update(source=transcript.text, started=time.monotonic(), first_ms=None, last_sent=0.0)
-        emit({"type": "transcript", "source_text": transcript.text})
+        emit({"type": "transcript", "source_text": transcript.text,
+              "source_lang": transcript.language})
 
     def on_partial(text: str) -> None:
         now = time.monotonic()
@@ -189,7 +198,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     translator.on_partial = on_partial
     processor = CascadeProcessor(
         recognizer, translator, source_lang=config.source_lang, target_lang=config.target_lang,
-        session_id=uuid.uuid4().hex, context_segments=1, context_chars=600, on_transcript=on_transcript,
+        session_id=uuid.uuid4().hex, context_segments=config.context_segments,
+        context_chars=1600, on_transcript=on_transcript,
     )
     endpoint = PcmEndpointDetector(
         endpoint_silence_ms=config.endpoint_silence_ms, target_segment_ms=config.target_segment_ms,

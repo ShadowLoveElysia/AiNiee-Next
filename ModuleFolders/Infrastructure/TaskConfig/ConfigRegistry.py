@@ -591,6 +591,38 @@ register_config(ConfigItem(
     category="utility",
 ))
 
+register_config(ConfigItem(
+    key="media_settings",
+    default=None,
+    level=ConfigLevel.USER,
+    config_type=ConfigType.DICT,
+    i18n_key="media_settings",
+    category="media",
+))
+
+from ModuleFolders.Media.preferences import DEFAULTS as _media_defaults, RANGES as _media_ranges, CHOICES as _media_choices
+from ModuleFolders.Media.tui_settings import FIELDS as _media_fields
+
+for _media_key, _media_label in _media_fields:
+    _media_default = _media_defaults.get(_media_key, "")
+    _media_type = ConfigType.STRING
+    if isinstance(_media_default, bool):
+        _media_type = ConfigType.BOOL
+    elif _media_key in _media_ranges:
+        _media_type = ConfigType.INT
+    elif _media_key in _media_choices:
+        _media_type = ConfigType.CHOICE
+    elif _media_key in {"model_root", "record_directory"}:
+        _media_type = ConfigType.PATH
+    register_config(ConfigItem(
+        key="media_" + _media_key, default=_media_default, level=ConfigLevel.USER,
+        config_type=_media_type, i18n_key="media_" + _media_label,
+        choices=list(_media_choices.get(_media_key, ())),
+        min_value=_media_ranges.get(_media_key, (None, None))[0],
+        max_value=_media_ranges.get(_media_key, (None, None))[1],
+        category="media", submenu="media_settings",
+    ))
+
 for _ebook_key, _ebook_default, _ebook_type in (
     ("epub_reader_font_control", False, ConfigType.BOOL),
     ("epub_sync_chapter_titles", True, ConfigType.BOOL),

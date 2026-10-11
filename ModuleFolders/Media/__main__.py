@@ -9,10 +9,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="AiNiee live translation with a separate subtitle window")
     parser.add_argument("--model-root", help="Directory containing SenseVoiceSmall and translation model folders")
     parser.add_argument("--start", action="store_true", help="Start capture after opening the controller")
+    parser.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         from ModuleFolders.Media.desktop import DesktopApp
-        app = DesktopApp(model_root=args.model_root, auto_start=args.start)
+        app = DesktopApp(model_root=args.model_root, auto_start=args.start, managed=args.managed)
         app.run()
     except (ImportError, RuntimeError) as exc:
         print(f"Cannot open live translation: {exc}", file=sys.stderr)

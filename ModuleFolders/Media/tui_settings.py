@@ -12,6 +12,8 @@ FIELDS = [
     ("background_color", "background_color"), ("stroke_width", "stroke_width"),
     ("stroke_color", "stroke_color"), ("show_source", "bilingual"), ("topmost", "topmost"),
     ("locked", "lock_position"), ("width", "width"), ("height", "height"),
+    ("context_segments", "context_segments"), ("history_segments", "history_segments"),
+    ("recording", "recording"), ("record_directory", "record_directory"),
 ]
 
 
@@ -19,28 +21,32 @@ def show_media_settings(host) -> None:
     from rich.console import Console
     from rich.prompt import Confirm, IntPrompt, Prompt
     from rich.table import Table
+    from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS, describe_model, get_model
+    from ModuleFolders.Infrastructure.TaskConfig.SettingsRenderer import SettingsMenuBuilder
 
     console = Console()
     tr = host.i18n.get
     while True:
         host.display_banner()
         data = read_preferences()
-        table = Table(title=tr("media_settings"))
-        table.add_column("#")
-        table.add_column(tr("media_settings"))
-        table.add_column(tr("media_value"))
-        for index, (key, label) in enumerate(FIELDS, 1):
-            value = data.get(key, "")
-            if isinstance(value, bool):
-                value = tr("media_enabled") if value else tr("media_disabled")
-            table.add_row(str(index), tr("media_" + label), str(value))
-        console.print(table)
+        builder = SettingsMenuBuilder({"media_" + key: value for key, value in data.items()}, host.i18n)
+        builder.build_menu_items(submenu="media_settings")
+        console.print(builder.render_table())
         console.print("0. " + tr("menu_back"))
-        choice = IntPrompt.ask(tr("prompt_select"), choices=[str(i) for i in range(len(FIELDS) + 1)], show_choices=False)
+        choice = IntPrompt.ask(tr("prompt_select"), choices=[str(i) for i in range(len(builder.menu_items) + 1)], show_choices=False)
         if not choice:
             return
-        key, label = FIELDS[choice - 1]
-        if isinstance(DEFAULTS.get(key), bool):
+        registered_key, item = builder.get_item_by_id(choice)
+        key = registered_key.removeprefix("media_")
+        label = item.i18n_key.removeprefix("media_")
+        if key == "family":
+            for index, model in enumerate(TRANSLATION_MODELS, 1):
+                console.print(str(index) + ". " + describe_model(model.key, tr), markup=False)
+            console.print(tr("media_model_memory_note"), markup=False)
+            console.print(tr("media_model_speed_note"), markup=False)
+            selected = IntPrompt.ask(tr("media_translator"), choices=[str(i) for i in range(1, len(TRANSLATION_MODELS)+1)])
+            value = TRANSLATION_MODELS[selected-1].key
+        elif isinstance(DEFAULTS.get(key), bool):
             value = Confirm.ask(tr("media_" + label), default=data[key])
         elif key in RANGES:
             value = IntPrompt.ask(tr("media_" + label), default=data[key])

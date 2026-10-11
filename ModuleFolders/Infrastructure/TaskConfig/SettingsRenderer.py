@@ -65,6 +65,9 @@ def format_config_value(key: str, value, config: dict, i18n=None) -> str:
         count = len(value) if isinstance(value, list) else 0
         return f"[dim]{count} {i18n.get('label_items')}[/dim]" if i18n else f"[dim]{count} items[/dim]"
     elif item.config_type == ConfigType.CHOICE:
+        if key == "media_family":
+            from ModuleFolders.Media.model_catalog import get_model
+            return get_model(value or item.default).name
         if key in MANGA_ENGINE_CONFIG_STAGES:
             display = _format_manga_engine_value(key, value, item.default)
             return str(display) if display else ""
@@ -162,6 +165,7 @@ class SettingsMenuBuilder:
             ("response_check", "label_category_response_check"),
             ("automation", "label_category_automation"),
             ("manga", "label_category_manga"),
+            ("media", "label_category_media"),
             ("advanced", "label_category_advanced"),
             ("utility", "label_category_utility"),
             ("project_general", "label_category_project_general"),

@@ -18,6 +18,13 @@ cmd = [
 # 由mediapipe导入，但不需要这些任务，会增加很多大小
 MODULES_TO_EXCLUDE = [
     "jaxlib",
+    "torch",
+    "torchaudio",
+    "transformers",
+    "funasr",
+    "silero_vad",
+    "soundcard",
+    "accelerate",
 ]
 
 # 添加显式排除参数

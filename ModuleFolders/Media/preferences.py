@@ -14,10 +14,15 @@ DEFAULTS = {
     "stroke_width": 2, "stroke_color": "#000000", "show_source": True, "topmost": True,
     "locked": False, "width": 900, "height": 240, "family": "index", "source": "ja",
     "target": "zh", "device": "cuda:0", "runtime_python": "",
+    "context_segments": 0, "history_segments": 3, "recording": False,
+    "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
 }
 RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
-          "width": (360, 2400), "height": (120, 1000)}
-CHOICES = {"family": ("index", "hymt"), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
+          "width": (360, 2400), "height": (120, 1000),
+          "context_segments": (0, 3), "history_segments": (2, 3)}
+from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
+
+CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
            "target": ("zh", "en", "ja", "ko"), "device": ("cuda:0", "cpu")}
 
 

@@ -56,6 +56,11 @@ class SettingsMenu:
             if not (key and item):
                 continue
 
+            if key == "media_settings":
+                from ModuleFolders.Media.tui_settings import show_media_settings
+                show_media_settings(self.host)
+                continue
+
             if key == "api_pool_management":
                 self.host.api_manager.api_pool_menu()
                 continue

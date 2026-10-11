@@ -2,7 +2,8 @@ import os
 import sys
 
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "live":
-    os.execv(sys.executable, [sys.executable, "-m", "ModuleFolders.Media", *sys.argv[2:]])
+    from ModuleFolders.Media.supervisor import run_managed_desktop
+    raise SystemExit(run_managed_desktop(sys.argv[2:]))
 
 # Silence TF and other C++ logs that break TUI
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -735,6 +736,7 @@ class CLIMenu:
             enabled=True,
             should_continue=lambda: (
                 not getattr(self, "task_running", False)
+                and not getattr(self, "live_mode_active", False)
                 and bool(self.config.get("enable_background_prewarm", True))
             ),
         )
@@ -2504,10 +2506,14 @@ class CLIMenu:
         self.web_runtime_bridge.start_web_server()
 
     def start_live_translation(self):
-        subprocess.Popen(
-            [sys.executable, "-m", "ModuleFolders.Media"],
-            cwd=PROJECT_ROOT,
-        )
+        from ModuleFolders.Media.supervisor import run_managed_desktop
+        console.print(i18n.get("media_tui_locked"))
+        self.live_mode_active = True
+        try:
+            run_managed_desktop()
+        finally:
+            self.live_mode_active = False
+        console.print(i18n.get("media_tui_unlocked"))
 
     def start_mcp_server(self):
         self.mcp_runtime_bridge.start_mcp_server()
@@ -2523,7 +2529,8 @@ class CLIMenu:
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "live":
-        return subprocess.call([sys.executable, "-m", "ModuleFolders.Media", *sys.argv[2:]])
+        from ModuleFolders.Media.supervisor import run_managed_desktop
+        return run_managed_desktop(sys.argv[2:])
     parser = argparse.ArgumentParser(description="AiNiee-Next - A powerful tool for AI-driven translation and polishing.", add_help=False)
     
     # 将 --help 参数单独处理，以便自定义帮助信息

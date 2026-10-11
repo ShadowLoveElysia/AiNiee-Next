@@ -82,15 +82,15 @@ class LocalTextTranslator:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        if family not in {"index", "hymt"}:
-            raise ValueError("Model family must be index or hymt")
+        from ModuleFolders.Media.model_catalog import get_model
+        checkpoint = get_model(family)
         if dtype not in {"float16", "bfloat16", "float32"} or max_new_tokens <= 0:
             raise ValueError("Invalid model dtype or output budget")
         root = Path(model_dir).resolve()
         if not root.is_dir():
             raise FileNotFoundError(root)
-        self.family = family
-        self.name = "index-translate-2b" if family == "index" else "hy-mt2-1.8b"
+        self.family = checkpoint.family
+        self.name = checkpoint.name.lower()
         self.max_new_tokens = max_new_tokens
         self.on_partial = on_partial
         self.tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True)

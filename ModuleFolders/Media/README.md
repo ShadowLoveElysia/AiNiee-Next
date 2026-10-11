@@ -2,6 +2,79 @@
 
 ## Desktop live translation
 
+The desktop and TUI list concrete checkpoints. Model selection and download
+use the same catalog, with separate directories so installed models coexist:
+The desktop catalog uses a selectable table of model names, download sizes,
+estimated VRAM and local status. Selecting a row displays its introduction.
+Download fetches that row's model without changing the active translator;
+Use selected model switches to a locally available checkpoint. The current
+selection and download result remain visible in the same window.
+
+| Model | Download | Estimated translation VRAM (FP16, short text) |
+|---|---:|---:|
+| Index-Translate-2B | 4.57 GB | 6–8 GiB |
+| HY-MT2-1.8B | 4.09 GB | 5–7 GiB |
+| Index-Translate-9B | 19.33 GB | 24–28 GiB |
+| HY-MT2-7B | 16.07 GB | 20–24 GiB |
+
+HY-MT2 suits general-purpose translation. Index is better suited to anime,
+games, ACG communities and related online expressions. Both families support
+general translation; these recommendations help users choose for their content.
+
+Larger models may improve quality but run more slowly; smaller models use less
+space and run faster with average quality. Actual results depend on hardware
+and text. VRAM ranges are planning estimates, not hard limits; allow another
+1–2 GiB for GPU SenseVoice and more for longer context. Downloads include the
+shared SenseVoice assets if needed. The download confirmation names the chosen
+checkpoint, total size and destination. Existing `index` / `hymt` preferences
+continue to select the original 2B / 1.8B models. The catalog validates all
+required shards for larger checkpoints before reporting local availability.
+
+The TUI Settings menu includes Live translation settings. Its
+ConfigRegistry-backed submenu is rendered inside the normal settings table;
+individual media fields are registered under `media_settings` and use the same
+table renderer. The desktop and TUI persist their values in the shared media
+preferences file rather than separate copies of a batch Profile.
+It edits the same
+project-level preferences as the desktop, including fonts, colors, outline,
+background opacity, bilingual mode, lock, dimensions, model and device choices.
+Desktop changes are saved as they are edited, so the TUI sees them on return.
+While the desktop is open through the core, the TUI blocks menu interaction and
+monitors its process. Closing the controller resumes the TUI; terminating the
+core closes the desktop via a control-pipe watchdog. Inference also watches its
+GUI parent so it does not retain audio/CUDA resources after abnormal termination.
+Inference uses an explicit `python -u -m ModuleFolders.Media.worker` subprocess
+in the selected environment, avoiding the multiprocessing spawn handshake.
+Startup reports worker start, runtime imports, translation loading, ASR loading
+and warmup separately. Windows lifetime monitoring polls PeekNamedPipe instead
+of blocking CRT input reads that can stall NumPy/Torch native DLL imports. A
+worker with no startup event within 60 seconds reports an error rather than
+waiting indefinitely.
+
+Every desktop launch automatically checks dependencies and the chosen device
+in a subprocess. Imports, relevant versions and CUDA availability are inspected.
+Audio output enumeration runs independently first, using the saved media Python
+and falling back to available installed environments. Child probes receive empty
+standard input and sanitized Python path variables, so the core's lifetime pipe
+is not inherited by probes. The core pauses ordinary background prewarming while
+the live window is active. The TUI and CLI supervisor use the same chosen media
+interpreter to launch the desktop.
+If required dependencies are missing or broken, a consent dialog offers automatic setup;
+declining does not install or start capture. The installation button can retry.
+Torch and other media libraries remain outside base dependencies and are installed
+into `Resource/MediaRuntime`. CUDA and CPU builds are selected explicitly.
+The model-download button separately asks permission, downloads SenseVoice plus
+the selected translator into the chosen model directory, resumes partial files,
+and verifies pinned official revisions and hashes. No automatic model download
+runs when the window opens. Network failures leave settings and downloaded parts
+available for retry. A source Python 3.12 environment (or uv) is required for setup;
+frozen-distribution installation and cross-platform capture need separate validation.
+The current source launcher has been validated on Windows. Fresh multi-GB
+installation and public-model downloading require network access and have not
+been repeated as part of the desktop integration tests; installer commands,
+consent branches and download hash verification have regression coverage.
+
+
 Open the independent desktop controller from the TUI's **Live Translation
 (Subtitle Window)** menu, or from the project root:
 
@@ -40,8 +113,21 @@ The controller remains fully opaque for accessible controls. It can be moved
 away or minimized while the subtitle window stays visible.
 
 Model and appearance preferences are saved to `Resource/media_overlay.json`
-when closing the controller. No transcript/audio history is written by this
-desktop entry. The model directory is selected through the controller or
+as they are edited and when closing the controller. Recording is off by default;
+only the last 2–3 completed captions are retained in memory and displayed in the
+overlay. Recent translations opens a scrollable view of these entries so wrapped
+text can be read fully. Dynamic translation context is off by default (0).
+Users may enable up to 3 previous source/translation pairs within a
+1600-character budget. In-memory caption history and recording remain independent
+of the context sent to the translation model.
+
+When Record ASR and translations is enabled, events received from then onward
+are written to a new UTF-8 JSONL file in the selected recording directory, including
+ASR source text and final translated text. Intermediate generated text and audio
+are not recorded. Disabling recording or stopping closes the file; earlier files
+remain available. Enabling recording does not retroactively save in-memory history.
+Both recording and history/context settings are available in the TUI and desktop.
+The model directory is selected through the controller or
 `AINIEE_MEDIA_MODEL_ROOT`; an existing `G:\AiNiee-Models` is detected on Windows.
 Models are not downloaded automatically. Existing batch profiles are unchanged.
 
@@ -123,7 +209,8 @@ submit the segment early. An 8-second maximum remains as a bounded fallback,
 so uninterrupted speech can still be cut within a word. These are acoustic
 boundaries, not word alignment or semantic sentence detection.
 
-Live context is one completed segment with a 600-character budget. Provisional
+Live context defaults to off; optional context uses up to three completed segments
+with a 1600-character budget. Provisional
 translation text is displayed as the model generates it; final JSONL events
 remain unchanged and include `translation_first_text_ms`. This metric starts
 after recognition and measures the first nonempty decoded text callback; it
