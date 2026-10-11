@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "設定推理環境",
+    "media_configure_hint": "準備獨立口譯環境與所選模型後端？NVIDIA 使用 CUDA，AMD/Intel 的 GGUF 使用 Vulkan，ASR 使用 CPU。可能需要下載數 GB。",
     "media_starting_worker": "正在啟動模型工作程序…",
     "media_worker_started": "模型工作程序已啟動",
     "media_importing_runtime": "正在匯入音訊與 CUDA 執行庫…",

@@ -20,8 +20,8 @@ class LiveConfig:
     source_lang: str = "ja"
     target_lang: str = "zh"
     speaker: str = ""
-    device: str = "cuda:0"
-    asr_device: str = "cuda:0"
+    device: str = "auto"
+    asr_device: str = "auto"
     endpoint_silence_ms: int = 450
     target_segment_ms: int = 3000
     max_segment_ms: int = 8000
@@ -35,6 +35,8 @@ class LiveConfig:
     def validate(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
+        if self.device not in {"auto", "cuda:0", "vulkan", "cpu"} or self.asr_device not in {"auto", "cuda:0", "cpu"}:
+            raise ValueError("Unsupported compute device")
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
             raise ValueError("Unsupported recognition language")
         if self.target_lang not in {"zh", "en", "ja", "ko"}:
@@ -46,8 +48,7 @@ class LiveConfig:
         if self.context_segments not in {0, 1, 2, 3}:
             raise ValueError("Context must contain 0 to 3 segments (0 disables context)")
         root = Path(self.model_root).expanduser()
-        required = [root / "SenseVoiceSmall/model.pt", root / "SenseVoiceSmall/config.yaml",
-                    self.translation_dir / "config.json", self.translation_dir / "tokenizer_config.json"]
+        required = [root / "SenseVoiceSmall/model.pt", root / "SenseVoiceSmall/config.yaml"]
         for path in required:
             if not path.is_file():
                 raise ValueError(f"Model file is missing: {path}")
@@ -164,12 +165,23 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
 
     torch.set_num_threads(4)
     emit({"type": "status", "message": "loading_translation"})
-    translator = LocalTextTranslator(config.translation_dir, family=config.family, device=config.device)
+    from ModuleFolders.Media.model_catalog import get_model
+    checkpoint = get_model(config.family)
+    from ModuleFolders.Media.compute import detect_adapters, select_compute
+    compute = select_compute(config.device, gguf=checkpoint.backend == "gguf",
+                             cuda_available=torch.cuda.is_available(), adapters=detect_adapters())
+    device = compute["translation_device"]
+    asr_device = compute["asr_device"] if config.asr_device in {"auto", "vulkan"} else config.asr_device
+    if checkpoint.backend == "gguf":
+        from ModuleFolders.Media.gguf_backend import GgufTranslator
+        translator = GgufTranslator(config.translation_dir / checkpoint.filename, family=config.family, device=device)
+    else:
+        translator = LocalTextTranslator(config.translation_dir, family=config.family, device=device)
     emit({"type": "status", "message": "translation_loaded"})
     if stop.is_set():
         return
     emit({"type": "status", "message": "loading_asr"})
-    recognizer = SenseVoiceRecognizer(Path(config.model_root) / "SenseVoiceSmall", device=config.asr_device)
+    recognizer = SenseVoiceRecognizer(Path(config.model_root) / "SenseVoiceSmall", device=asr_device)
     torch.set_num_threads(4)
     vad = SileroSpeechDetector()
     if stop.is_set():
@@ -269,3 +281,5 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         stop.set()
         if worker.ident is not None:
             worker.join(timeout=2)
+        if hasattr(translator, "close"):
+            translator.close()

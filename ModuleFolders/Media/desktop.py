@@ -57,7 +57,7 @@ class DesktopApp:
         self.family = tk.StringVar(value="index")
         self.source = tk.StringVar(value="ja")
         self.target = tk.StringVar(value="zh")
-        self.device = tk.StringVar(value="cuda:0")
+        self.device = tk.StringVar(value="auto")
         self.speaker = tk.StringVar(value=self.t("default_output"))
         self.opacity = tk.IntVar(value=88)
         self.font_size = tk.IntVar(value=26)
@@ -90,7 +90,7 @@ class DesktopApp:
         from ModuleFolders.Media.runtime import selected_python
         preferences = read_preferences(self.settings_path)
         self.runtime_interpreter = selected_python(preferences.get("runtime_python", ""))
-        self.device.set(preferences.get("device", "cuda:0"))
+        self.device.set(preferences.get("device", "auto"))
 
         viewport = tk.Canvas(self.root, highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=viewport.yview)
@@ -125,7 +125,7 @@ class DesktopApp:
         ttk.Label(languages, text="  →  ").pack(side="left")
         ttk.Combobox(languages, textvariable=self.target, values=("zh", "en", "ja", "ko"), state="readonly", width=10).pack(side="left")
         ttk.Label(languages, text=self.t("device")).pack(side="left")
-        ttk.Combobox(languages, textvariable=self.device, values=("cuda:0", "cpu"), state="readonly", width=9).pack(side="left")
+        ttk.Combobox(languages, textvariable=self.device, values=("auto", "cuda:0", "vulkan", "cpu"), state="readonly", width=9).pack(side="left")
         ttk.Label(frame, text=self.t("audio")).grid(row=5, column=0, sticky="w", pady=12)
         self.devices = ttk.Combobox(frame, textvariable=self.speaker, state="readonly")
         self.devices.grid(row=5, column=1, sticky="ew")
@@ -185,7 +185,8 @@ class DesktopApp:
         setup = ttk.Frame(frame)
         setup.grid(row=9, column=0, columnspan=3, sticky="ew", pady=8)
         self.setup_buttons = []
-        for key, action in (("check_environment", "check"), ("install_runtime", "install"), ("download_models", "download")):
+        for key, action in (("check_environment", "check"), ("install_runtime", "install"),
+                            ("configure_inference", "configure"), ("download_models", "download")):
             button = ttk.Button(setup, text=self.t(key), command=lambda a=action: self.prepare_runtime(a))
             button.pack(side="left", padx=(0, 8), ipady=4)
             self.setup_buttons.append(button)
@@ -569,7 +570,7 @@ class DesktopApp:
             button.configure(state="normal")
         report = event.get("report")
         self.runtime_ready = bool(report and report.get("ready"))
-        if event.get("action") == "install" and self.runtime_ready:
+        if event.get("action") in {"install", "configure"} and self.runtime_ready:
             self.refresh_devices()
         if not self.session.active:
             self.start_button.configure(state="normal" if self.runtime_ready else "disabled")
@@ -586,7 +587,8 @@ class DesktopApp:
                 parent=self.root,
             )
             if consent:
-                self.prepare_runtime("install", confirmed=True)
+                action = "configure" if any(name.startswith("llama.cpp") for name in report["missing"]) else "install"
+                self.prepare_runtime(action, confirmed=True)
                 return
         if self.auto_start_requested and self.runtime_ready:
             self.auto_start_requested = False
@@ -771,7 +773,7 @@ class DesktopApp:
                 model_root=str(Path(self.model_root.get()).expanduser().resolve()), family=self.family.get(),
                 source_lang=self.source.get(), target_lang=self.target.get(),
                 speaker="" if self.speaker.get() == self.t("default_output") else self.speaker.get(),
-                device=self.device.get(), asr_device=self.device.get(),
+                device=self.device.get(), asr_device="auto",
                 context_segments=self.context_segments.get(),
             )
             self.session.start(config, interpreter=self.runtime_interpreter)

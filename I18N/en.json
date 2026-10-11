@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "Configure inference",
+    "media_configure_hint": "Prepare an isolated media environment and the selected model backend? NVIDIA uses CUDA; AMD/Intel GGUF uses Vulkan, with CPU ASR. Downloads may require several GB.",
     "media_starting_worker": "Starting model worker…",
     "media_worker_started": "Model worker started",
     "media_importing_runtime": "Importing audio and CUDA libraries…",

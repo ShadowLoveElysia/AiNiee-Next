@@ -110,9 +110,9 @@ def discover_devices(interpreter: str) -> list[str]:
     return speakers
 
 
-def probe(interpreter: str, device: str) -> dict:
+def probe(interpreter: str, device: str, family: str = "index") -> dict:
     result = subprocess.run(
-        [interpreter, "-m", "ModuleFolders.Media.runtime", "probe"], cwd=ROOT,
+        [interpreter, "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family], cwd=ROOT,
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         env=subprocess_environment(),
         stdin=subprocess.DEVNULL,
@@ -120,7 +120,7 @@ def probe(interpreter: str, device: str) -> dict:
     if result.returncode:
         raise RuntimeError(f"Runtime check exited: {result.returncode}")
     report = json.loads(result.stdout.splitlines()[-1])
-    report["ready"] = not report["missing"] and (device == "cpu" or report["cuda"])
+    report["ready"] = not report["missing"] and not report.get("compute_error")
     return report
 
 
@@ -160,6 +160,8 @@ def download(root: Path, family: str) -> None:
         files = [f for f in info.siblings if "/" not in f.rfilename and not f.rfilename.startswith(".")
                  and (f.rfilename.endswith((".safetensors", ".json", ".txt", ".yaml", ".jinja", ".model", ".pt", ".mvn"))
                       or f.rfilename.startswith("README"))]
+        if key != "sensevoice" and get_model(family).backend == "gguf":
+            files = [f for f in info.siblings if f.rfilename == get_model(family).filename]
         target = root / repo.split("/")[-1]
         print(json.dumps({"model": repo, "stage": "download", "bytes": sum(f.size or 0 for f in files)}), flush=True)
         snapshot_download(repo, revision=revision, local_dir=target, token=False,
@@ -184,7 +186,7 @@ def download(root: Path, family: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("probe", "devices", "install", "download"))
+    parser.add_argument("action", choices=("probe", "devices", "install", "configure", "download"))
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--model-root", type=Path)
     parser.add_argument("--family", choices=tuple(model.key for model in TRANSLATION_MODELS), default="index")
@@ -225,13 +227,40 @@ def main():
                             missing.append("transformers>=5.6")
                 except Exception:
                     missing.append(name)
+        from ModuleFolders.Media.compute import detect_adapters, select_compute
+        adapters = detect_adapters()
+        checkpoint = get_model(args.family)
+        compute_error = ""
+        compute = {}
+        try:
+            compute = select_compute(args.device, gguf=checkpoint.backend == "gguf", cuda_available=cuda, adapters=adapters)
+            if checkpoint.backend == "gguf":
+                from ModuleFolders.Media.gguf_runtime import find_server
+                if find_server(compute["llama_backend"]) is None:
+                    missing.append("llama.cpp " + compute["llama_backend"])
+        except RuntimeError as exc:
+            compute_error = str(exc)
         print(json.dumps({"python": sys.executable, "version": sys.version.split()[0], "missing": missing,
-                          "cuda": cuda, "gpu": gpu, "versions": versions}), flush=True)
+                          "cuda": cuda, "gpu": gpu, "versions": versions, "adapters": adapters,
+                          "compute": compute, "compute_error": compute_error}), flush=True)
     elif args.action == "devices":
         import soundcard as sc
         print(json.dumps({"speakers": [speaker.name for speaker in sc.all_speakers()]}), flush=True)
-    elif args.action == "install":
-        install(args.device)
+    elif args.action in {"install", "configure"}:
+        from ModuleFolders.Media.compute import detect_adapters, select_compute
+        adapters = detect_adapters()
+        cuda_possible = any(adapter["vendor"] == "nvidia" for adapter in adapters)
+        if args.device == "cuda:0":
+            cuda_possible = True
+        compute = select_compute(args.device, gguf=get_model(args.family).backend == "gguf",
+                                 cuda_available=cuda_possible, adapters=adapters)
+        if args.action == "install" or any(importlib.util.find_spec(name) is None for name in PACKAGES):
+            install(compute["asr_device"])
+        else:
+            print(json.dumps({"runtime_python": sys.executable}), flush=True)
+        if args.action == "configure" and get_model(args.family).backend == "gguf":
+            from ModuleFolders.Media.gguf_runtime import prepare
+            prepare(lambda value: print(value, flush=True), backend=compute["llama_backend"])
     else:
         if args.model_root is None:
             parser.error("--model-root is required")

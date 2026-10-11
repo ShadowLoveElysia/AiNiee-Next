@@ -14,6 +14,8 @@ class TranslationModel:
     download_gb: float
     vram_gib: str
     tier: str
+    backend: str = "transformers"
+    filename: str = ""
 
     @property
     def directory(self) -> str:
@@ -29,6 +31,14 @@ TRANSLATION_MODELS = (
                      "4e06279e62352dab96bbeb6fa0579bca5e822d75", 19.33, "24–28", "quality"),
     TranslationModel("hymt-7b", "HY-MT2-7B", "hymt", "tencent/Hy-MT2-7B",
                      "9b0eb4e8f001def3e5ff6469a0ac96fdb39ec223", 16.07, "20–24", "quality"),
+    TranslationModel("index-q4", "Index-Translate-2B · Q4_K_M", "index", "IndexTeam/Index-Translate-2B-GGUF",
+                     "3a0eca6ce931d88d00614d427ab3ed8ff0743902", 1.31, "2–4", "compact", "gguf", "Index-Translate-2B.Q4_K_M.gguf"),
+    TranslationModel("index-q6", "Index-Translate-2B · Q6_K", "index", "IndexTeam/Index-Translate-2B-GGUF",
+                     "3a0eca6ce931d88d00614d427ab3ed8ff0743902", 1.61, "2–4", "compact", "gguf", "Index-Translate-2B.Q6_K.gguf"),
+    TranslationModel("hymt-q4", "HY-MT2-1.8B · Q4_K_M", "hymt", "tencent/Hy-MT2-1.8B-GGUF",
+                     "a0c709d9fac510f2c807aa3af52872340dc37a4a", 1.13, "2–4", "compact", "gguf", "Hy-MT2-1.8B-Q4_K_M.gguf"),
+    TranslationModel("hymt-q6", "HY-MT2-1.8B · Q6_K", "hymt", "tencent/Hy-MT2-1.8B-GGUF",
+                     "a0c709d9fac510f2c807aa3af52872340dc37a4a", 1.47, "2–4", "compact", "gguf", "Hy-MT2-1.8B-Q6_K.gguf"),
 )
 
 
@@ -51,7 +61,11 @@ def describe_model(value: str, translate) -> str:
 
 def model_files_present(root: str | Path, value: str) -> bool:
     import json
-    directory = Path(root).expanduser() / get_model(value).directory
+    model = get_model(value)
+    directory = Path(root).expanduser() / model.directory
+    if model.backend == "gguf":
+        path = directory / model.filename
+        return path.is_file() and path.stat().st_size > 0
     for name in ("config.json", "tokenizer_config.json", "tokenizer.json"):
         if not (directory / name).is_file():
             return False

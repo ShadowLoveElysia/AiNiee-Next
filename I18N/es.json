@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "Configurar inferencia",
+    "media_configure_hint": "¿Preparar el entorno y backend? NVIDIA usa CUDA; GGUF en AMD/Intel usa Vulkan y ASR en CPU.",
     "media_starting_worker": "Iniciando proceso del modelo…",
     "media_worker_started": "Proceso del modelo iniciado",
     "media_importing_runtime": "Cargando bibliotecas de audio y CUDA…",

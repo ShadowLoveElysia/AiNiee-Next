@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "Настроить среду вывода",
+    "media_configure_hint": "Подготовить среду и backend? NVIDIA: CUDA; AMD/Intel GGUF: Vulkan, ASR: CPU.",
     "media_starting_worker": "Запуск процесса модели…",
     "media_worker_started": "Процесс модели запущен",
     "media_importing_runtime": "Загрузка библиотек аудио и CUDA…",

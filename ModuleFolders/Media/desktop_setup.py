@@ -28,13 +28,14 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
         if app.session.active:
             app.environment_status.set(app.t("stop_before_setup"))
         return
-    if action in {"install", "download"} and not confirmed:
+    if action in {"install", "configure", "download"} and not confirmed:
         from ModuleFolders.Media.model_catalog import get_model
         selected = get_model(model_key or app.family.get())
         download_hint = app.t("download_selected_hint", model=selected.name,
                               gb=f"{selected.download_gb + .94:.2f}", path=app.model_root.get())
-        if not messagebox.askyesno(app.t(action + "_runtime" if action == "install" else "download_models"),
-                                  app.t("install_hint") if action == "install" else download_hint, parent=app.root):
+        title = app.t("download_models" if action == "download" else "configure_inference" if action == "configure" else "install_runtime")
+        if not messagebox.askyesno(title,
+                                  app.t("configure_hint" if action == "configure" else "install_hint") if action != "download" else download_hint, parent=app.root):
             return
     app.setup_busy = True
     app.start_button.configure(state="disabled")
@@ -52,10 +53,14 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
         report = None
         try:
             if action == "check":
-                report = probe(interpreter, device)
+                report = probe(interpreter, device, family)
                 detail = ", ".join(report["missing"]) if report["missing"] else (report["gpu"] or "CPU")
                 if device.startswith("cuda") and not report["cuda"]:
                     detail += " · CUDA unavailable"
+                if report.get("compute"):
+                    detail += " · " + report["compute"]["translation_device"]
+                if report.get("compute_error"):
+                    detail += " · " + report["compute_error"]
                 message = text["environment_ready" if report["ready"] else "environment_missing"].format(detail=detail)
                 from ModuleFolders.Media.live_session import LiveConfig
                 try:
@@ -63,10 +68,10 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 except ValueError:
                     message += " · " + text["models_missing"]
             else:
-                args = [sys.executable if action == "install" else interpreter,
+                args = [sys.executable if action in {"install", "configure"} else interpreter,
                         "-m", "ModuleFolders.Media.runtime", action, "--managed"]
-                if action == "install":
-                    args += ["--device", device]
+                if action in {"install", "configure"}:
+                    args += ["--device", device, "--family", family]
                 else:
                     args += ["--model-root", model_root, "--family", family]
                 environment = subprocess_environment()
@@ -80,11 +85,14 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                                                      stdin=subprocess.PIPE,
                                                      start_new_session=os.name != "nt")
                 try:
+                    prepared_python = None
                     for line in app.setup_process.stdout:
                         try:
                             progress = json.loads(line)
                         except ValueError:
                             continue
+                        if isinstance(progress.get("runtime_python"), str):
+                            prepared_python = progress["runtime_python"]
                         if "model" in progress:
                             results.put({"type": "progress", "message":
                                 text["download_progress"].format(model=progress["model"], stage=progress.get("stage", progress.get("status", "")))})
@@ -94,11 +102,11 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                     app.setup_process.stdout.close()
                 if code:
                     raise RuntimeError(str(code))
-                if action == "install":
-                    app.runtime_interpreter = str(runtime_python())
+                if action in {"install", "configure"}:
+                    app.runtime_interpreter = prepared_python or str(runtime_python())
                     save_preferences({"runtime_python": app.runtime_interpreter}, app.settings_path)
                 if not app.closed:
-                    report = probe(app.runtime_interpreter, device)
+                    report = probe(app.runtime_interpreter, device, family)
                     if not report["ready"]:
                         raise RuntimeError("RuntimeNotReady")
                 message = text["setup_complete"]

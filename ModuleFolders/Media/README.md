@@ -1,5 +1,26 @@
 # Media translation backends
 
+## GGUF and Windows GPU backends
+
+The model list also offers Index-Translate-2B and HY-MT2-1.8B in Q4_K_M / Q6_K.
+These use a local, loopback-only llama.cpp server with streamed text, a random
+session API key, owned process lifetime and model-resident inference. Downloads
+include only the selected GGUF, not every quantization tier in the repository.
+
+Compute choices are `auto`, `cuda:0`, `vulkan` and `cpu`. Auto uses CUDA when
+Torch can use the NVIDIA GPU; AMD/Intel GGUF translation uses Vulkan, with CPU
+SenseVoice recognition. Without a detected GPU it selects CPU. Transformers
+checkpoints cannot use Vulkan and use CPU on AMD Windows instead. DirectML is
+not included. Vendor discovery is a selection hint: llama.cpp must actually list
+a usable CUDA/Vulkan device; a driver failure reports an error rather than
+pretending GPU acceleration is active. Manual backend selection is available.
+
+Configure inference prepares Python dependencies as needed and the selected
+official Windows x64 llama.cpp backend. CUDA, Vulkan and CPU archives are pinned
+to b11552 and SHA-256 verified before extraction. It does not download models
+or switch a model implicitly. Vulkan has been exercised on the available
+RTX 2080 Ti; AMD driver compatibility and performance require the AMD device.
+
 ## Desktop live translation
 
 The desktop and TUI list concrete checkpoints. Model selection and download

@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "推論環境を設定",
+    "media_configure_hint": "独立環境とモデルのバックエンドを準備しますか？NVIDIAはCUDA、AMD/IntelのGGUFはVulkan、音声認識はCPUを使用します。",
     "media_starting_worker": "モデルプロセスを起動中…",
     "media_worker_started": "モデルプロセス起動済み",
     "media_importing_runtime": "音声・CUDAライブラリを読み込み中…",

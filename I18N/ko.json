@@ -1,4 +1,6 @@
 {
+    "media_configure_inference": "추론 환경 구성",
+    "media_configure_hint": "독립 환경과 백엔드를 준비할까요? NVIDIA는 CUDA, AMD/Intel GGUF는 Vulkan, ASR은 CPU를 사용합니다.",
     "media_starting_worker": "모델 프로세스 시작 중…",
     "media_worker_started": "모델 프로세스 시작됨",
     "media_importing_runtime": "오디오 및 CUDA 라이브러리 불러오는 중…",
