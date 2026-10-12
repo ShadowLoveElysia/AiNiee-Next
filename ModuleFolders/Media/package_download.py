@@ -2,10 +2,14 @@
 
 import argparse
 import hashlib
+import http.client
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -13,11 +17,88 @@ import time
 import tomllib
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from ModuleFolders.Infrastructure.DownloadProgress import DownloadProgress
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / 'tmp/package-downloads'
+
+
+NETWORK_ERRORS = (URLError, TimeoutError, ConnectionError, http.client.HTTPException, ssl.SSLError)
+
+
+def network_error_detail(error):
+    if isinstance(error, HTTPError):
+        return f'HTTP {error.code}'
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return 'TLS certificate verification failed; check system certificates or SSL_CERT_FILE'
+    if isinstance(reason, TimeoutError):
+        return 'Connection/read timed out'
+    if isinstance(reason, socket.gaierror):
+        return 'DNS lookup failed'
+    if isinstance(reason, OSError):
+        code = getattr(reason, 'winerror', None) or reason.errno
+        return f'{type(reason).__name__} (OS error {code})'
+    # Exception strings can include authenticated proxy URLs or signed links.
+    return type(reason).__name__
+
+
+def package_ssl_context():
+    certificate = os.environ.get('SSL_CERT_FILE') or os.environ.get('REQUESTS_CA_BUNDLE') or os.environ.get('CURL_CA_BUNDLE')
+    return ssl.create_default_context(cafile=certificate or None, capath=os.environ.get('SSL_CERT_DIR') or None)
+
+
+def curl_download(url, partial, progress, expected_size):
+    executable = shutil.which('curl.exe' if sys.platform == 'win32' else 'curl')
+    if not executable:
+        return None
+    context_certificate = os.environ.get('SSL_CERT_FILE') or os.environ.get('REQUESTS_CA_BUNDLE') or os.environ.get('CURL_CA_BUNDLE')
+    args = [executable, '--fail', '--location', '--silent', '--show-error', '--proto', '=https',
+            '--proto-redir', '=https', '--connect-timeout', '20', '--speed-time', '60', '--speed-limit', '1',
+            '--continue-at', '-', '--output', str(partial), '--user-agent', 'AiNiee-PackageDownloader/1.0']
+    if context_certificate:
+        args += ['--cacert', context_certificate]
+    args += [url]
+    previous = partial.stat().st_size if partial.exists() else 0
+    progress.set_position('file', previous)
+    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        while True:
+            try:
+                _, stderr = process.communicate(timeout=.5)
+                break
+            except subprocess.TimeoutExpired:
+                current = partial.stat().st_size if partial.exists() else 0
+                if expected_size is not None and current > expected_size:
+                    raise RuntimeError('Package exceeds expected size')
+                progress.set_position('file', current, transferred=max(0, current - previous))
+                previous = current
+        current = partial.stat().st_size if partial.exists() else 0
+        progress.set_position('file', current, transferred=max(0, current - previous))
+        if process.returncode:
+            # curl stderr may contain secrets. Return a bounded status category only.
+            categories = {5: 'Proxy resolution failed', 6: 'DNS lookup failed', 7: 'Connection failed',
+                          18: 'Incomplete response', 22: 'HTTP request failed', 23: 'Cannot write download file',
+                          28: 'Connection/read timed out', 33: 'Server cannot resume this partial file',
+                          35: 'TLS handshake failed', 60: 'TLS certificate verification failed'}
+            detail = categories.get(process.returncode, 'Transfer failed')
+            match = re.search(rb'(?:error|returned error):\s*(\d{3})', stderr or b'', re.I)
+            if match:
+                detail += ' (HTTP ' + match[1].decode('ascii') + ')'
+            return f'curl exit {process.returncode}: {detail}'
+        return ''
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        if process.stderr:
+            process.stderr.close()
 
 
 def checksum(path):
@@ -50,6 +131,8 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
             progress.set_position('file', destination.stat().st_size)
             return destination
         partial = destination.with_name(filename + '.incomplete')
+        context = package_ssl_context()
+        last_error = ''
         for attempt in range(3):
             offset = partial.stat().st_size if partial.exists() else 0
             progress.set_position('file', offset)
@@ -57,11 +140,11 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
                 raise RuntimeError('Partial package exceeds expected size')
             if size is not None and offset == size:
                 break
-            headers = {'Accept-Encoding': 'identity'}
+            headers = {'Accept-Encoding': 'identity', 'User-Agent': 'AiNiee-PackageDownloader/1.0'}
             if offset:
                 headers['Range'] = f'bytes={offset}-'
             try:
-                with urlopen(Request(url, headers=headers), timeout=45) as response:
+                with urlopen(Request(url, headers=headers), timeout=45, context=context) as response:
                     if response.status == 206:
                         match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
                         if not match or int(match[1]) != offset or (size is not None and int(match[3]) != size) or int(match[2]) != int(match[3]) - 1:
@@ -84,9 +167,23 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
                             progress.set_position('file', offset, transferred=len(block))
                 if size is None or offset == size:
                     break
-            except OSError:
+            except NETWORK_ERRORS as error:
+                last_error = network_error_detail(error)
+                if isinstance(error, HTTPError):
+                    error.close()
+                host = urlparse(url).hostname or 'download host'
+                print(f'Package request {attempt + 1}/3 failed ({host}): {last_error}', flush=True)
                 if attempt == 2:
-                    raise RuntimeError('Package download failed: ' + filename) from None
+                    print('Retrying the same package URL with system curl; source and SHA-256 remain unchanged.', flush=True)
+                    fallback_error = curl_download(url, partial, progress, size)
+                    if fallback_error == '':
+                        if size is None and partial.is_file():
+                            size = partial.stat().st_size
+                            progress.total = size
+                        break
+                    if fallback_error:
+                        last_error += '; ' + fallback_error
+                    raise RuntimeError('Package download failed: ' + filename + ' (' + host + '): ' + last_error) from None
             time.sleep(1)
         progress.publish(force=True, stage='verifying')
         if not partial.is_file() or (size is not None and partial.stat().st_size != size) or checksum(partial) != digest:
@@ -186,4 +283,10 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as error:
+        from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+        detail = safe_installer_line(str(error))
+        print(json.dumps({'error_detail': detail, 'error_type': type(error).__name__}), flush=True)
+        raise SystemExit(1)

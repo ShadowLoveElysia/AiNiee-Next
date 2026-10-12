@@ -40,6 +40,13 @@ stderr is no longer discarded, and inherited `UV_NO_PROGRESS` cannot suppress
 preparation progress. Model/package installers remain separate
 from model inference and no audio/source text is included in download events.
 
+Package request failures report bounded HTTP/TLS/DNS/timeout categories and the
+download hostname, without authenticated URLs. Python requests respect explicit
+CA bundle settings. After repeated network failures, the same URL can be retried
+with system curl (Windows `curl.exe`), retaining byte progress, resume and the
+original hash. No certificate verification bypass or automatic source change
+is used. Filesystem permission failures are reported as filesystem failures.
+
 Application updates, Web packages and the language detector use the same transfer
 display. Manga downloads retain their existing Rich download/speed/ETA display,
 with speed/ETA added to plain-terminal progress and byte callbacks. Shell uv
