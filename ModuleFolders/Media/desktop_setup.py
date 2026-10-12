@@ -48,6 +48,9 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
     interpreter, device = app.runtime_interpreter, app.device.get()
     model_root, family = app.model_root.get(), model_key or app.family.get()
     active_family = app.family.get()
+    from ModuleFolders.Media.package_sources import selected_source
+    source_variable = getattr(app, "package_source", None)
+    package_source = selected_source(source_variable.get() if source_variable else "")
     results = app.setup_results
     # Resolve translated strings on the GUI thread; worker threads never touch Tk.
     text = {key: app.i18n.get("media_" + key) for key in ("environment_ready", "environment_missing", "setup_failed", "setup_complete", "models_missing", "download_progress")}
@@ -81,6 +84,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 else:
                     args += ["--model-root", model_root, "--family", family]
                 environment = subprocess_environment()
+                environment["AINIEE_MEDIA_PACKAGE_SOURCE"] = package_source
                 environment.pop("HF_HUB_OFFLINE", None)
                 environment.pop("TRANSFORMERS_OFFLINE", None)
                 if app.closed or app.closing:

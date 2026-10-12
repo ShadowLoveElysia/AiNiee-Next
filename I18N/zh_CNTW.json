@@ -1,4 +1,8 @@
 {
+    "media_package_source": "依赖下载源",
+    "media_source_nju": "国内源（南京大学）",
+    "media_source_official": "官方源（PyTorch / PyPI）",
+
     "media_opening_audio": "正在打开音频采集；首次使用请允许系统录制权限…",
 
     "media_mac_system_audio": "系统声音（原生内录）",

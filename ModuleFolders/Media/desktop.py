@@ -100,6 +100,8 @@ class DesktopApp:
         preferences = read_preferences(self.settings_path)
         self.runtime_interpreter = selected_python(preferences.get("runtime_python", ""))
         self.device.set(preferences.get("device", "auto"))
+        self.package_source = tk.StringVar(value=preferences.get("package_source", "nju"))
+        self.package_source_choice = tk.StringVar(value=self.t("source_" + self.package_source.get()))
 
         viewport = tk.Canvas(self.root, highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=viewport.yview)
@@ -197,10 +199,19 @@ class DesktopApp:
             row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
         setup = ttk.Frame(frame)
         setup.grid(row=9, column=0, columnspan=3, sticky="ew", pady=8)
+        sources = ttk.Frame(setup)
+        sources.pack(fill="x", pady=(0, 8))
+        ttk.Label(sources, text=self.t("package_source")).pack(side="left", padx=(0, 8))
+        source_selector = ttk.Combobox(sources, textvariable=self.package_source_choice,
+                                      values=(self.t("source_nju"), self.t("source_official")), state="readonly", width=28)
+        source_selector.pack(side="left")
+        source_selector.bind("<<ComboboxSelected>>", self.select_package_source)
+        setup_actions = ttk.Frame(setup)
+        setup_actions.pack(fill="x")
         self.setup_buttons = []
         for key, action in (("check_environment", "check"), ("install_runtime", "install"),
                             ("configure_inference", "configure"), ("download_models", "download")):
-            button = ttk.Button(setup, text=self.t(key), command=lambda a=action: self.prepare_runtime(a))
+            button = ttk.Button(setup_actions, text=self.t(key), command=lambda a=action: self.prepare_runtime(a))
             button.pack(side="left", padx=(0, 8), ipady=4)
             self.setup_buttons.append(button)
         self.environment_status = tk.StringVar(value=self.t("checking_environment"))
@@ -375,7 +386,12 @@ class DesktopApp:
         from ModuleFolders.Media.preferences import save_preferences
         data["device"] = self.device.get()
         data["runtime_python"] = self.runtime_interpreter
+        data["package_source"] = self.package_source.get()
         save_preferences(data, self.settings_path)
+
+    def select_package_source(self, event=None):
+        self.package_source.set("nju" if self.package_source_choice.get() == self.t("source_nju") else "official")
+        self.save_settings()
 
     def _save_changed_preferences(self):
         try:

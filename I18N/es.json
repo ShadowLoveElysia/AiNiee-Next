@@ -1,4 +1,8 @@
 {
+    "media_package_source": "Dependency download source",
+    "media_source_nju": "China mirror (Nanjing University)",
+    "media_source_official": "Official (PyTorch / PyPI)",
+
     "media_opening_audio": "Opening audio capture; allow recording permission when prompted…",
 
     "media_mac_system_audio": "System audio (native capture)",

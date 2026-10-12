@@ -180,11 +180,14 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     emit({"type": "status", "message": "loading_translation"})
     from ModuleFolders.Media.model_catalog import get_model
     checkpoint = get_model(config.family)
-    from ModuleFolders.Media.compute import detect_adapters, select_compute
+    from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
     compute = select_compute(config.device, gguf=checkpoint.backend == "gguf",
-                             cuda_available=torch.cuda.is_available(), adapters=detect_adapters(),
+                             cuda_available=torch.cuda.is_available(), adapters=selected_cuda_adapters(torch, detect_adapters()),
                              mlx_compatible=checkpoint.family == "index", mps_available=torch.backends.mps.is_available())
     device = compute["translation_device"]
+    if device == "cuda:0":
+        from ModuleFolders.Media.runtime import cuda_execution_check
+        cuda_execution_check(torch)
     asr_device = compute["asr_device"] if config.asr_device in {"auto", "vulkan"} else config.asr_device
     if checkpoint.backend == "gguf":
         from ModuleFolders.Media.gguf_backend import GgufTranslator

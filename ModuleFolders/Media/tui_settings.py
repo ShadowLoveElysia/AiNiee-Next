@@ -14,6 +14,7 @@ FIELDS = [
     ("locked", "lock_position"), ("width", "width"), ("height", "height"),
     ("context_segments", "context_segments"), ("history_segments", "history_segments"),
     ("recording", "recording"), ("record_directory", "record_directory"),
+    ("package_source", "package_source"),
 ]
 
 

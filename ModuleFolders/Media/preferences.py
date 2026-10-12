@@ -15,6 +15,7 @@ DEFAULTS = {
     "stroke_width": 2, "stroke_color": "#000000", "show_source": True, "topmost": True,
     "locked": False, "width": 900, "height": 240, "family": "index", "source": "ja",
     "target": "zh", "device": "auto", "runtime_python": "",
+    "package_source": "nju",
     "context_segments": 0, "history_segments": 3, "recording": False,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
 }
@@ -25,7 +26,7 @@ from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
 from ModuleFolders.Media.compute import device_choices, model_device_choices
 
 CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
-           "target": ("zh", "en", "ja", "ko"), "device": device_choices()}
+           "target": ("zh", "en", "ja", "ko"), "device": device_choices(), "package_source": ("nju", "official")}
 
 
 def default_model_root() -> str:
@@ -43,6 +44,8 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
             data.update(saved)
     except (OSError, ValueError):
         pass
+    if data.get("package_source") not in CHOICES["package_source"]:
+        data["package_source"] = DEFAULTS["package_source"]
     if data.get("device") not in device_choices():
         data["device"] = "auto"
     try:

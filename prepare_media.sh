@@ -11,6 +11,22 @@ if [ "$task_system" != "Darwin" ] || [ "$task_arch" != "arm64" ]; then
 fi
 task_device="${1:-auto}"
 task_family="${2:-}"
+task_source="${3:-${AINIEE_MEDIA_PACKAGE_SOURCE:-}}"
+if [ -z "$task_source" ]; then
+    task_source=nju
+    if [ -t 0 ]; then
+        echo "Package source: 1. China / Nanjing University [default]  2. Official"
+        read -r -p "Select 1 or 2, Enter for 1: " task_source_choice
+        if [ "$task_source_choice" = "2" ]; then task_source=official; fi
+    fi
+fi
+case "$task_source" in
+    nju) task_pypi=https://mirror.nju.edu.cn/pypi/web/simple ;;
+    official) task_pypi=https://pypi.org/simple ;;
+    *) echo "[ERROR] Package source must be nju or official."; exit 1 ;;
+esac
+export AINIEE_MEDIA_PACKAGE_SOURCE="$task_source"
+echo "Download source: $task_source"
 case "$task_device" in
     auto|cpu|mlx|metal|mps) ;;
     *) echo "[ERROR] Device must be auto, cpu, mlx, metal or mps."; exit 1 ;;
@@ -34,7 +50,7 @@ fi
 task_runtime="$task_root/Resource/MediaRuntime/macos-arm64"
 task_media_python="$task_runtime/bin/python"
 if [ ! -f "$task_media_python" ]; then
-    "$task_uv" venv --python "$task_python" --seed --allow-existing "$task_runtime"
+    "$task_uv" venv --python "$task_python" --seed --index-url "$task_pypi" --allow-existing "$task_runtime"
 fi
 "$task_media_python" -c 'import sys, platform; print(sys.version); assert sys.version_info[:2] == (3,12); assert platform.machine() == "arm64"'
 task_plan="$("$task_media_python" Tools/Bootstrap/prepare_media_runtime.py plan --device "$task_device" --family "$task_family" --format json)"
@@ -46,14 +62,14 @@ if [ "$task_selected" = "mlx" ]; then
 fi
 
 echo "[2/5] Installing matching Torch and torchaudio..."
-"$task_uv" pip install --python "$task_media_python" --index-url https://pypi.org/simple 'torch==2.9.1' 'torchaudio==2.9.1'
+"$task_uv" pip install --python "$task_media_python" --index-url "$task_pypi" 'torch==2.9.1' 'torchaudio==2.9.1'
 echo "[3/5] Installing recognition, translation and audio libraries..."
 task_packages=('transformers==5.7.0' accelerate 'funasr>=1.2,<2' sentencepiece silero-vad
                onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests)
 if [ "$task_selected" = "mlx" ]; then
     task_packages+=('mlx==0.32.3' 'mlx-lm==0.32.0')
 fi
-"$task_uv" pip install --python "$task_media_python" --index-url https://pypi.org/simple "${task_packages[@]}"
+"$task_uv" pip install --python "$task_media_python" --index-url "$task_pypi" "${task_packages[@]}"
 
 echo "[4/5] Preparing the selected translation backend..."
 if [ "$task_backend" = "gguf" ]; then

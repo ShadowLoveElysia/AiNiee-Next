@@ -37,6 +37,42 @@ def required_packages(device: str = "cpu") -> tuple[str, ...]:
     return PACKAGES + (("mlx", "mlx_lm") if device == "mlx" else ())
 
 
+def cuda_install_build(adapters=None, *, interpreter=None) -> str:
+    from ModuleFolders.Media.compute import detect_adapters, select_cuda_build
+    override = os.environ.get("AINIEE_MEDIA_CUDA_BUILD", "")
+    if override:
+        if override not in {"cu126", "cu128"}:
+            raise ValueError("AINIEE_MEDIA_CUDA_BUILD must be cu126 or cu128")
+        return override
+    info = {}
+    script = ("import json,torch; print(json.dumps({'version':torch.version.cuda,"
+              "'available':torch.cuda.is_available(), 'name':torch.cuda.get_device_name(0) if torch.cuda.is_available() else '',"
+              "'capability':list(torch.cuda.get_device_capability(0)) if torch.cuda.is_available() else None}))")
+    if interpreter and Path(interpreter).is_file() and os.path.abspath(str(interpreter)) != os.path.abspath(sys.executable):
+        try:
+            result = subprocess.run([str(interpreter), "-c", script], capture_output=True, text=True,
+                                    timeout=30, env=subprocess_environment(), stdin=subprocess.DEVNULL)
+            if result.returncode == 0:
+                info = json.loads(result.stdout.splitlines()[-1])
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            import torch
+            info = {"version": torch.version.cuda, "available": torch.cuda.is_available()}
+            if info["available"]:
+                info.update(name=torch.cuda.get_device_name(0), capability=list(torch.cuda.get_device_capability(0)))
+        except Exception:
+            pass
+    version = info.get("version")
+    build = "cu" + version.replace('.', '') if version else ""
+    selected = ({"name": info.get("name", ""), "vendor": "nvidia", "compute_capability": info["capability"]}
+                if info.get("available") and info.get("capability") else None)
+    if adapters is None:
+        adapters = [] if selected else detect_adapters()
+    return select_cuda_build(adapters, installed_build=build, selected_adapter=selected)
+
+
 def needs_install(device: str) -> bool:
     if any(importlib.util.find_spec(name) is None for name in required_packages(device)):
         return True
@@ -51,7 +87,49 @@ def needs_install(device: str) -> bool:
                 return True
         except (importlib.metadata.PackageNotFoundError, ValueError):
             return True
+    if device.startswith("cuda"):
+        try:
+            import torch
+            build = cuda_install_build()
+            if torch.version.cuda != {"cu126": "12.6", "cu128": "12.8"}[build]:
+                return True
+            cuda_execution_check(torch)
+        except Exception:
+            return True
     return False
+
+
+def cuda_execution_check(torch) -> dict:
+    capability = torch.cuda.get_device_capability(0)
+    version = torch.version.cuda or ""
+    if capability[0] >= 10 and (not version or tuple(map(int, version.split('.')[:2])) < (12, 8)):
+        raise RuntimeError("Blackwell GPU requires a CUDA 12.8+ PyTorch build; rerun prepare_media.bat to replace cu126")
+    if capability[0] < 7 and version and tuple(map(int, version.split('.')[:2])) >= (12, 8):
+        raise RuntimeError("Maxwell/Pascal GPU requires the cu126 build; rerun prepare_media.bat to replace cu128")
+    import re
+    arches = torch.cuda.get_arch_list()
+    compatible = False
+    for arch in arches:
+        match = re.fullmatch(r"(sm|compute)_(\d+)", arch)
+        if not match:
+            continue
+        number = int(match[2])
+        compiled = (number // 10, number % 10)
+        if (match[1] == "sm" and compiled[0] == capability[0] and compiled[1] <= capability[1]) or (
+                match[1] == "compute" and compiled <= capability):
+            compatible = True
+    if arches and not compatible:
+        raise RuntimeError(f"PyTorch build does not include compatible kernels for sm_{capability[0]}{capability[1]}; rerun prepare_media.bat with the GPU-appropriate build")
+    try:
+        # Device discovery alone succeeds even when this wheel lacks GPU kernels.
+        value = torch.ones((16, 16), device="cuda:0")
+        result = (value @ value).sum().item()
+        torch.cuda.synchronize()
+        if result != 4096:
+            raise RuntimeError("Unexpected CUDA result")
+    except Exception as exc:
+        raise RuntimeError("CUDA execution check failed: " + str(exc)[:500] + "; update the NVIDIA driver and rerun prepare_media.bat") from None
+    return {"capability": list(capability), "cuda_version": version, "compiled_arches": arches}
 
 
 def runtime_python() -> Path:
@@ -167,27 +245,30 @@ def install(device: str, *, translation_device: str = "") -> None:
     if sys.platform == "darwin" and platform.machine().lower() != "arm64":
         raise RuntimeError("Automatic macOS inference setup requires Apple Silicon with native arm64 Python; current Torch wheels do not support Intel macOS")
     uv = shutil.which("uv")
+    from ModuleFolders.Media.package_sources import package_indexes
+    seed_indexes = package_indexes("cpu")
     destination = runtime_python().parent.parent
     if not runtime_python().is_file():
         print("Creating isolated media runtime", flush=True)
         if uv:
             subprocess.run([uv, "venv", "--python", sys.executable if sys.platform == "darwin" else "3.12",
-                            "--seed", "--allow-existing", str(destination)], check=True)
+                            "--seed", "--index-url", seed_indexes["pypi"], "--allow-existing", str(destination)], check=True)
         elif getattr(sys, "frozen", False):
             raise RuntimeError("A Python 3.12 interpreter or uv is required to install the media runtime")
         else:
             venv.EnvBuilder(with_pip=True).create(destination)
     python = str(runtime_python())
     installer = [uv, "pip", "install", "--python", python] if uv else [python, "-m", "pip", "install"]
-    torch_index = "https://download.pytorch.org/whl/cu126" if device.startswith("cuda") else "https://download.pytorch.org/whl/cpu"
-    suffix = "+cu126" if device.startswith("cuda") else ("" if sys.platform == "darwin" else "+cpu")
-    if sys.platform == "darwin":
-        torch_index = "https://pypi.org/simple"
+    build = cuda_install_build(interpreter=python) if device.startswith("cuda") else "cpu"
+    indexes = package_indexes(build)
+    torch_index = indexes["torch"]
+    suffix = "+" + build if sys.platform != "darwin" else ""
+    print(json.dumps({"package_source": indexes["source"], "torch_index": torch_index, "pypi_index": indexes["pypi"]}), flush=True)
     torch_packages = ["torch==2.9.1" + suffix, "torchaudio==2.9.1" + suffix]
     subprocess.run([*installer, "--index-url", torch_index, *torch_packages], check=True)
     apple_packages = ["mlx==0.32.3", "mlx-lm==0.32.0"] if translation_device == "mlx" else []
     transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
-    subprocess.run([*installer, "--extra-index-url", torch_index, *torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
+    subprocess.run([*installer, "--index-url", indexes["pypi"], "--extra-index-url", torch_index, *torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
                     "silero-vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
                     "huggingface-hub", "safetensors", *apple_packages], check=True)
     print(json.dumps({"runtime_python": python}), flush=True)
@@ -249,14 +330,18 @@ def main():
                             missing.append("transformers>=" + '.'.join(map(str, minimum)))
                 except Exception:
                     missing.append(name)
-        from ModuleFolders.Media.compute import detect_adapters, select_compute
+        from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
         adapters = detect_adapters()
+        if cuda:
+            adapters = selected_cuda_adapters(torch, adapters)
         checkpoint = get_model(args.family)
         compute_error = ""
         compute = {}
         try:
             compute = select_compute(args.device, gguf=checkpoint.backend == "gguf", cuda_available=cuda, adapters=adapters,
                                      mlx_compatible=checkpoint.family == "index", mps_available=mps)
+            if compute["translation_device"] == "cuda:0":
+                compute["cuda_check"] = cuda_execution_check(torch)
             if compute["translation_device"] == "mlx":
                 for name, minimum in (("mlx", (0, 32, 3)), ("mlx_lm", (0, 32, 0))):
                     if importlib.util.find_spec(name) is None:
@@ -298,6 +383,12 @@ def main():
     elif args.action in {"install", "configure"}:
         from ModuleFolders.Media.compute import detect_adapters, select_compute
         adapters = detect_adapters()
+        try:
+            import torch
+            from ModuleFolders.Media.compute import selected_cuda_adapters
+            adapters = selected_cuda_adapters(torch, adapters)
+        except Exception:
+            pass
         cuda_possible = any(adapter["vendor"] == "nvidia" for adapter in adapters)
         if args.device == "cuda:0":
             cuda_possible = True
@@ -328,5 +419,8 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
+        if isinstance(exc, RuntimeError) and any(fragment in str(exc) for fragment in (
+                "NVIDIA architecture", "Mixed legacy", "GPU architecture", "CUDA build", "Blackwell GPU", "Maxwell/Pascal")):
+            print(json.dumps({"error_detail": str(exc)[:1600]}), flush=True)
         print(json.dumps({"error_type": type(exc).__name__}), flush=True)
         raise SystemExit(1)

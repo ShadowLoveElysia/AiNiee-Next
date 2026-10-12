@@ -2,6 +2,54 @@
 
 ## Windows extension installer
 
+### Package download source
+
+The controller offers **China mirror (Nanjing University)** and **Official
+(PyTorch / PyPI)**. China is the default. The selection is shared with media
+installers and saved after verification; it affects dependency packages only,
+not model weights, llama.cpp release archives, uv itself or managed Python.
+Actual mirror speed and package availability depend on the network and sync.
+Download failure does not silently switch sources; select the other source
+and retry. Torch and torchaudio always use matching architecture-specific builds.
+
+The BAT prompts for a source; its fourth argument skips the prompt:
+
+```bat
+prepare_media.bat auto index "" nju
+prepare_media.bat cuda:0 index cu128 official
+```
+
+The Mac SH prompts when run interactively, defaults to China otherwise, and
+accepts the source as its third argument:
+
+```bash
+bash prepare_media.sh auto index nju
+bash prepare_media.sh auto index official
+```
+
+`AINIEE_MEDIA_PACKAGE_SOURCE=nju` or `official` can also control the runtime
+installer. The desktop selector and TUI live settings expose the same preference.
+
+RTX 50-series / Blackwell needs a CUDA 12.8+ PyTorch build. CUDA extension
+installation selects matching Torch/torchaudio 2.9.1 builds by compute capability.
+Maxwell/Pascal uses cu126; Blackwell uses cu128. Turing/Ampere/Ada/Hopper/Volta
+keeps an installed compatible cu126/cu128 build; a fresh install uses cu128.
+This includes A100, RTX A6000, RTX 6000 Ada, Quadro RTX 6000 and RTX PRO 6000
+Blackwell without treating their shared model numbers as the same architecture.
+Unknown models use nvidia-smi compute capability where available; otherwise the
+installer requests an explicit choice. Mixed legacy/Blackwell GPUs require
+selecting a visible CUDA device or an explicit build. Environment checks execute
+a small CUDA matrix operation instead of
+relying on GPU enumeration. For RTX 50-series GGUF, a separate pinned llama.cpp
+CUDA 13.4 runtime is used; older GPUs retain the existing CUDA 12.4 runtime.
+Keep the NVIDIA driver current, including support for the selected GGUF runtime.
+This change has no RTX 5070 hardware validation yet.
+
+For an existing installation reporting `no kernel image is available`, close
+the controller, update the NVIDIA driver, update project files, and rerun
+`prepare_media.bat cuda:0`. Then reopen the controller and check its environment.
+No separate CUDA Toolkit installation is required by these prebuilt wheels.
+
 Double-click root `prepare_media.bat` to install live translation extensions
 with uv into `Resource/MediaRuntime`. It uses the saved controller model (Index
 by default), detects NVIDIA for the CUDA build, otherwise installs CPU Torch,
@@ -15,9 +63,14 @@ Optional commands from the project root:
 prepare_media.bat cpu
 prepare_media.bat auto index-q4
 prepare_media.bat cuda:0 hymt
+prepare_media.bat cuda:0 index cu126
+prepare_media.bat cuda:0 index cu128
 ```
 
 Successful verification saves the inference Python path for the controller.
+The third BAT argument overrides detection when the architecture cannot be
+identified; it still runs the final CUDA execution check. Window configuration
+can use `AINIEE_MEDIA_CUDA_BUILD=cu126` or `cu128` as an explicit override.
 Restart the controller and check the environment. Model weights are downloaded
 separately. A failed CUDA check does not silently switch to CPU. This installs
 the complete live ASR/translation libraries directly; it does not sync the older

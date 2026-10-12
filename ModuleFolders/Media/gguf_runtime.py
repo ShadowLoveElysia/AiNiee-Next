@@ -22,6 +22,12 @@ ASSETS = (
 )
 BACKEND_ASSETS = {
     "cuda": ASSETS,
+    "cuda-blackwell": (
+        ("llama-b11552-bin-win-cuda-13.4-x64.zip", 153473822,
+         "11317b2c71c9b390c1dfe6e15ad11365ea3de097cc32221236fd257f4c3ecbcf"),
+        ("cudart-llama-bin-win-cuda-13.4-x64.zip", 423535356,
+         "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"),
+    ),
     "vulkan": (("llama-b11552-bin-win-vulkan-x64.zip", 33473578,
                 "83dc16325b532ba603034719e8377e28ca5093c5d4370141a6522f1a0250386c"),),
     "cpu": (("llama-b11552-bin-win-cpu-x64.zip", 19528406,
@@ -62,7 +68,7 @@ def find_server(backend="cuda") -> Path | None:
         return None
     executable = "llama-server" if sys.platform == "darwin" else "llama-server.exe"
     return next((path for path in directory.glob("**/" + executable)
-                 if backend != "cuda" or "vulkan" not in path.parts and "cpu" not in path.parts), None)
+                 if backend != "cuda" or not any(part in path.parts for part in ("vulkan", "cpu", "cuda-blackwell"))), None)
 
 
 def download_verified(url: str, destination: Path, size: int, digest: str, emit=print) -> None:
