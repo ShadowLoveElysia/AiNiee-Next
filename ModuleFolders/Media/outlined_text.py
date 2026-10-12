@@ -58,7 +58,8 @@ class OutlinedText(tk.Canvas):
         front = self.create_text(padding, padding, fill=options["fg"], tags="foreground", **text)
         bounds = self.bbox(front)
         height = max(1, bounds[3] - bounds[1] if bounds else 1) + 2 * padding
-        if int(float(super().cget("height"))) != height:
+        # Tk dimensions may contain units or Tcl_Obj values, depending on the build.
+        if self.winfo_pixels(super().cget("height")) != height:
             super().configure(height=height)
         y = max(padding, (self.winfo_height() - height) // 2 + padding)
         self.coords(front, padding, y)

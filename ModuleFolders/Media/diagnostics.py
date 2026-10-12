@@ -12,7 +12,7 @@ METRICS = ("audio_duration_ms", "asr_ms", "translation_ms", "inference_ms", "que
            "translation_first_text_ms", "latency_from_segment_end_ms", "endpoint_wait_ms",
            "queue_depth", "dropped_segments", "audio_position_ms", "capture_ms", "vad_ms")
 STAGES = {"worker_started", "importing_runtime", "translation_loaded", "loading_translation",
-          "loading_asr", "warming_up", "recognizing", "translating", "checking_environment", "preparing_runtime"}
+          "loading_asr", "warming_up", "opening_audio", "recognizing", "translating", "checking_environment", "preparing_runtime"}
 
 
 def diagnostic_event(event: dict) -> dict | None:

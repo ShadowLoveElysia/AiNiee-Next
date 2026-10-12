@@ -299,7 +299,7 @@ class DesktopApp:
 
     def t(self, key: str, **values) -> str:
         if sys.platform == "darwin" and key == "default_output":
-            key = "mac_default_input"
+            key = "mac_system_audio"
         if sys.platform == "darwin" and key == "configure_hint":
             key = "mac_configure_hint"
         if sys.platform == "darwin" and key in {"audio", "audio_devices_ready"}:
@@ -847,11 +847,6 @@ class DesktopApp:
 
     def start(self) -> None:
         from tkinter import messagebox
-        if self.is_macos and self.speaker.get() == self.t("default_output"):
-            from ModuleFolders.Media.audio_capture import is_virtual_input
-            if not any(is_virtual_input(name) for name in self.devices.cget("values")):
-                self.status.set(self.t("mac_audio_required"))
-                return
         if self.session.active or self.setup_busy or not self.runtime_ready:
             return
         if self._checked_runtime_signature != self.runtime_signature():
@@ -860,10 +855,17 @@ class DesktopApp:
             self.prepare_runtime("check")
             return
         try:
+            selected_audio = "" if self.speaker.get() == self.t("default_output") else self.speaker.get()
+            if self.is_macos:
+                from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO
+                if self.speaker.get() == self.t("default_output"):
+                    selected_audio = SYSTEM_AUDIO
+                elif self.speaker.get() == self.t("mac_screen_audio"):
+                    selected_audio = SCREEN_AUDIO
             config = LiveConfig(
                 model_root=str(Path(self.model_root.get()).expanduser().resolve()), family=self.family.get(),
                 source_lang=self.source.get(), target_lang=self.target.get(),
-                speaker="" if self.speaker.get() == self.t("default_output") else self.speaker.get(),
+                speaker=selected_audio,
                 device=(self._checked_compute or {}).get("translation_device", self.device.get()),
                 asr_device=(self._checked_compute or {}).get("asr_device", "auto"),
                 context_segments=self.context_segments.get(),
@@ -914,6 +916,7 @@ class DesktopApp:
             labels = {"worker_started": self.t("worker_started"), "importing_runtime": self.t("importing_runtime"),
                       "translation_loaded": self.t("translation_loaded"), "loading_translation": self.t("loading_translation"),
                       "loading_asr": self.t("loading_asr"), "warming_up": self.t("warming_up"),
+                      "opening_audio": self.t("opening_audio"),
                       "recognizing": self.t("recognizing"), "translating": self.t("translating")}
             self.status.set(labels.get(event["message"], event["message"]))
             self.overlay_status.configure(text=self.status.get())
@@ -968,7 +971,11 @@ class DesktopApp:
                 if ok:
                     self.runtime_interpreter = result["interpreter"]
                     result = result["speakers"]
-                    self.devices.configure(values=[self.t("default_output"), *result])
+                    if self.is_macos:
+                        from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO
+                        result = [self.t("default_output") if name == SYSTEM_AUDIO else
+                                  self.t("mac_screen_audio") if name == SCREEN_AUDIO else name for name in result]
+                    self.devices.configure(values=list(dict.fromkeys([self.t("default_output"), *result])))
                     if self.speaker.get() not in self.devices.cget("values"):
                         self.speaker.set(self.t("default_output"))
                     self.status.set(self.t("audio_devices_ready", count=len(result)))

@@ -22,11 +22,39 @@
 
 ## 采集电脑声音
 
+默认可直接使用原生内录，不需要 BlackHole：
+
+1. 首次需要 Xcode 15.3 以上版本的 Command Line Tools。在终端运行
+   `xcode-select --install`，完成系统安装后在同传窗口点击“自动配置推理环境”。
+2. 音频选择“系统声音（原生内录）”，开始后允许系统音频录制权限。
+   macOS 14.2+ 使用 Process Tap；13～14.1 使用 ScreenCaptureKit。
+3. 播放讲话音频，检查仍能听到原音，并出现原文／译文。
+4. 若权限被拒绝，进入“系统设置 → 隐私与安全性 → 屏幕与系统音频录制”
+   允许 AiNiee Audio Capture 或 Terminal（名称取决于启动方式），重新启动。
+5. 若原生默认路径报错，可手动选择“系统声音（ScreenCaptureKit）”再试。
+   程序不会静默改录麦克风。
+
+原生助手是本地编译、临时签名的测试版，当前开发环境没有 Mac SDK，尚未
+完成 Swift 真机编译与权限验证。请保留窗口显示的构建错误和系统权限结果。
+
+也可先绕过翻译模型单独测试内录。在项目目录使用同传环境的 Python：
+
+```bash
+Resource/MediaRuntime/macos-arm64/bin/python -m ModuleFolders.Media.macos_audio --check
+Resource/MediaRuntime/macos-arm64/bin/python -m ModuleFolders.Media.macos_audio --seconds 10
+Resource/MediaRuntime/macos-arm64/bin/python -m ModuleFolders.Media.macos_audio --screen --seconds 10
+```
+
+播放讲话期间测试，输出实际后端、样本数和峰值；不保存录音。峰值为 0
+不能证明录制成功，需检查权限、音源和后端。此命令默认使用 M 系列环境路径。
+
+如果希望使用已有虚拟声卡，可采用下面的兼容方式：
+
 1. 安装 [BlackHole 2ch](https://existential.audio/blackhole/)，或使用 Loopback。
 2. 在“音频 MIDI 设置”创建多输出设备，勾选扬声器／耳机及 BlackHole；
    根据主时钟设置为其他设备启用漂移校正。
 3. 把 macOS 系统输出改为该多输出设备；在同传窗口刷新，选 BlackHole 输入。
-   保持“自动选择虚拟音频输入”也可以。
+   请明确选择虚拟声卡；默认“系统声音”走原生 API。
 4. 系统询问时允许 Terminal／Python 的麦克风权限。若此前拒绝，在
    “系统设置 → 隐私与安全性 → 麦克风”打开后重新启动。
 5. 选择源／目标语言，开始同传，然后播放讲话音频。

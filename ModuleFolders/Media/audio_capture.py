@@ -1,4 +1,4 @@
-"""Platform-specific device selection; macOS captures routed CoreAudio inputs."""
+"""Platform-specific native system capture and explicit microphone selection."""
 
 import sys
 
@@ -14,6 +14,10 @@ def devices(soundcard) -> list:
 
 
 def capture_device(soundcard, selected: str):
+    if sys.platform == "darwin":
+        from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO, NativeSystemAudio
+        if selected in {SYSTEM_AUDIO, SCREEN_AUDIO}:
+            return NativeSystemAudio(screen=selected == SCREEN_AUDIO)
     available = devices(soundcard)
     if sys.platform == "darwin":
         device = next((item for item in available if item.name == selected), None) if selected else next(

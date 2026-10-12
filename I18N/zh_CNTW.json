@@ -1,10 +1,15 @@
 {
+    "media_opening_audio": "正在打开音频采集；首次使用请允许系统录制权限…",
+
+    "media_mac_system_audio": "系统声音（原生内录）",
+    "media_mac_screen_audio": "系统声音（ScreenCaptureKit）",
+
     "media_mac_audio": "音频输入",
     "media_mac_audio_devices_ready": "CoreAudio 输入设备已就绪：{count} 个",
 
-    "media_mac_description": "macOS：选择 BlackHole／Loopback 输入，或明确选择麦克风。系统声音需在“音频 MIDI 设置”创建多输出设备，同时勾选扬声器和 BlackHole，再将系统输出切到该设备；请允许启动程序的麦克风权限。",
+    "media_mac_description": "系统声音使用 macOS 原生采集，无需虚拟声卡。首次开始时允许系统音频录制权限；也可明确选择麦克风或 BlackHole 输入。",
     "media_mac_default_input": "自动选择虚拟音频输入",
-    "media_mac_configure_hint": "准备独立 macOS 同传环境？Apple M 系列的 Index 原始模型使用 MLX，GGUF 使用 Metal，HY-MT 原始模型使用 MPS；语音识别使用 CPU。可能下载数 GB，音频驱动和系统权限需单独配置。",
+    "media_mac_configure_hint": "准备独立 macOS 同传环境？Apple M 系列使用 MLX／Metal／MPS 加速。原生系统音频助手需要 Xcode 15.3+ Command Line Tools，首次使用请求录制权限；可能下载数 GB。",
     "media_mac_audio_required": "未发现虚拟音频输入。请安装 BlackHole／Loopback，配置系统声音路由后刷新；如需翻译现场讲话，请明确选择麦克风。",
 
     "first_run_mode_title": "歡迎使用 AiNiee-Next，請選擇啟動方式。",

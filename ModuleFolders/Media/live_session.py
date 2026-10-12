@@ -275,10 +275,11 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
 
     worker = threading.Thread(target=infer, name="media-inference", daemon=True)
     try:
+        emit({"type": "status", "message": "opening_audio"})
         with loopback.recorder(samplerate=16000, channels=channels) as recorder:
             started = time.monotonic()
             worker.start()
-            emit({"type": "ready", "speaker": loopback.name})
+            emit({"type": "ready", "speaker": loopback.name, "audio_backend": getattr(recorder, "backend", "soundcard")})
             frame_count = 0
             capture_ms = vad_ms = 0.0
             frame_samples = 0

@@ -1,5 +1,28 @@
 # Media translation backends
 
+## Windows extension installer
+
+Double-click root `prepare_media.bat` to install live translation extensions
+with uv into `Resource/MediaRuntime`. It uses the saved controller model (Index
+by default), detects NVIDIA for the CUDA build, otherwise installs CPU Torch,
+prepares the selected GGUF runtime when applicable, and verifies readiness.
+Full uv installation errors remain visible in the console. uv must already
+exist; `prepare.bat` or manual uv installation can provide it.
+
+Optional commands from the project root:
+
+```bat
+prepare_media.bat cpu
+prepare_media.bat auto index-q4
+prepare_media.bat cuda:0 hymt
+```
+
+Successful verification saves the inference Python path for the controller.
+Restart the controller and check the environment. Model weights are downloaded
+separately. A failed CUDA check does not silently switch to CPU. This installs
+the complete live ASR/translation libraries directly; it does not sync the older
+Index-Echo experimental project extra into the base environment.
+
 ## macOS testing build
 
 From Finder, open `LaunchLive.command` (or run `bash LaunchLive.command` in the
@@ -45,28 +68,56 @@ permissions. Native inference environments and llama.cpp installs have separate
 architecture directories. The controller checks Metal/MPS availability; the
 GGUF backend also checks llama.cpp's actual device list before loading weights.
 
-macOS SoundCard has no WASAPI-style playback loopback. To translate system audio:
+### Native macOS system audio
+
+The audio selector defaults to **System audio (native capture)**. macOS 14.2+
+uses Core Audio Process Tap; macOS 13–14.1 uses ScreenCaptureKit audio. A separate
+**System audio (ScreenCaptureKit)** option permits explicit selection on newer
+systems too. Neither path needs a virtual driver or changes the system output.
+Tap capture is unmuted so normal playback remains audible. Permission failure
+never selects a microphone or a different backend automatically.
+
+The source build compiles `native/SystemAudio.swift` into a private capture
+helper app using Xcode 15.3+ Command Line Tools. Install the tools with
+`xcode-select --install`, then click **Configure inference**. Capture also checks
+and builds the helper on first start if necessary. The app has a stable bundle
+identifier, recording usage description, and local ad-hoc signature; it is not
+Developer ID signed or notarized. First use requires consent in macOS **Privacy
+& Security → Screen & System Audio Recording** (wording depends on OS version).
+Depending on launch context, the permission may be associated with the helper
+or Terminal; restart after changing it. SDK/compiler/permission failures appear
+in the controller. Opening **System audio** does not prompt until capture starts.
+
+The native helper converts input using AVAudioConverter to 16 kHz mono float32,
+sends a validated format header plus PCM over an owned pipe, and the existing
+worker converts to signed-16 PCM for VAD/ASR. No capture file or video frame is
+saved. Buffers are bounded; overflow errors are explicit. ScreenCaptureKit
+silence without buffers is padded with zero samples. Closing the input pipe or
+receiving a termination signal stops capture and releases tap/aggregate objects.
+Switching audio output/Bluetooth devices may require restarting capture.
+
+For optional virtual-device capture instead:
 
 1. Install [BlackHole 2ch](https://existential.audio/blackhole/) or use Loopback.
 2. Open **Audio MIDI Setup** and create a **Multi-Output Device** containing
    both the listening speaker/headphones and BlackHole; enable drift correction
    for the non-clock device as appropriate.
 3. Choose that multi-output device as the system output. In the controller,
-   refresh and choose **BlackHole 2ch**, or keep automatic virtual-input selection.
+   refresh and choose **BlackHole 2ch** explicitly.
 4. Grant **Microphone** access to the launching application (normally Terminal /
    Python) in **System Settings → Privacy & Security**, and restart it if needed.
 5. Choose languages, start translation and play speech. The controller continues
    showing recognition/translation timing and dropped-segment telemetry.
 
 Driver installation, changing system audio routing and granting OS permissions
-are manual; the app does not alter them. If no virtual input exists, automatic
-capture stops with instructions instead of silently capturing a microphone.
+are manual; the app does not alter them.
 An explicitly selected microphone supports live speech and mono CoreAudio input.
-This path does not use ScreenCaptureKit and does not request screen recording.
+The explicit microphone/virtual-device path does not use ScreenCaptureKit.
 Bluetooth/device switches may require refreshing and restarting the session.
 
 This is a source testing build, not a signed/notarized macOS app bundle. Linux
-unit tests cover platform routing, install plans and mock streaming; macOS audio,
+unit tests cover platform routing, helper build plans, real pipe transport with
+a fake producer, and mock streaming; Swift compilation and macOS audio,
 Cocoa/Tk rendering, MLX/MPS inference and latency require real Mac validation.
 See `Docs/MACOS_LIVE_TRANSLATION_TEST.md` for the tester handoff.
 

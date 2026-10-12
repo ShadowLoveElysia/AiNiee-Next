@@ -136,6 +136,10 @@ def discover_devices(interpreter: str) -> list[str]:
     speakers = report.get("speakers")
     if not isinstance(speakers, list) or not all(isinstance(name, str) for name in speakers):
         raise RuntimeError("AudioDeviceProbeInvalidResponse")
+    if sys.platform == "darwin":
+        from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO, supported
+        if supported():
+            speakers = [SYSTEM_AUDIO, SCREEN_AUDIO, *speakers]
     if not speakers:
         raise RuntimeError("NoAudioOutputDevices")
     return speakers
@@ -285,7 +289,12 @@ def main():
     elif args.action == "devices":
         import soundcard as sc
         from ModuleFolders.Media.audio_capture import devices
-        print(json.dumps({"speakers": [device.name for device in devices(sc)]}), flush=True)
+        names = [device.name for device in devices(sc)]
+        if sys.platform == "darwin":
+            from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO, supported
+            if supported():
+                names = [SYSTEM_AUDIO, SCREEN_AUDIO, *names]
+        print(json.dumps({"speakers": names}), flush=True)
     elif args.action in {"install", "configure"}:
         from ModuleFolders.Media.compute import detect_adapters, select_compute
         adapters = detect_adapters()
@@ -302,6 +311,13 @@ def main():
         if args.action == "configure" and get_model(args.family).backend == "gguf":
             from ModuleFolders.Media.gguf_runtime import prepare
             prepare(lambda value: print(value, flush=True), backend=compute["llama_backend"])
+        if args.action == "configure" and sys.platform == "darwin":
+            from ModuleFolders.Media.macos_audio import prepare_helper
+            try:
+                prepare_helper(lambda value: print(value, flush=True))
+            except RuntimeError as exc:
+                print(json.dumps({"error_detail": str(exc)[:1600]}), flush=True)
+                raise
     else:
         if args.model_root is None:
             parser.error("--model-root is required")

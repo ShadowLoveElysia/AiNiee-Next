@@ -56,6 +56,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
         report = None
         prepared_python = None
         success = False
+        setup_error = ""
         try:
             if action == "check":
                 report = probe(interpreter, device, family)
@@ -91,6 +92,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                                                      start_new_session=os.name != "nt")
                 try:
                     prepared_python = None
+                    setup_error = ""
                     for line in app.setup_process.stdout:
                         try:
                             progress = json.loads(line)
@@ -98,6 +100,8 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                             continue
                         if isinstance(progress.get("runtime_python"), str):
                             prepared_python = progress["runtime_python"]
+                        if isinstance(progress.get("error_detail"), str):
+                            setup_error = progress["error_detail"][:1600]
                         if "model" in progress:
                             results.put({"type": "progress", "message":
                                 text["download_progress"].format(model=progress["model"], stage=progress.get("stage", progress.get("status", "")))})
@@ -106,7 +110,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                     app.setup_process.stdin.close()
                     app.setup_process.stdout.close()
                 if code:
-                    raise RuntimeError(str(code))
+                    raise RuntimeError(setup_error or str(code))
                 checked_python = (prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter
                 if not app.closed:
                     if action == "download":
@@ -121,7 +125,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 message = text["setup_complete"]
             success = True
         except Exception as exc:
-            message = text["setup_failed"].format(detail=type(exc).__name__)
+            message = text["setup_failed"].format(detail=setup_error or type(exc).__name__)
         results.put({"type": "finished", "message": message, "report": report, "action": action,
                      "success": success, "runtime_python": prepared_python if action in {"install", "configure"} else None,
                      "runtime_signature": ((prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter,
