@@ -10,6 +10,11 @@
 主项目环境可双击根目录 `Prepare.command` 自动检测与配置，之后双击
 `Launch.command` 打开主程序。仅使用同传时，也可直接运行下面的独立入口。
 
+若窗口提示环境未安装，可双击 `PrepareMedia.command`，或在项目目录运行
+`bash prepare_media.sh`，直接通过 uv 安装同传扩展并显示完整错误。
+脚本验证成功后保存同传 Python 路径，重开窗口即可检查环境。
+可显式指定 `bash prepare_media.sh cpu`，或 `bash prepare_media.sh auto index-q4`。
+
 1. 下载完整项目，双击根目录 `LaunchLive.command`。
    若下载工具移除了执行权限，在项目目录运行 `bash LaunchLive.command`。
 2. 首次启动自动准备小型桌面环境；打开后选择“自动配置推理环境”。

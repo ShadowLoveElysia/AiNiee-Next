@@ -1,4 +1,4 @@
-"""Plan and verify the standalone Windows media installer without GUI imports."""
+"""Plan and verify standalone media installers without GUI imports."""
 
 import argparse
 import json
@@ -12,8 +12,9 @@ sys.path.insert(0, str(ROOT))
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("plan", "verify"))
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda:0", "vulkan"), default="auto")
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda:0", "vulkan", "mlx", "metal", "mps"), default="auto")
     parser.add_argument("--family", default="")
+    parser.add_argument("--format", choices=("bat", "json"), default="bat")
     args = parser.parse_args()
     from ModuleFolders.Media.model_catalog import get_model
     from ModuleFolders.Media.preferences import read_preferences
@@ -26,6 +27,9 @@ def main():
         compute = select_compute(args.device, gguf=model.backend == "gguf",
                                  cuda_available=args.device == "cuda:0" or any(row["vendor"] == "nvidia" for row in adapters),
                                  adapters=adapters)
+        if args.format == "json":
+            print(json.dumps({"family": model.key, "model": model.name, "backend": model.backend, **compute}))
+            return
         print(json.dumps({"model": model.name, "device": compute["translation_device"]}))
         # Both lines are fixed, validated tokens consumed by the BAT installer.
         print("cuda" if compute["asr_device"] == "cuda:0" else "cpu")

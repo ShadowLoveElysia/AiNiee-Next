@@ -25,6 +25,26 @@ Index-Echo experimental project extra into the base environment.
 
 ## macOS testing build
 
+For a terminal installer that exposes complete dependency errors, run
+`bash prepare_media.sh`, or double-click `PrepareMedia.command`. It reads the
+saved model, creates the same native arm64 inference environment as the
+controller, installs Torch/ASR/translation libraries directly with uv, and
+selects MLX, Metal GGUF or MPS as appropriate. Existing runtime assets are
+preserved with `--allow-existing`. Verification saves the Python path only
+after successful readiness checks. uv must already be installed.
+
+```bash
+bash prepare_media.sh
+bash prepare_media.sh cpu
+bash prepare_media.sh auto index-q4
+```
+
+The installer currently targets Apple Silicon macOS. It reports inference
+readiness separately from optional native audio-helper compilation; missing
+Command Line Tools does not make installed inference libraries fail. Models
+and recording permission remain separate. Audio-helper build errors stay
+visible for diagnosis. No automatic device/model fallback is performed.
+
 From Finder, open `LaunchLive.command` (or run `bash LaunchLive.command` in the
 project directory). The MLX path needs macOS 14+ and native Apple Silicon.
 The launcher needs Python 3.12 with Tk; the python.org
