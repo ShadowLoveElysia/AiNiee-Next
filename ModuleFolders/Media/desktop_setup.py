@@ -7,7 +7,7 @@ import sys
 import threading
 import json
 
-from ModuleFolders.Media.preferences import PROJECT_ROOT, save_preferences
+from ModuleFolders.Media.preferences import PROJECT_ROOT
 from ModuleFolders.Media.runtime import probe, runtime_python, subprocess_environment
 
 
@@ -47,13 +47,15 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
         emit_diagnostic({"type": "status", "message": "checking_environment" if action == "check" else "preparing_runtime"})
     interpreter, device = app.runtime_interpreter, app.device.get()
     model_root, family = app.model_root.get(), model_key or app.family.get()
+    active_family = app.family.get()
     results = app.setup_results
-    settings_path = app.settings_path
     # Resolve translated strings on the GUI thread; worker threads never touch Tk.
     text = {key: app.i18n.get("media_" + key) for key in ("environment_ready", "environment_missing", "setup_failed", "setup_complete", "models_missing", "download_progress")}
 
     def work():
         report = None
+        prepared_python = None
+        success = False
         try:
             if action == "check":
                 report = probe(interpreter, device, family)
@@ -105,18 +107,24 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                     app.setup_process.stdout.close()
                 if code:
                     raise RuntimeError(str(code))
-                if action in {"install", "configure"}:
-                    app.runtime_interpreter = prepared_python or str(runtime_python())
-                    save_preferences({"runtime_python": app.runtime_interpreter}, app.settings_path)
+                checked_python = (prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter
                 if not app.closed:
-                    report = probe(app.runtime_interpreter, device, family)
-                    if not report["ready"]:
+                    if action == "download":
+                        try:
+                            report = probe(checked_python, device, active_family)
+                        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+                            report = None
+                    else:
+                        report = probe(checked_python, device, family)
+                    if report is not None and not report["ready"] and action != "download":
                         raise RuntimeError("RuntimeNotReady")
                 message = text["setup_complete"]
+            success = True
         except Exception as exc:
             message = text["setup_failed"].format(detail=type(exc).__name__)
         results.put({"type": "finished", "message": message, "report": report, "action": action,
-                     "runtime_signature": (app.runtime_interpreter if action in {"install", "configure"} else interpreter,
-                                           device, family, model_root)})
+                     "success": success, "runtime_python": prepared_python if action in {"install", "configure"} else None,
+                     "runtime_signature": ((prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter,
+                                           device, active_family if action == "download" else family, model_root)})
 
     threading.Thread(target=work, name="media-setup", daemon=True).start()

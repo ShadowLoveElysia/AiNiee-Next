@@ -27,6 +27,9 @@ def main():
     stop = threading.Event()
     def parent_gone():
         stop.set()
+        if os.name != "nt" and os.getpgrp() == os.getpid():
+            import signal
+            os.killpg(os.getpgrp(), signal.SIGTERM)
         # EOF means the GUI stopped or died; free audio/CUDA even during imports.
         os._exit(0)
     from ModuleFolders.Media.supervisor import start_core_watchdog
@@ -37,6 +40,10 @@ def main():
     except Exception as exc:
         emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
         return 1
+    finally:
+        if os.name != "nt" and os.getpgrp() == os.getpid():
+            import signal
+            os.killpg(os.getpgrp(), signal.SIGTERM)
     return 0
 
 

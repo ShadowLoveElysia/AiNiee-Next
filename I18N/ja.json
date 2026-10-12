@@ -1,4 +1,12 @@
 {
+    "media_mac_audio": "Audio input",
+    "media_mac_audio_devices_ready": "CoreAudio inputs available: {count}",
+
+    "media_mac_description": "macOS: select a BlackHole/Loopback input or explicitly choose a microphone. To capture playback, create a Multi-Output Device in Audio MIDI Setup with your speakers and BlackHole, select it as system output, and grant microphone access to the launching app.",
+    "media_mac_default_input": "Auto-select virtual audio input",
+    "media_mac_configure_hint": "Prepare an isolated macOS runtime? On Apple Silicon, Index uses MLX, GGUF uses Metal, and HY-MT uses MPS; ASR uses CPU. Downloads may require several GB. Audio drivers and system permissions require separate setup.",
+    "media_mac_audio_required": "No virtual audio input found. Install BlackHole/Loopback, route system playback and refresh devices, or explicitly select a microphone for live speech.",
+
     "first_run_mode_title": "AiNiee-Nextへようこそ。起動方法を選んでください。",
     "first_run_full_setup": "設定を完了してすべての機能を使用",
     "first_run_live_only": "同時通訳のみ使用（今回の設定をスキップ）",

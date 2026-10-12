@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import queue
 import threading
+import sys
 
 from ModuleFolders.Media.live_session import LiveConfig, LiveSession
 
@@ -51,10 +52,15 @@ class DesktopApp:
         self.source_text = ""
         self.translation_text = ""
         self.root = tk.Tk()
+        self.is_macos = sys.platform == "darwin"
+        if self.is_macos and "aqua" in ttk.Style(self.root).theme_names():
+            ttk.Style(self.root).theme_use("aqua")
+        self.ui_font = "Helvetica Neue" if self.is_macos else "Segoe UI"
         self.root.title(self.t("title"))
         self.root.geometry(f"720x{min(900, self.root.winfo_screenheight() - 120)}")
         self.root.minsize(680, 520)
         self.root.protocol("WM_DELETE_WINDOW", lambda: self.root.after(0, self.close))
+        self.root.bind("<Escape>", lambda _: self.hide_overlay())
         self.model_root = tk.StringVar(value=model_root or default_model_root())
         self.family = tk.StringVar(value="index")
         self.source = tk.StringVar(value="ja")
@@ -63,7 +69,7 @@ class DesktopApp:
         self.speaker = tk.StringVar(value=self.t("default_output"))
         self.opacity = tk.IntVar(value=88)
         self.font_size = tk.IntVar(value=26)
-        self.font_family = tk.StringVar(value="Microsoft YaHei UI")
+        self.font_family = tk.StringVar(value="PingFang SC" if self.is_macos else "Microsoft YaHei UI")
         self.font_bold = tk.BooleanVar(value=True)
         self.translation_color = tk.StringVar(value="#ffffff")
         self.source_color = tk.StringVar(value="#c8d4e5")
@@ -103,11 +109,12 @@ class DesktopApp:
         frame_window = viewport.create_window(0, 0, window=frame, anchor="nw")
         frame.bind("<Configure>", lambda _: viewport.configure(scrollregion=viewport.bbox("all")))
         viewport.bind("<Configure>", lambda event: viewport.itemconfigure(frame_window, width=event.width))
-        self.root.bind("<MouseWheel>", lambda event: viewport.yview_scroll(-int(event.delta / 120), "units"))
+        self.root.bind("<MouseWheel>", lambda event: viewport.yview_scroll(
+            -int(event.delta if self.is_macos else event.delta / 120), "units"))
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text=self.t("heading"), font=("Segoe UI", 17, "bold")).grid(
+        ttk.Label(frame, text=self.t("heading"), font=(self.ui_font, 17, "bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Label(frame, text=self.t("description")).grid(
+        ttk.Label(frame, text=self.t("mac_description" if self.is_macos else "description"), wraplength=620).grid(
             row=1, column=0, columnspan=3, sticky="w", pady=(0, 16))
         ttk.Label(frame, text=self.t("models")).grid(row=2, column=0, sticky="w", padx=(0, 12))
         ttk.Entry(frame, textvariable=self.model_root).grid(row=2, column=1, sticky="ew")
@@ -127,7 +134,8 @@ class DesktopApp:
         ttk.Label(languages, text="  →  ").pack(side="left")
         ttk.Combobox(languages, textvariable=self.target, values=("zh", "en", "ja", "ko"), state="readonly", width=10).pack(side="left")
         ttk.Label(languages, text=self.t("device")).pack(side="left")
-        self.compute_selector = ttk.Combobox(languages, textvariable=self.device, values=("auto", "cuda:0", "vulkan", "cpu"), state="readonly", width=9)
+        from ModuleFolders.Media.compute import device_choices
+        self.compute_selector = ttk.Combobox(languages, textvariable=self.device, values=device_choices(), state="readonly", width=9)
         self.compute_selector.pack(side="left")
         self.compute_selector.bind("<<ComboboxSelected>>", self.compute_changed)
         ttk.Label(frame, text=self.t("audio")).grid(row=5, column=0, sticky="w", pady=12)
@@ -208,7 +216,7 @@ class DesktopApp:
         self.context_spin.grid(row=0, column=1, sticky="w", padx=8)
         ttk.Label(memory, text=self.t("history_segments")).grid(row=1, column=0, sticky="w", pady=8)
         ttk.Spinbox(memory, from_=2, to=3, width=4, textvariable=self.history_segments,
-                    command=self.render_history).grid(row=1, column=1, sticky="w", padx=8)
+                    command=self.refresh_caption_history).grid(row=1, column=1, sticky="w", padx=8)
         ttk.Checkbutton(memory, text=self.t("recording"), variable=self.recording,
                         command=self.toggle_recording).grid(row=2, column=0, columnspan=2, sticky="w")
         ttk.Label(memory, text=self.t("record_directory")).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -230,6 +238,7 @@ class DesktopApp:
         ttk.Label(frame, textvariable=self.status, wraplength=620).grid(row=8, column=0, columnspan=3, sticky="w", pady=8)
 
         self.background = tk.Toplevel(self.root)
+        self.background.title(self.t("subtitle_title") + " Background")
         self.background.overrideredirect(True)
         self.background.configure(bg="#101827")
         self.background.withdraw()
@@ -241,20 +250,23 @@ class DesktopApp:
         width = min(900, max(360, screen_width - 80))
         self.overlay.geometry(f"{width}x240+{max(0, (screen_width - width) // 2)}+{max(0, screen_height - 340)}")
         self.overlay.minsize(360, 120)
-        self._transparent_color = "#010203" if os.name == "nt" else "#101827"
+        self._transparent_color = "systemTransparent" if self.is_macos else "#010203" if os.name == "nt" else "#101827"
         self.overlay.configure(bg=self._transparent_color)
         if os.name == "nt":
             self.overlay.attributes("-transparentcolor", self._transparent_color)
+        elif self.is_macos:
+            self.overlay.attributes("-transparent", True)
         else:
             self.lock_button.configure(state="disabled")
         self.overlay.protocol("WM_DELETE_WINDOW", self.hide_overlay)
         self.overlay.bind("<Escape>", lambda _: self.hide_overlay())
         self.background.bind("<Escape>", lambda _: self.hide_overlay())
-        self.overlay.bind("<Map>", lambda _: self.root.after_idle(self._sync_layers))
+        self.overlay.bind("<Map>", lambda event: self.root.after_idle(self.apply_appearance)
+                          if event.widget is self.overlay else None)
         self.overlay.bind("<Unmap>", lambda _: self.background.withdraw())
         self.overlay.bind("<Configure>", self._resize)
         self.overlay_status = tk.Label(self.overlay, text=self.t("waiting"), bg="#101827", fg="#b6c7df",
-                                       anchor="w", font=("Segoe UI", 10))
+                                       anchor="w", font=(self.ui_font, 10))
         from ModuleFolders.Media.outlined_text import OutlinedText
         self.translation_label = OutlinedText(self.overlay, text=self.t("placeholder"), bg=self._transparent_color,
                                          fg="#ffffff", justify="left", anchor="w", wraplength=840)
@@ -286,11 +298,18 @@ class DesktopApp:
             self.start()
 
     def t(self, key: str, **values) -> str:
+        if sys.platform == "darwin" and key == "default_output":
+            key = "mac_default_input"
+        if sys.platform == "darwin" and key == "configure_hint":
+            key = "mac_configure_hint"
+        if sys.platform == "darwin" and key in {"audio", "audio_devices_ready"}:
+            key = "mac_" + key
         return self.i18n.get("media_" + key).format(**values)
 
     def _load_settings(self, explicit_root) -> None:
         try:
-            data = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            from ModuleFolders.Media.preferences import read_preferences
+            data = read_preferences(self.settings_path)
             self.opacity.set(max(0, min(100, int(data.get("opacity", 88)))))
             self.font_size.set(max(16, min(48, int(data.get("font_size", 26)))))
             if isinstance(data.get("font_family"), str) and data["font_family"].strip():
@@ -309,7 +328,7 @@ class DesktopApp:
                     variable.set(value)
             self.show_source.set(bool(data.get("show_source", True)))
             self.topmost.set(bool(data.get("topmost", True)))
-            self.locked.set(bool(data.get("locked", False)) and os.name == "nt")
+            self.locked.set(bool(data.get("locked", False)) and (os.name == "nt" or self.is_macos))
             self.overlay_width.set(max(360, min(2400, int(data.get("width", 900)))))
             self.overlay_height.set(max(120, min(1000, int(data.get("height", 240)))))
             self.context_segments.set(max(0, min(3, int(data.get("context_segments", 0)))))
@@ -355,9 +374,12 @@ class DesktopApp:
         save_preferences(data, self.settings_path)
 
     def _save_changed_preferences(self):
-        snapshot = tuple((name, variable.get()) for name, variable in vars(self).items()
-                         if isinstance(variable, (self.tk.StringVar, self.tk.IntVar, self.tk.BooleanVar))
-                         and name not in {"status", "environment_status", "speaker", "record_status"})
+        try:
+            snapshot = tuple((name, variable.get()) for name, variable in vars(self).items()
+                             if isinstance(variable, (self.tk.StringVar, self.tk.IntVar, self.tk.BooleanVar))
+                             and name not in {"status", "environment_status", "speaker", "record_status"})
+        except self.tk.TclError:
+            return
         if snapshot != self._last_saved_preferences:
             try:
                 self.save_settings()
@@ -371,6 +393,7 @@ class DesktopApp:
         if path:
             self.model_root.set(path)
             self.update_model_details()
+            self.compute_changed()
 
     def prepare_runtime(self, action: str, *, confirmed: bool = False, model_key: str | None = None) -> None:
         from ModuleFolders.Media.desktop_setup import prepare_runtime
@@ -384,6 +407,7 @@ class DesktopApp:
             self.environment_status.set(self.t("stop_before_setup"))
             return
         self.runtime_ready = False
+        self.install_prompted = False
         self._checked_runtime_signature = None
         self._checked_compute = None
         self.start_button.configure(state="disabled")
@@ -418,7 +442,7 @@ class DesktopApp:
         self.history_dialog.transient(self.root)
         frame = ttk.Frame(self.history_dialog, padding=12)
         frame.pack(fill="both", expand=True)
-        self.history_text = self.tk.Text(frame, wrap="word", font=("Segoe UI", 12), state="disabled")
+        self.history_text = self.tk.Text(frame, wrap="word", font=(self.ui_font, 12), state="disabled")
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.history_text.yview)
         self.history_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -442,8 +466,25 @@ class DesktopApp:
         self.history_text.insert("1.0", "\n".join(chunks) or self.t("history_empty"))
         self.history_text.configure(state="disabled")
 
+    def refresh_caption_history(self):
+        try:
+            if not self.history.captions and not self.source_text and not self.translation_text:
+                self.render_history()
+                return
+            last = self.history.captions[-1] if self.history.captions else {}
+            final = (last.get("source_text") == self.source_text and
+                     last.get("translated_text") == self.translation_text)
+            self.render_caption_stack(self.source_text, self.translation_text,
+                                      final=final)
+            self.render_history()
+        except self.tk.TclError:
+            return
+
     def render_caption_stack(self, source: str, translation: str, *, final: bool = False):
-        self.history.set_limit(max(2, min(3, self.history_segments.get())))
+        try:
+            self.history.set_limit(max(2, min(3, self.history_segments.get())))
+        except self.tk.TclError:
+            pass
         entries = list(self.history.captions)
         if not final:
             entries = entries[-(self.history.captions.maxlen - 1):]
@@ -483,6 +524,7 @@ class DesktopApp:
         self.family.set(get_model(self.model_choice.get()).key)
         self.update_model_details()
         self.save_settings()
+        self.compute_changed()
 
     def show_model_catalog(self) -> None:
         from tkinter import ttk
@@ -582,6 +624,14 @@ class DesktopApp:
 
     def finish_preparation(self, event: dict) -> None:
         from tkinter import messagebox
+        prepared_python = event.get("runtime_python")
+        if prepared_python and not self.closing:
+            self.runtime_interpreter = prepared_python
+            from ModuleFolders.Media.preferences import save_preferences
+            try:
+                save_preferences({"runtime_python": prepared_python}, self.settings_path)
+            except OSError:
+                self.environment_status.set(self.t("setup_failed", detail="PreferencesWriteFailed"))
         self.setup_busy = False
         for button in self.setup_buttons:
             button.configure(state="normal")
@@ -743,6 +793,7 @@ class DesktopApp:
     def apply_appearance(self) -> None:
         if not hasattr(self, "overlay"):
             return
+        from ModuleFolders.Media.window_effects import set_mouse_passthrough
         try:
             # Separate native layers keep glyphs opaque while the panel fades.
             self.overlay.attributes("-alpha", 1.0)
@@ -754,10 +805,18 @@ class DesktopApp:
             self.topmost_button.configure(state="disabled" if self.locked.get() else "normal")
             self._sync_layers()
             self.root.update_idletasks()
-            from ModuleFolders.Media.window_effects import set_mouse_passthrough
             for window in (self.background, self.overlay):
                 set_mouse_passthrough(window, self.locked.get())
         except (self.tk.TclError, OSError, RuntimeError):
+            if self.locked.get():
+                self.locked.set(False)
+                self.topmost_button.configure(state="normal")
+                for window in (self.background, self.overlay):
+                    try:
+                        set_mouse_passthrough(window, False)
+                        window.attributes("-topmost", self.topmost.get())
+                    except (self.tk.TclError, OSError, RuntimeError):
+                        pass
             self.status.set(self.t("unsupported_window"))
         if os.name == "nt":
             used_colors = {self.root.winfo_rgb(self.translation_color.get()), self.root.winfo_rgb(self.source_color.get()),
@@ -779,7 +838,7 @@ class DesktopApp:
             self.source_label.pack(fill="x", padx=20, pady=(2, 12))
         else:
             self.source_label.pack_forget()
-        self.render_history()
+        self.refresh_caption_history()
 
     def show_overlay(self) -> None:
         self.overlay.deiconify()
@@ -788,6 +847,11 @@ class DesktopApp:
 
     def start(self) -> None:
         from tkinter import messagebox
+        if self.is_macos and self.speaker.get() == self.t("default_output"):
+            from ModuleFolders.Media.audio_capture import is_virtual_input
+            if not any(is_virtual_input(name) for name in self.devices.cget("values")):
+                self.status.set(self.t("mac_audio_required"))
+                return
         if self.session.active or self.setup_busy or not self.runtime_ready:
             return
         if self._checked_runtime_signature != self.runtime_signature():
@@ -849,7 +913,8 @@ class DesktopApp:
         if kind == "status":
             labels = {"worker_started": self.t("worker_started"), "importing_runtime": self.t("importing_runtime"),
                       "translation_loaded": self.t("translation_loaded"), "loading_translation": self.t("loading_translation"),
-                      "loading_asr": self.t("loading_asr"), "warming_up": self.t("warming_up")}
+                      "loading_asr": self.t("loading_asr"), "warming_up": self.t("warming_up"),
+                      "recognizing": self.t("recognizing"), "translating": self.t("translating")}
             self.status.set(labels.get(event["message"], event["message"]))
             self.overlay_status.configure(text=self.status.get())
         elif kind == "ready":
@@ -862,7 +927,8 @@ class DesktopApp:
             self.source_text = event.get("source_text", "")
             self.source_label.configure(text=self.source_text)
             if kind == "transcript":
-                self.render_caption_stack(self.source_text, self.t("translating"))
+                self.translation_text = self.t("translating")
+                self.render_caption_stack(self.source_text, self.translation_text)
             else:
                 self.translation_text = event.get("translated_text", "")
                 self.render_caption_stack(self.source_text, self.translation_text, final=kind == "caption")

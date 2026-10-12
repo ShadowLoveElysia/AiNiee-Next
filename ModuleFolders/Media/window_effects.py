@@ -1,9 +1,14 @@
 """Native window input policy for independent subtitle and background layers."""
 
 import os
+import sys
 
 
 def set_mouse_passthrough(window, enabled: bool) -> None:
+    if sys.platform == "darwin":
+        from ModuleFolders.Media.macos_window import configure_window
+        configure_window(window, passthrough=enabled)
+        return
     if os.name != "nt":
         if enabled:
             raise RuntimeError("Mouse passthrough is currently supported on Windows only")

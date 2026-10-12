@@ -3,8 +3,10 @@
 import argparse
 import importlib
 import importlib.util
+import importlib.metadata
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,7 +33,30 @@ MODELS = {
 }
 
 
+def required_packages(device: str = "cpu") -> tuple[str, ...]:
+    return PACKAGES + (("mlx", "mlx_lm") if device == "mlx" else ())
+
+
+def needs_install(device: str) -> bool:
+    if any(importlib.util.find_spec(name) is None for name in required_packages(device)):
+        return True
+    minimums = {"torch": (2, 9, 1), "torchaudio": (2, 9, 1),
+                "transformers": (5, 7, 0) if sys.platform == "darwin" else (5, 6, 0)}
+    if device == "mlx":
+        minimums.update({"mlx": (0, 32, 3), "mlx-lm": (0, 32, 0)})
+    for name, minimum in minimums.items():
+        try:
+            version = importlib.metadata.version(name).split('+')[0]
+            if tuple(int(part) for part in version.split('.')[:3]) < minimum:
+                return True
+        except (importlib.metadata.PackageNotFoundError, ValueError):
+            return True
+    return False
+
+
 def runtime_python() -> Path:
+    if sys.platform == "darwin":
+        return RUNTIME_ROOT / ("macos-" + platform.machine().lower()) / "bin/python"
     return RUNTIME_ROOT / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
@@ -84,7 +109,8 @@ class AudioDeviceProbeTimeout(RuntimeError):
 
 def discover_devices(interpreter: str) -> list[str]:
     # Device listing needs only SoundCard, not the project runtime/model catalog.
-    script = "import json; import soundcard as sc; print(json.dumps({'speakers': [s.name for s in sc.all_speakers()]}), flush=True)"
+    listing = "sc.all_microphones(include_loopback=False)" if sys.platform == "darwin" else "sc.all_speakers()"
+    script = "import json; import soundcard as sc; print(json.dumps({'speakers': [s.name for s in " + listing + "]}), flush=True)"
     try:
         result = subprocess.run(
             [interpreter, "-u", "-c", script], cwd=ROOT,
@@ -129,16 +155,24 @@ def probe(interpreter: str, device: str, family: str = "index") -> dict:
     return report
 
 
-def install(device: str) -> None:
+def install(device: str, *, translation_device: str = "") -> None:
+    if translation_device == "mlx" and (sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}):
+        raise RuntimeError("MLX requires native arm64 macOS Python")
+    if translation_device == "mlx" and platform.mac_ver()[0] and int(platform.mac_ver()[0].split('.')[0]) < 14:
+        raise RuntimeError("MLX 0.32 requires macOS 14 or newer")
+    if sys.platform == "darwin" and platform.machine().lower() != "arm64":
+        raise RuntimeError("Automatic macOS inference setup requires Apple Silicon with native arm64 Python; current Torch wheels do not support Intel macOS")
     uv = shutil.which("uv")
+    destination = runtime_python().parent.parent
     if not runtime_python().is_file():
         print("Creating isolated media runtime", flush=True)
         if uv:
-            subprocess.run([uv, "venv", "--python", "3.12", "--seed", str(RUNTIME_ROOT)], check=True)
+            subprocess.run([uv, "venv", "--python", sys.executable if sys.platform == "darwin" else "3.12",
+                            "--seed", str(destination)], check=True)
         elif getattr(sys, "frozen", False):
             raise RuntimeError("A Python 3.12 interpreter or uv is required to install the media runtime")
         else:
-            venv.EnvBuilder(with_pip=True).create(RUNTIME_ROOT)
+            venv.EnvBuilder(with_pip=True).create(destination)
     python = str(runtime_python())
     installer = [uv, "pip", "install", "--python", python] if uv else [python, "-m", "pip", "install"]
     torch_index = "https://download.pytorch.org/whl/cu126" if device.startswith("cuda") else "https://download.pytorch.org/whl/cpu"
@@ -147,9 +181,11 @@ def install(device: str) -> None:
         torch_index = "https://pypi.org/simple"
     torch_packages = ["torch==2.9.1" + suffix, "torchaudio==2.9.1" + suffix]
     subprocess.run([*installer, "--index-url", torch_index, *torch_packages], check=True)
-    subprocess.run([*installer, "--extra-index-url", torch_index, *torch_packages, "transformers==5.6.0", "accelerate", "funasr>=1.2,<2", "sentencepiece",
+    apple_packages = ["mlx==0.32.3", "mlx-lm==0.32.0"] if translation_device == "mlx" else []
+    transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
+    subprocess.run([*installer, "--extra-index-url", torch_index, *torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
                     "silero-vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
-                    "huggingface-hub", "safetensors"], check=True)
+                    "huggingface-hub", "safetensors", *apple_packages], check=True)
     print(json.dumps({"runtime_python": python}), flush=True)
 
 
@@ -167,7 +203,7 @@ def download(root: Path, family: str) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("probe", "devices", "install", "configure", "download"))
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="auto")
     parser.add_argument("--model-root", type=Path)
     parser.add_argument("--family", choices=tuple(model.key for model in TRANSLATION_MODELS), default="index")
     parser.add_argument("--managed", action="store_true")
@@ -185,13 +221,14 @@ def main():
         start_core_watchdog(parent_gone)
     if args.action == "probe":
         missing = [name for name in PACKAGES if importlib.util.find_spec(name) is None]
-        cuda, gpu = False, ""
+        cuda, gpu, mps = False, "", False
         versions = {}
         if "torch" not in missing:
             try:
                 import torch
                 versions["torch"] = torch.__version__
                 cuda = torch.cuda.is_available()
+                mps = torch.backends.mps.is_available()
                 if cuda:
                     gpu = torch.cuda.get_device_name(0)
             except Exception:
@@ -203,8 +240,9 @@ def main():
                     versions[name] = module.__version__
                     if name == "transformers":
                         major, minor = (int(part) for part in module.__version__.split('.')[:2])
-                        if (major, minor) < (5, 6):
-                            missing.append("transformers>=5.6")
+                        minimum = (5, 7) if sys.platform == "darwin" else (5, 6)
+                        if (major, minor) < minimum:
+                            missing.append("transformers>=" + '.'.join(map(str, minimum)))
                 except Exception:
                     missing.append(name)
         from ModuleFolders.Media.compute import detect_adapters, select_compute
@@ -213,7 +251,27 @@ def main():
         compute_error = ""
         compute = {}
         try:
-            compute = select_compute(args.device, gguf=checkpoint.backend == "gguf", cuda_available=cuda, adapters=adapters)
+            compute = select_compute(args.device, gguf=checkpoint.backend == "gguf", cuda_available=cuda, adapters=adapters,
+                                     mlx_compatible=checkpoint.family == "index", mps_available=mps)
+            if compute["translation_device"] == "mlx":
+                for name, minimum in (("mlx", (0, 32, 3)), ("mlx_lm", (0, 32, 0))):
+                    if importlib.util.find_spec(name) is None:
+                        missing.append(name)
+                        continue
+                    try:
+                        module = importlib.import_module(name)
+                        version = importlib.metadata.version(name.replace('_', '-'))
+                        versions[name] = version
+                        if tuple(int(part) for part in version.split('.')[:3]) < minimum:
+                            missing.append(name + ">=" + '.'.join(map(str, minimum)))
+                    except Exception:
+                        missing.append(name)
+                if "mlx" not in missing:
+                    import mlx.core as mx
+                    if not mx.metal.is_available():
+                        raise RuntimeError("MLX Metal GPU is unavailable")
+            if sys.platform == "darwin":
+                gpu = adapters[0]["name"] if adapters else ""
             if checkpoint.backend == "gguf":
                 from ModuleFolders.Media.gguf_runtime import find_server
                 if find_server(compute["llama_backend"]) is None:
@@ -222,10 +280,12 @@ def main():
             compute_error = str(exc)
         print(json.dumps({"python": sys.executable, "version": sys.version.split()[0], "missing": missing,
                           "cuda": cuda, "gpu": gpu, "versions": versions, "adapters": adapters,
+                          "mps": mps, "platform": sys.platform, "architecture": platform.machine(),
                           "compute": compute, "compute_error": compute_error}), flush=True)
     elif args.action == "devices":
         import soundcard as sc
-        print(json.dumps({"speakers": [speaker.name for speaker in sc.all_speakers()]}), flush=True)
+        from ModuleFolders.Media.audio_capture import devices
+        print(json.dumps({"speakers": [device.name for device in devices(sc)]}), flush=True)
     elif args.action in {"install", "configure"}:
         from ModuleFolders.Media.compute import detect_adapters, select_compute
         adapters = detect_adapters()
@@ -233,9 +293,10 @@ def main():
         if args.device == "cuda:0":
             cuda_possible = True
         compute = select_compute(args.device, gguf=get_model(args.family).backend == "gguf",
-                                 cuda_available=cuda_possible, adapters=adapters)
-        if args.action == "install" or any(importlib.util.find_spec(name) is None for name in PACKAGES):
-            install(compute["asr_device"])
+                                 cuda_available=cuda_possible, adapters=adapters,
+                                 mlx_compatible=get_model(args.family).family == "index")
+        if args.action == "install" or needs_install(compute["translation_device"]):
+            install(compute["asr_device"], translation_device=compute["translation_device"])
         else:
             print(json.dumps({"runtime_python": sys.executable}), flush=True)
         if args.action == "configure" and get_model(args.family).backend == "gguf":

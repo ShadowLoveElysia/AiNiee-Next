@@ -79,9 +79,12 @@ the environment is ready. Press any key to close the preparation window.
 On Linux or macOS:
 
 ```bash
-chmod +x prepare.sh
-./prepare.sh
+bash prepare.sh
 ```
+
+On macOS, you can also double-click `Prepare.command` in Finder. Setup detects the platform and architecture, finds or installs uv, prepares Python 3.12, and syncs dependencies. Unix environments live under `tmp/environments/<platform>-<architecture>`; Windows keeps `.venv-win`.
+
+Live translation needs Tk. Missing Tk produces installation instructions; on Mac, install Python 3.12 with Tk from python.org and rerun setup. Inference libraries/models, virtual audio drivers and OS permissions are configured separately.
 
 ## 3. Start AiNiee-Next
 
@@ -94,8 +97,10 @@ Launch.bat
 On Linux or macOS:
 
 ```bash
-./Launch.sh
+bash Launch.sh
 ```
+
+On macOS, double-click `Launch.command` for the main program, or `LaunchLive.command` for the live translation controller.
 
 If the program says that the Web build package is missing, you can enter `0` to skip it for now. This only skips the WebUI package. It does not block CLI/TUI translation, API setup, or project setup. You can install or build the WebUI package later when you need the browser control panel.
 

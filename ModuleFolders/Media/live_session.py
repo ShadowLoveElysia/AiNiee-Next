@@ -11,6 +11,18 @@ import uuid
 import subprocess
 import sys
 import json
+import os
+import signal
+
+
+def terminate_worker(process, *, force: bool = False) -> None:
+    if os.name == "nt":
+        process.kill() if force else process.terminate()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 @dataclass(frozen=True)
@@ -35,7 +47,7 @@ class LiveConfig:
     def validate(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
-        if self.device not in {"auto", "cuda:0", "vulkan", "cpu"} or self.asr_device not in {"auto", "cuda:0", "cpu"}:
+        if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu"}:
             raise ValueError("Unsupported compute device")
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
             raise ValueError("Unsupported recognition language")
@@ -82,12 +94,13 @@ class LiveSession:
             cwd=Path(__file__).resolve().parents[2], env=subprocess_environment(),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace",
+            start_new_session=os.name != "nt",
         )
         try:
             process.stdin.write(json.dumps(asdict(config)) + "\n")
             process.stdin.flush()
         except Exception:
-            process.terminate()
+            terminate_worker(process)
             process.wait(timeout=3)
             raise
         self._process = process
@@ -129,7 +142,7 @@ class LiveSession:
             self.stop()
         if self._stop_deadline and time.monotonic() >= self._stop_deadline:
             if self._process.poll() is None:
-                self._process.terminate()
+                terminate_worker(self._process)
         if self._process.poll() is not None:
             code = self._process.returncode
             stopping = self._stop_deadline is not None
@@ -146,7 +159,7 @@ class LiveSession:
             try:
                 self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                self._process.kill()
+                terminate_worker(self._process, force=True)
                 self._process.wait(timeout=3)
             self._process = None
 
@@ -169,12 +182,16 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     checkpoint = get_model(config.family)
     from ModuleFolders.Media.compute import detect_adapters, select_compute
     compute = select_compute(config.device, gguf=checkpoint.backend == "gguf",
-                             cuda_available=torch.cuda.is_available(), adapters=detect_adapters())
+                             cuda_available=torch.cuda.is_available(), adapters=detect_adapters(),
+                             mlx_compatible=checkpoint.family == "index", mps_available=torch.backends.mps.is_available())
     device = compute["translation_device"]
     asr_device = compute["asr_device"] if config.asr_device in {"auto", "vulkan"} else config.asr_device
     if checkpoint.backend == "gguf":
         from ModuleFolders.Media.gguf_backend import GgufTranslator
         translator = GgufTranslator(config.translation_dir / checkpoint.filename, family=config.family, device=device)
+    elif device == "mlx":
+        from ModuleFolders.Media.mlx_backend import MlxTextTranslator
+        translator = MlxTextTranslator(config.translation_dir, family=config.family)
     else:
         translator = LocalTextTranslator(config.translation_dir, family=config.family, device=device)
     emit({"type": "status", "message": "translation_loaded"})
@@ -218,14 +235,9 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         endpoint_silence_ms=config.endpoint_silence_ms, target_segment_ms=config.target_segment_ms,
         max_segment_ms=config.max_segment_ms, pause_silence_ms=192,
     )
-    speakers = sc.all_speakers()
-    speaker = next((s for s in speakers if s.name == config.speaker), None) if config.speaker else sc.default_speaker()
-    if speaker is None:
-        raise RuntimeError("Selected audio output device is unavailable")
-    loopback = sc.get_microphone(id=speaker.id, include_loopback=True)
+    from ModuleFolders.Media.audio_capture import capture_device
+    loopback = capture_device(sc, config.speaker)
     channels = loopback.channels
-    if channels < 2:
-        raise RuntimeError("Select a stereo audio output; WASAPI mono capture is unreliable")
 
     pending = queue.Queue(maxsize=4)
     failures = queue.Queue()
@@ -266,7 +278,7 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         with loopback.recorder(samplerate=16000, channels=channels) as recorder:
             started = time.monotonic()
             worker.start()
-            emit({"type": "ready", "speaker": speaker.name})
+            emit({"type": "ready", "speaker": loopback.name})
             frame_count = 0
             capture_ms = vad_ms = 0.0
             frame_samples = 0

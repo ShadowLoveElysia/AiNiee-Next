@@ -78,9 +78,13 @@ cd AiNiee-Next
   <sub>图 3：出现 Environment is ready 后，环境准备完成。</sub>
 </p>
 
+macOS 可双击根目录 `Prepare.command`，Linux 可在终端运行 `bash prepare.sh`。脚本自动检测系统与架构、查找或安装 uv、准备 Python 3.12 并同步依赖。Unix 环境位于 `tmp/environments/<系统>-<架构>`，Windows 保留 `.venv-win`，避免混用。
+
+同传控制窗口需要 Tk。若检测不到，脚本会给出安装说明；Mac 可安装 python.org 的 Python 3.12（带 Tk），然后重新运行配置脚本。系统音频驱动、权限及同传推理模型在控制窗口和 macOS 系统中单独配置。
+
 ## 3. 启动 AiNiee CLI
 
-环境准备完成后，双击 `Launch.bat` 启动主程序。
+环境准备完成后，Windows 双击 `Launch.bat`，macOS 双击 `Launch.command`，Linux 运行 `bash Launch.sh` 启动主程序。macOS 也可双击 `LaunchLive.command` 直接打开实时同传窗口。
 
 进入主程序后，如果提示未检测到 Web 编译包，只使用 CLI/TUI 翻译时可以先输入 `0` 跳过。这里跳过的只是 WebUI 编译包，不影响本教程继续完成 API 配置和翻译任务。后续需要 Web 面板时，再按提示下载或本地编译 Web 包即可。
 

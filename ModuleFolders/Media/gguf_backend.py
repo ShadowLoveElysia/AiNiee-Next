@@ -29,9 +29,9 @@ class GgufTranslator:
         self.max_new_tokens = max_new_tokens
         if not isinstance(cpu_threads, int) or cpu_threads < 1:
             raise ValueError("CPU threads must be positive")
-        backend = {"cuda:0": "cuda", "vulkan": "vulkan", "cpu": "cpu"}.get(device)
+        backend = {"cuda:0": "cuda", "vulkan": "vulkan", "cpu": "cpu", "metal": "metal"}.get(device)
         if backend is None:
-            raise ValueError("GGUF requires CUDA, Vulkan or CPU")
+            raise ValueError("GGUF requires CUDA, Vulkan, Metal or CPU")
         server = find_server(backend)
         if server is None:
             raise RuntimeError(f"llama.cpp {backend} runtime is missing; use one-click configuration")
@@ -40,7 +40,7 @@ class GgufTranslator:
                                      env=subprocess_environment(), stdin=subprocess.DEVNULL,
                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
             devices = listing.stdout + listing.stderr
-            marker = "Vulkan" if backend == "vulkan" else "CUDA"
+            marker = {"vulkan": "Vulkan", "cuda": "CUDA", "metal": "Metal"}[backend]
             if listing.returncode or not any(line.strip().startswith(marker) and ":" in line for line in devices.splitlines()):
                 raise RuntimeError(f"No usable {backend} GPU; update drivers or select CPU")
         model = Path(model_path).resolve()

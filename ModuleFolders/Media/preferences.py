@@ -4,12 +4,13 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = PROJECT_ROOT / "Resource/media_overlay.json"
 DEFAULTS = {
-    "opacity": 88, "font_size": 26, "font_family": "Microsoft YaHei UI", "font_bold": True,
+    "opacity": 88, "font_size": 26, "font_family": "PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei UI", "font_bold": True,
     "translation_color": "#ffffff", "source_color": "#c8d4e5", "background_color": "#101827",
     "stroke_width": 2, "stroke_color": "#000000", "show_source": True, "topmost": True,
     "locked": False, "width": 900, "height": 240, "family": "index", "source": "ja",
@@ -21,9 +22,10 @@ RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "width": (360, 2400), "height": (120, 1000),
           "context_segments": (0, 3), "history_segments": (2, 3)}
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
+from ModuleFolders.Media.compute import device_choices
 
 CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
-           "target": ("zh", "en", "ja", "ko"), "device": ("auto", "cuda:0", "vulkan", "cpu")}
+           "target": ("zh", "en", "ja", "ko"), "device": device_choices()}
 
 
 def default_model_root() -> str:
@@ -41,6 +43,15 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
             data.update(saved)
     except (OSError, ValueError):
         pass
+    if data.get("device") not in device_choices():
+        data["device"] = "auto"
+    if sys.platform == "darwin":
+        if data.get("font_family") in {"Microsoft YaHei UI", "Segoe UI"}:
+            data["font_family"] = "PingFang SC"
+        if re.match(r"^[A-Za-z]:[\\/]", str(data.get("model_root", ""))):
+            data["model_root"] = default_model_root()
+        if re.match(r"^[A-Za-z]:[\\/]", str(data.get("record_directory", ""))):
+            data["record_directory"] = DEFAULTS["record_directory"]
     return data
 
 

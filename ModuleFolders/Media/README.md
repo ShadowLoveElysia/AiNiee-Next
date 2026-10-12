@@ -1,5 +1,75 @@
 # Media translation backends
 
+## macOS testing build
+
+From Finder, open `LaunchLive.command` (or run `bash LaunchLive.command` in the
+project directory). The MLX path needs macOS 14+ and native Apple Silicon.
+The launcher needs Python 3.12 with Tk; the python.org
+macOS installer includes Tk. Homebrew users need `python@3.12` and
+`python-tk@3.12`. Use native arm64 Python on M-series Macs; Rosetta cannot run
+the MLX path. The launcher prepares a small isolated desktop environment on
+first use. Existing CLI/TUI live-translation entries also select macOS behavior
+automatically via the same `DesktopApp`, without a separate set of preferences.
+
+The Mac controller uses Aqua controls, PingFang subtitles, trackpad scrolling,
+transparent subtitle/background layers and Cocoa mouse passthrough. Lock/unlock
+remains accessible from the controller. The Cocoa layers join Spaces and allow
+full-screen auxiliary windows; actual full-screen ordering depends on macOS.
+Windows device/font preferences copied to a Mac are normalized in memory;
+unrelated preferences are preserved.
+
+On native Apple Silicon, `auto` selects:
+
+| Selected checkpoint | Translation library | Recognition |
+|---|---|---|
+| Index original safetensors (Qwen3.5) | Apple MLX / mlx-lm on Metal | SenseVoice CPU |
+| Index / HY-MT GGUF | llama.cpp Metal | SenseVoice CPU |
+| HY-MT original safetensors | PyTorch MPS | SenseVoice CPU |
+
+Click **Configure inference** to prepare the isolated inference environment,
+then **Download models** for the selected checkpoint. MLX 0.32.3 / mlx-lm 0.32.0
+load the existing local Index weights; no third-party converted weights or
+implicit model switch are used. Current MLX support requires `model_type=qwen3_5`.
+An older/different Index checkpoint reports an error; choose MPS or Metal GGUF
+explicitly in that case. MPS operator support for HY-MT requires runtime
+validation. Accelerated errors never trigger an automatic CPU/quality fallback.
+Intel Macs select CPU, but automatic Python inference installation currently
+requires Apple Silicon because Torch 2.9.1 has no Intel macOS wheel. Opening the
+controller and GGUF runtime support do not establish Intel inference readiness.
+MLX requires Apple Silicon. For smaller unified
+memory systems, the selectable Q4 GGUF models reduce weight memory usage.
+
+Metal/CPU llama.cpp macOS arm64 and x64 archives are pinned to b11552 and their
+GitHub release SHA-256 digests, use filtered tar extraction, and retain executable
+permissions. Native inference environments and llama.cpp installs have separate
+architecture directories. The controller checks Metal/MPS availability; the
+GGUF backend also checks llama.cpp's actual device list before loading weights.
+
+macOS SoundCard has no WASAPI-style playback loopback. To translate system audio:
+
+1. Install [BlackHole 2ch](https://existential.audio/blackhole/) or use Loopback.
+2. Open **Audio MIDI Setup** and create a **Multi-Output Device** containing
+   both the listening speaker/headphones and BlackHole; enable drift correction
+   for the non-clock device as appropriate.
+3. Choose that multi-output device as the system output. In the controller,
+   refresh and choose **BlackHole 2ch**, or keep automatic virtual-input selection.
+4. Grant **Microphone** access to the launching application (normally Terminal /
+   Python) in **System Settings → Privacy & Security**, and restart it if needed.
+5. Choose languages, start translation and play speech. The controller continues
+   showing recognition/translation timing and dropped-segment telemetry.
+
+Driver installation, changing system audio routing and granting OS permissions
+are manual; the app does not alter them. If no virtual input exists, automatic
+capture stops with instructions instead of silently capturing a microphone.
+An explicitly selected microphone supports live speech and mono CoreAudio input.
+This path does not use ScreenCaptureKit and does not request screen recording.
+Bluetooth/device switches may require refreshing and restarting the session.
+
+This is a source testing build, not a signed/notarized macOS app bundle. Linux
+unit tests cover platform routing, install plans and mock streaming; macOS audio,
+Cocoa/Tk rendering, MLX/MPS inference and latency require real Mac validation.
+See `Docs/MACOS_LIVE_TRANSLATION_TEST.md` for the tester handoff.
+
 ## GGUF and Windows GPU backends
 
 The model list also offers Index-Translate-2B and HY-MT2-1.8B in Q4_K_M / Q6_K.
