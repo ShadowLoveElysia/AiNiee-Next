@@ -263,8 +263,29 @@ def install_packages(uv, python, packages, *, index, extra_index='', cache=CACHE
             artifacts.append(fetch_artifact(select_artifact(package, info['tags']), name, cache=cache))
         if artifacts:
             # Install exactly the verified resolved artifacts; do not re-download wheels.
-            subprocess.run([uv, 'pip', 'install', '--python', str(python), '--no-deps', '--index-url', index,
-                            *map(str, artifacts)], check=True)
+            with tempfile.TemporaryFile() as errors:
+                try:
+                    subprocess.run([uv, 'pip', 'install', '--python', str(python), '--no-deps', '--index-url', index,
+                                    *map(str, artifacts)], check=True, stderr=errors)
+                except subprocess.CalledProcessError as error:
+                    from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+                    errors.seek(0, 2)
+                    errors.seek(max(0, errors.tell() - 8192))
+                    detail = errors.read().decode('utf-8', errors='replace')
+                    lines = [safe_installer_line(line) for line in detail.splitlines()[-12:]]
+                    for line in lines:
+                        print(line, flush=True)
+                    if re.search(r'os error 5|access is denied|permission denied|拒绝访问', detail, re.I):
+                        raise RuntimeError('Package installation denied access to a file. Close live capture, all AiNiee windows and any Python process using this MediaRuntime, then retry. If it persists, check antivirus protection history and folder permissions. Downloaded packages are preserved.') from None
+                    raise RuntimeError(f'Local package installation failed (uv exit {error.returncode}): ' +
+                                       ' | '.join(lines[-4:])) from None
+                else:
+                    errors.seek(0)
+                    output = errors.read().decode('utf-8', errors='replace')
+                    if output:
+                        from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+                        for line in output.splitlines():
+                            print(safe_installer_line(line), flush=True)
         else:
             print('Selected packages are already installed.', flush=True)
 

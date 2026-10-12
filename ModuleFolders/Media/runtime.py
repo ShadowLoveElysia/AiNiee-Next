@@ -37,6 +37,22 @@ def required_packages(device: str = "cpu") -> tuple[str, ...]:
     return PACKAGES + (("mlx", "mlx_lm") if device == "mlx" else ())
 
 
+def torch_runtime_info(interpreter=None, *, check_execution=False):
+    """Release native DLLs by completing discovery in a short-lived child."""
+    python = str(interpreter or sys.executable)
+    script = ("import json,torch; info={'version':torch.version.cuda,'available':torch.cuda.is_available()}; "
+              "info.update({'name':torch.cuda.get_device_name(0),'capability':list(torch.cuda.get_device_capability(0))}) "
+              "if info['available'] else None; ")
+    if check_execution:
+        script += "from ModuleFolders.Media.runtime import cuda_execution_check; info['check']=cuda_execution_check(torch); "
+    script += "print(json.dumps(info))"
+    result = subprocess.run([python, '-c', script], capture_output=True, text=True, timeout=45,
+                            cwd=ROOT, env=subprocess_environment(), stdin=subprocess.DEVNULL)
+    if result.returncode:
+        raise RuntimeError(f'Torch discovery/check exited: {result.returncode}')
+    return json.loads(result.stdout.splitlines()[-1])
+
+
 def cuda_install_build(adapters=None, *, interpreter=None) -> str:
     from ModuleFolders.Media.compute import detect_adapters, select_cuda_build
     override = os.environ.get("AINIEE_MEDIA_CUDA_BUILD", "")
@@ -45,25 +61,10 @@ def cuda_install_build(adapters=None, *, interpreter=None) -> str:
             raise ValueError("AINIEE_MEDIA_CUDA_BUILD must be cu126 or cu128")
         return override
     info = {}
-    script = ("import json,torch; print(json.dumps({'version':torch.version.cuda,"
-              "'available':torch.cuda.is_available(), 'name':torch.cuda.get_device_name(0) if torch.cuda.is_available() else '',"
-              "'capability':list(torch.cuda.get_device_capability(0)) if torch.cuda.is_available() else None}))")
-    if interpreter and Path(interpreter).is_file() and os.path.abspath(str(interpreter)) != os.path.abspath(sys.executable):
-        try:
-            result = subprocess.run([str(interpreter), "-c", script], capture_output=True, text=True,
-                                    timeout=30, env=subprocess_environment(), stdin=subprocess.DEVNULL)
-            if result.returncode == 0:
-                info = json.loads(result.stdout.splitlines()[-1])
-        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
-            pass
-    else:
-        try:
-            import torch
-            info = {"version": torch.version.cuda, "available": torch.cuda.is_available()}
-            if info["available"]:
-                info.update(name=torch.cuda.get_device_name(0), capability=list(torch.cuda.get_device_capability(0)))
-        except Exception:
-            pass
+    try:
+        info = torch_runtime_info(interpreter)
+    except (OSError, RuntimeError, ValueError, IndexError, subprocess.TimeoutExpired):
+        pass
     version = info.get("version")
     build = "cu" + version.replace('.', '') if version else ""
     selected = ({"name": info.get("name", ""), "vendor": "nvidia", "compute_capability": info["capability"]}
@@ -89,11 +90,10 @@ def needs_install(device: str, *, recognizer='sensevoice') -> bool:
             return True
     if device.startswith("cuda"):
         try:
-            import torch
+            info = torch_runtime_info(check_execution=True)
             build = cuda_install_build()
-            if torch.version.cuda != {"cu126": "12.6", "cu128": "12.8"}[build]:
+            if info['version'] != {"cu126": "12.6", "cu128": "12.8"}[build]:
                 return True
-            cuda_execution_check(torch)
         except Exception:
             return True
     return False
@@ -437,10 +437,10 @@ def main():
         from ModuleFolders.Media.compute import detect_adapters, select_compute
         adapters = detect_adapters()
         try:
-            import torch
-            from ModuleFolders.Media.compute import selected_cuda_adapters
-            adapters = selected_cuda_adapters(torch, adapters)
-        except Exception:
+            info = torch_runtime_info(runtime_python() if runtime_python().is_file() else sys.executable)
+            if info.get('available'):
+                adapters = [{'vendor': 'nvidia', 'name': info['name'], 'compute_capability': info['capability']}]
+        except (OSError, RuntimeError, ValueError, IndexError, subprocess.TimeoutExpired):
             pass
         cuda_possible = any(adapter["vendor"] == "nvidia" for adapter in adapters)
         if args.device == "cuda:0":

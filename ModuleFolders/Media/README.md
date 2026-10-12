@@ -46,6 +46,11 @@ CA bundle settings. After repeated network failures, the same URL can be retried
 with system curl (Windows `curl.exe`), retaining byte progress, resume and the
 original hash. No certificate verification bypass or automatic source change
 is used. Filesystem permission failures are reported as filesystem failures.
+Installer GPU discovery runs in short-lived children so the installer does not
+hold Torch DLLs open while replacing them. If Windows reports access denied for
+`torch/_C*.pyd`, close capture and other processes using that environment before
+retrying; antivirus or folder permissions can also cause this error. Verified
+download cache files are preserved and no automatic process killing is performed.
 
 Application updates, Web packages and the language detector use the same transfer
 display. Manga downloads retain their existing Rich download/speed/ETA display,
