@@ -18,13 +18,13 @@ from ModuleFolders.Media.local_backends import translation_prompt
 
 class GgufTranslator:
     def __init__(self, model_path, *, family, device="cuda:0", max_new_tokens=256, on_partial=None,
-                 cpu_threads=4):
+                 cpu_threads=4, model_name=None, projector=None):
         from ModuleFolders.Media.gguf_runtime import find_server
         from ModuleFolders.Media.model_catalog import get_model
         from ModuleFolders.Media.runtime import subprocess_environment
-        checkpoint = get_model(family)
-        self.name = checkpoint.name.lower()
-        self.family = checkpoint.family
+        checkpoint = get_model(family) if model_name is None else None
+        self.name = (model_name or checkpoint.name).lower()
+        self.family = checkpoint.family if checkpoint else family
         self.on_partial = on_partial
         self.max_new_tokens = max_new_tokens
         if not isinstance(cpu_threads, int) or cpu_threads < 1:
@@ -64,6 +64,11 @@ class GgufTranslator:
                 "--api-key", self._key, "-ngl", "0" if backend == "cpu" else "99",
                 "-c", "2048", "--parallel", "1", "--threads", str(cpu_threads), "--jinja",
                 "--chat-template-kwargs", '{"enable_thinking":false}']
+        if projector is not None:
+            projector = Path(projector).resolve()
+            if not projector.is_file():
+                raise FileNotFoundError(projector)
+            args += ['--mmproj', str(projector), '--flash-attn', 'auto', '--log-disable']
         self._process = subprocess.Popen(args, cwd=server.parent, env=subprocess_environment(),
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                          stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")

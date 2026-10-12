@@ -12,6 +12,9 @@ class RecognitionModel:
     repo: str
     revision: str
     download_gb: float
+    backend: str = 'transformers'
+    filename: str = ''
+    projector: str = ''
 
     @property
     def directory(self):
@@ -20,8 +23,12 @@ class RecognitionModel:
 
 RECOGNITION_MODELS = (
     RecognitionModel('sensevoice', 'SenseVoiceSmall', 'iic/SenseVoiceSmall', '7bf452403abd7353a300cd760f7adae7701c92c1', .94),
-    RecognitionModel('qwen-asr-0.6b', 'Qwen3-ASR-0.6B (HF)', 'Qwen/Qwen3-ASR-0.6B-hf', '005b749cd1566dc579fe0238316087e2fc1945c0', 1.58),
-    RecognitionModel('qwen-asr-1.7b', 'Qwen3-ASR-1.7B (HF)', 'Qwen/Qwen3-ASR-1.7B-hf', 'fbdf079ca130130ace97d61dde535b3bebada633', 4.09),
+    RecognitionModel('qwen-gguf-0.6b', 'Qwen3-ASR-0.6B · Q8_0 (GGUF)', 'ggml-org/Qwen3-ASR-0.6B-GGUF', '86222636b790fae434fb24c03c46fc817dfb27b2', 1.02,
+                     'gguf', 'Qwen3-ASR-0.6B-Q8_0.gguf', 'mmproj-Qwen3-ASR-0.6B-Q8_0.gguf'),
+    RecognitionModel('qwen-gguf-1.7b', 'Qwen3-ASR-1.7B · Q8_0 (GGUF)', 'ggml-org/Qwen3-ASR-1.7B-GGUF', 'fd6f16ded582f5b0789ef4aea7401707ce49746b', 2.52,
+                     'gguf', 'Qwen3-ASR-1.7B-Q8_0.gguf', 'mmproj-Qwen3-ASR-1.7B-Q8_0.gguf'),
+    RecognitionModel('qwen-vllm-0.6b', 'Qwen3-ASR-0.6B (vLLM)', 'Qwen/Qwen3-ASR-0.6B', '4ce9cc728b473a5aedbe7b6e1ea45646316824dc', 1.88, 'vllm'),
+    RecognitionModel('qwen-vllm-1.7b', 'Qwen3-ASR-1.7B (vLLM)', 'Qwen/Qwen3-ASR-1.7B', 'a04930dbe5419bfee073f7cade734f572689a3a8', 4.70, 'vllm'),
 )
 
 
@@ -35,8 +42,12 @@ def get_recognizer(value):
 def recognition_files_present(root, key):
     model = get_recognizer(key)
     directory = Path(root).expanduser() / model.directory
+    if model.backend == 'gguf':
+        return all((directory / name).is_file() and (directory / name).stat().st_size > 0
+                   for name in (model.filename, model.projector))
     required = ('model.pt', 'config.yaml') if key == 'sensevoice' else (
-        'config.json', 'tokenizer.json', 'tokenizer_config.json', 'processor_config.json', 'chat_template.jinja')
+        ('config.json', 'tokenizer_config.json', 'preprocessor_config.json', 'vocab.json', 'merges.txt', 'chat_template.json')
+        if model.backend == 'vllm' else ('config.json', 'tokenizer.json', 'tokenizer_config.json', 'processor_config.json', 'chat_template.jinja'))
     if not all((directory / name).is_file() for name in required):
         return False
     if key == 'sensevoice':

@@ -46,7 +46,6 @@ echo Download source: %AINIEE_MEDIA_PACKAGE_SOURCE%
 set "MEDIA_RECOGNIZER=%~5"
 if not defined MEDIA_RECOGNIZER set "MEDIA_RECOGNIZER=sensevoice"
 set "MEDIA_TRANSFORMERS=transformers==5.6.0"
-if not "%MEDIA_RECOGNIZER%"=="sensevoice" set "MEDIA_TRANSFORMERS=transformers==5.13.0"
 set "MEDIA_FAMILY=%~2"
 set "AINIEE_MEDIA_CUDA_BUILD=%~3"
 if defined AINIEE_MEDIA_CUDA_BUILD echo Explicit CUDA build: %AINIEE_MEDIA_CUDA_BUILD%

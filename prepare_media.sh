@@ -67,7 +67,6 @@ echo "[2/5] Installing matching Torch and torchaudio..."
 "$task_media_python" -u -m ModuleFolders.Media.package_download --python "$task_media_python" --index-url "$task_pypi" 'torch==2.9.1' 'torchaudio==2.9.1'
 echo "[3/5] Installing recognition, translation and audio libraries..."
 task_transformers='transformers==5.7.0'
-if [ "$task_recognizer" != 'sensevoice' ]; then task_transformers='transformers==5.13.0'; fi
 task_packages=("$task_transformers" accelerate 'funasr>=1.2,<2' sentencepiece silero-vad
                onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests)
 if [ "$task_selected" = "mlx" ]; then
@@ -78,6 +77,10 @@ fi
 echo "[4/5] Preparing the selected translation backend..."
 if [ "$task_backend" = "gguf" ]; then
     "$task_media_python" -u -m ModuleFolders.Media.gguf_runtime --backend "$task_llama"
+fi
+task_asr_llama="$("$task_media_python" -c 'import json,sys; print(json.loads(sys.argv[1]).get("asr_llama_backend", ""))' "$task_plan")"
+if [ -n "$task_asr_llama" ] && [ "$task_asr_llama" != "$task_llama" ]; then
+    "$task_media_python" -u -m ModuleFolders.Media.gguf_runtime --backend "$task_asr_llama"
 fi
 echo "[5/5] Verifying inference libraries and saving the runtime..."
 "$task_media_python" Tools/Bootstrap/prepare_media_runtime.py verify --device "$task_device" --family "$task_family" --recognizer "$task_recognizer"

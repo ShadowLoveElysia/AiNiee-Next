@@ -16,6 +16,7 @@ FIELDS = [
     ("recording", "recording"), ("record_directory", "record_directory"),
     ("package_source", "package_source"),
     ('recognizer', 'recognizer'), ('recognition_device', 'recognition_device'),
+    ('asr_endpoint', 'asr_endpoint'),
 ]
 
 

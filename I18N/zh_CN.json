@@ -1,4 +1,8 @@
 {
+    "media_qwen_gguf_hint": "QwenASR Q8 原生识别，主模型＋音频编码器一起下载。auto 使用 CUDA／Vulkan／Metal，不需要 WSL。模型常驻，与翻译共享显存；请实测识别耗时、延迟和准确率。",
+
+    "media_asr_endpoint": "vLLM 本机识别服务地址（需要单独启动）",
+
     "media_catalog_model_name": "模型名称",
     "media_catalog_asr_section": "── ASR 识别模型 · 声音 → 原文 ──",
     "media_catalog_llm_section": "── LLM 翻译模型 · 原文 → 译文 ──",
@@ -12,7 +16,7 @@
 
     "media_recognizer": "识别模型",
     "media_recognition_device": "识别设备",
-    "media_qwen_asr_hint": "QwenASR 为可选实验后端，按现有 VAD 短句识别；auto 优先 GPU，会和翻译共享显存。比较 ASR 耗时和字幕延迟，不保证 400 ms。",
+    "media_qwen_asr_hint": "QwenASR 使用独立 vLLM 服务，需 Linux/WSL＋CUDA，服务脚本优先 FlashAttention 2。Mac 原生暂不支持。控制窗口的识别设备不影响服务端显卡。",
 
     "media_package_source": "依赖下载源",
     "media_source_nju": "国内源（南京大学）",

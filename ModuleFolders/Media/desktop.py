@@ -66,6 +66,7 @@ class DesktopApp:
         self.family = tk.StringVar(value="index")
         self.recognizer = tk.StringVar(value='sensevoice')
         self.recognition_device = tk.StringVar(value='auto')
+        self.asr_endpoint = tk.StringVar(value='http://127.0.0.1:8001/v1')
         self.source = tk.StringVar(value="ja")
         self.target = tk.StringVar(value="zh")
         self.device = tk.StringVar(value="auto")
@@ -141,12 +142,17 @@ class DesktopApp:
                                                values=tuple(model.name for model in RECOGNITION_MODELS), state='readonly', width=26)
         self.recognizer_selector.pack(side='left')
         self.recognizer_selector.bind('<<ComboboxSelected>>', self.select_recognizer)
-        from ModuleFolders.Media.preferences import CHOICES
+        from ModuleFolders.Media.gguf_asr import asr_device_choices
         ttk.Label(asr_selection, text=self.t('recognition_device')).pack(side='left', padx=8)
         self.recognition_device_selector = ttk.Combobox(asr_selection, textvariable=self.recognition_device,
-                                                       values=CHOICES['recognition_device'], state='readonly', width=9)
+                                                       values=asr_device_choices(self.recognizer.get()), state='readonly', width=9)
         self.recognition_device_selector.pack(side='left')
         self.recognition_device_selector.bind('<<ComboboxSelected>>', self.compute_changed)
+        ttk.Label(model_selection, text=self.t('asr_endpoint')).pack(anchor='w', pady=(8, 0))
+        self.asr_endpoint_entry = ttk.Entry(model_selection, textvariable=self.asr_endpoint)
+        self.asr_endpoint_entry.pack(fill='x')
+        self.asr_endpoint_entry.bind('<Return>', self.compute_changed)
+        self.asr_endpoint_entry.bind('<FocusOut>', self.compute_changed)
         ttk.Label(frame, text=self.t("languages")).grid(row=4, column=0, sticky="w")
         languages = ttk.Frame(frame)
         languages.grid(row=4, column=1, columnspan=2, sticky="w")
@@ -373,11 +379,12 @@ class DesktopApp:
                 ("family", self.family, self._model_keys()),
                 ("source", self.source, {"auto", "ja", "en", "ko", "zh", "yue"}),
                 ("target", self.target, {"zh", "en", "ja", "ko"}),
-                ('recognizer', self.recognizer, {'sensevoice', 'qwen-asr-0.6b', 'qwen-asr-1.7b'}),
-                ('recognition_device', self.recognition_device, {'auto', 'cpu', 'cuda:0', 'mps'}),
+                ('recognizer', self.recognizer, {'sensevoice', 'qwen-vllm-0.6b', 'qwen-vllm-1.7b', 'qwen-gguf-0.6b', 'qwen-gguf-1.7b'}),
+                ('recognition_device', self.recognition_device, {'auto', 'cpu', 'cuda:0', 'mps', 'metal', 'vulkan'}),
             ]:
                 if data.get(key) in allowed:
                     variable.set(data[key])
+            self.asr_endpoint.set(data.get('asr_endpoint', 'http://127.0.0.1:8001/v1'))
         except (OSError, ValueError, TypeError):
             pass
 
@@ -408,6 +415,7 @@ class DesktopApp:
         data["package_source"] = self.package_source.get()
         data['recognizer'] = self.recognizer.get()
         data['recognition_device'] = self.recognition_device.get()
+        data['asr_endpoint'] = self.asr_endpoint.get()
         save_preferences(data, self.settings_path)
 
     def select_package_source(self, event=None):
@@ -443,7 +451,8 @@ class DesktopApp:
 
     def runtime_signature(self):
         signature = (self.runtime_interpreter, self.device.get(), self.family.get(), self.model_root.get())
-        return signature + ((self.recognizer.get(), self.recognition_device.get()) if hasattr(self, 'recognizer') else ())
+        signature += ((self.recognizer.get(), self.recognition_device.get()) if hasattr(self, 'recognizer') else ())
+        return signature + ((self.asr_endpoint.get(),) if hasattr(self, 'asr_endpoint') else ())
 
     def select_recognizer(self, event=None):
         from ModuleFolders.Media.asr_catalog import get_recognizer
@@ -452,6 +461,11 @@ class DesktopApp:
             self.environment_status.set(self.t('stop_before_setup'))
             return
         self.recognizer.set(get_recognizer(self.recognizer_choice.get()).key)
+        from ModuleFolders.Media.gguf_asr import asr_device_choices
+        choices = asr_device_choices(self.recognizer.get())
+        self.recognition_device_selector.configure(values=choices)
+        if self.recognition_device.get() not in choices:
+            self.recognition_device.set('auto')
         self.update_model_details()
         self.save_settings()
         self.compute_changed()
@@ -573,7 +587,7 @@ class DesktopApp:
             asr = get_recognizer(self.recognizer.get())
             self.model_details.set(self.model_details.get() + '\n' + asr.name + ' · ' +
                                    self.t('model_installed' if recognition_files_present(self.model_root.get(), asr.key) else 'model_not_downloaded') +
-                                   ('\n' + self.t('qwen_asr_hint') if asr.key != 'sensevoice' else ''))
+                                   ('\n' + self.t('qwen_gguf_hint' if asr.backend == 'gguf' else 'qwen_asr_hint') if asr.key != 'sensevoice' else ''))
 
     def select_model(self, event=None) -> None:
         from ModuleFolders.Media.model_catalog import get_model
@@ -685,7 +699,7 @@ class DesktopApp:
             installed = recognition_files_present(self.model_root.get(), model.key)
             self.catalog_details.set(model.name + '\n' + self.t('catalog_asr_hint') + '\n' +
                                      self.t('model_path', path=str(Path(self.model_root.get()) / model.directory)) +
-                                     ('\n' + self.t('qwen_asr_hint') if model.key != 'sensevoice' else ''))
+                                     ('\n' + self.t('qwen_gguf_hint' if model.backend == 'gguf' else 'qwen_asr_hint') if model.key != 'sensevoice' else ''))
         else:
             self.catalog_details.set(self.t('catalog_llm_hint') + '\n' + describe_model(key, self.i18n.get))
             installed = model_files_present(self.model_root.get(), key)
@@ -993,8 +1007,9 @@ class DesktopApp:
                 source_lang=self.source.get(), target_lang=self.target.get(),
                 speaker=selected_audio,
                 device=(self._checked_compute or {}).get("translation_device", self.device.get()),
-                asr_device=(self._checked_compute or {}).get("asr_device", "auto"),
+                asr_device='auto' if (self._checked_compute or {}).get('asr_device') == 'vllm-service' else (self._checked_compute or {}).get("asr_device", "auto"),
                 recognizer=self.recognizer.get() if hasattr(self, 'recognizer') else 'sensevoice',
+                asr_endpoint=self.asr_endpoint.get() if hasattr(self, 'asr_endpoint') else 'http://127.0.0.1:8001/v1',
                 context_segments=self.context_segments.get(),
             )
             self.session.start(config, interpreter=self.runtime_interpreter)
@@ -1012,6 +1027,7 @@ class DesktopApp:
         if hasattr(self, 'recognizer_selector'):
             self.recognizer_selector.configure(state='disabled')
             self.recognition_device_selector.configure(state='disabled')
+            self.asr_endpoint_entry.configure(state='disabled')
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(self.t("starting_worker"))
@@ -1089,6 +1105,7 @@ class DesktopApp:
             if hasattr(self, 'recognizer_selector'):
                 self.recognizer_selector.configure(state='readonly')
                 self.recognition_device_selector.configure(state='readonly')
+                self.asr_endpoint_entry.configure(state='normal')
             if self.state != "error":
                 self.status.set(self.t("stopped") if event.get("requested") or event.get("exit_code") == 0
                                 else self.t("process_exit", code=event.get("exit_code")))

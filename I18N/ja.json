@@ -1,4 +1,8 @@
 {
+    "media_qwen_gguf_hint": "Native Qwen Q8 ASR downloads both model and audio encoder. Auto uses CUDA / Vulkan / Metal without WSL. Resident weights share GPU memory with translation; measure recognition time, caption latency and quality.",
+
+    "media_asr_endpoint": "Local vLLM ASR service URL (start separately)",
+
     "media_catalog_model_name": "Model name",
     "media_catalog_asr_section": "── ASR recognition · Audio → source text ──",
     "media_catalog_llm_section": "── LLM translation · Source → translation ──",
@@ -12,7 +16,7 @@
 
     "media_recognizer": "Recognition model",
     "media_recognition_device": "ASR device",
-    "media_qwen_asr_hint": "Optional experimental Qwen ASR uses finalized VAD segments. Auto prefers GPU and shares memory with translation. Compare ASR and caption latency; 400 ms is not guaranteed.",
+    "media_qwen_asr_hint": "Qwen ASR uses a separate Linux/WSL CUDA vLLM service. Its launcher requests FlashAttention 2. No native Mac support; controller ASR device does not configure service hardware.",
 
     "media_package_source": "Dependency download source",
     "media_source_nju": "China mirror (Nanjing University)",

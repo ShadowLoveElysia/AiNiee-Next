@@ -43,10 +43,16 @@ def main():
                                  cuda_available=args.device == "cuda:0" or any(row["vendor"] == "nvidia" for row in adapters),
                                  adapters=adapters)
         from ModuleFolders.Media.runtime import cuda_install_build
-        build = cuda_install_build(adapters) if compute["asr_device"] == "cuda:0" else "cpu"
+        cuda_asr = compute['asr_device'] == 'cuda:0'
+        if get_recognizer(args.recognizer).backend == 'gguf':
+            from ModuleFolders.Media.gguf_asr import select_asr_compute
+            asr_compute = select_asr_compute('auto', cuda_available=any(row['vendor'] == 'nvidia' for row in adapters), adapters=adapters)
+            cuda_asr |= asr_compute['translation_device'] == 'cuda:0'
+        build = cuda_install_build(adapters) if cuda_asr else "cpu"
         if args.format == "json":
             print(json.dumps({"family": model.key, "model": model.name, "backend": model.backend, "torch_build": build,
-                              "recognizer": args.recognizer, **compute}))
+                              "recognizer": args.recognizer, 'asr_backend': get_recognizer(args.recognizer).backend,
+                              'asr_llama_backend': asr_compute['llama_backend'] if get_recognizer(args.recognizer).backend == 'gguf' else '', **compute}))
             return
         print(json.dumps({"model": model.name, "device": compute["translation_device"], "torch_build": build}))
         # Both lines are fixed, validated tokens consumed by the BAT installer.

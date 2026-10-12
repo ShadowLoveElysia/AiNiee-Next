@@ -55,7 +55,10 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
     active_family = app.family.get()
     recognizer = app.recognizer.get() if hasattr(app, 'recognizer') else 'sensevoice'
     asr_device = app.recognition_device.get() if hasattr(app, 'recognition_device') else 'auto'
+    endpoint = app.asr_endpoint.get() if hasattr(app, 'asr_endpoint') else 'http://127.0.0.1:8001/v1'
     recognition_kwargs = {'recognizer': recognizer, 'asr_device': asr_device} if recognizer != 'sensevoice' or asr_device != 'auto' else {}
+    if endpoint != 'http://127.0.0.1:8001/v1':
+        recognition_kwargs['asr_endpoint'] = endpoint
     from ModuleFolders.Media.package_sources import selected_source
     source_variable = getattr(app, "package_source", None)
     package_source = selected_source(source_variable.get() if source_variable else "")
@@ -88,6 +91,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 args = [sys.executable if action in {"install", "configure"} else interpreter,
                         "-m", "ModuleFolders.Media.runtime", action, "--managed"]
                 args += ['--recognizer', asr_key or recognizer, '--asr-device', asr_device]
+                args += ['--asr-endpoint', endpoint]
                 if action in {"install", "configure"}:
                     args += ["--device", device, "--family", family]
                 else:
@@ -154,6 +158,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                      "success": success, "runtime_python": prepared_python if action in {"install", "configure"} else None,
                      "runtime_signature": ((prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter,
                                            device, active_family if action == "download" else family, model_root) +
-                                          ((recognizer, asr_device) if hasattr(app, 'recognizer') else ())})
+                                          ((recognizer, asr_device) if hasattr(app, 'recognizer') else ()) +
+                                          ((endpoint,) if hasattr(app, 'asr_endpoint') else ())})
 
     threading.Thread(target=work, name="media-setup", daemon=True).start()

@@ -48,58 +48,117 @@ including a GUI shell without an attached terminal, still need their own viewer
 for inherited installer output. No download benchmark or native platform render
 has been established by these progress changes.
 
-## Optional Qwen3-ASR comparison
+## Native Qwen3-ASR GGUF trial
 
-SenseVoice remains the default recognizer and default dependency/model install.
-The controller now offers Qwen3-ASR 0.6B / 1.7B as explicit optional recognizers,
-independent of the translation model. Choose a recognizer, configure inference,
-then download the selected models. Download includes the chosen ASR and selected
-translator, not every ASR. Official `Qwen/Qwen3-ASR-0.6B-hf` (about 1.58 GB) and
-`Qwen/Qwen3-ASR-1.7B-hf` (about 4.09 GB) are fetched from pinned ModelScope
-revisions using the existing resume/SHA-256 downloader. Local loading is offline.
-The original non-`-hf` safetensors are a different checkpoint format; use the
-catalog download with config, tokenizer, processor and chat template files.
+SenseVoice stays the default. Select **Qwen3-ASR-0.6B · Q8_0 (GGUF)** in the
+ASR section to try the resident native backend, or select the 1.7B Q8 model for
+quality comparison. Configure inference, download the selected ASR row, then
+start capture. No WSL or manually started service is needed. Windows supports
+CUDA/Vulkan/CPU; Mac supports Metal/CPU. Automatic detection uses the same GPU
+architecture/runtime selection as GGUF translation, with independent ASR device
+choices. Explicit unsupported devices fail rather than silently falling back.
 
-Qwen selection uses native Transformers 5.13.0 and greedy, finalized short-VAD
-segments; it does not install `qwen-asr` (which pins an incompatible older
-Transformers) or vLLM. SenseVoice installs keep their existing dependency pins.
-Qwen ASR `auto` prefers CUDA, then MPS, then CPU. You can explicitly choose CPU
-or GPU for comparison. Qwen on GPU shares memory with translation; Mac MPS and
-older GPUs require runtime testing. No inference failure/quality auto-fallback.
-SenseVoice keeps its previous auto device policy. The selected device and
-recognizer are included in caption metadata.
+ModelScope downloads include exactly two files: the Q8 decoder and Q8 audio
+encoder/projector (`mmproj`). Both must be present. The 0.6B pair is about1.02GB,
+1.7B about2.52GB. They have separate folders from original safetensors and `-hf`
+weights; files are never renamed or deleted. Download progress, resume and
+SHA-256 verification use the existing public ModelScope downloader.
 
-For optional terminal setup (defaults still SenseVoice):
+The controller owns a separate loopback-only llama.cpp b11552 process for ASR,
+with a random session key and Windows kill-on-close job. Weights stay resident;
+16kHz WAV data is sent in memory to its audio-capable chat endpoint, using the
+model's ASR template and a language hint. No audio file is saved. The parser
+removes ASR language markers before forwarding text to the selected translator.
+Flash Attention is requested as llama.cpp `auto`, which is different from the
+Python FlashAttention2 package. CPU/GPU audio encoder placement follows the
+native backend's supported defaults; service startup and actual timing require
+hardware validation. Generation is greedy and bounded to256tokens per segment.
 
-```bat
-prepare_media.bat auto index "" nju qwen-asr-0.6b
-prepare_media.bat auto index "" nju qwen-asr-1.7b
+Both ASR and translation resident models consume memory, so keep the same
+translator/audio/segmentation settings for comparisons. Start with0.6BQ8,
+then1.7BQ8. The status/TUI reports ASR time, translation time, endpoint wait,
+queue wait, drops and segment-end-to-caption latency. Warmup/model loading are
+excluded from per-caption timings. These values do not measure speech onset
+latency. No400ms guarantee or independent benchmark is claimed.
+
+Standalone ASR timing, after configuring/downloading:
+
+```powershell
+Resource\MediaRuntime\Scripts\python.exe -m ModuleFolders.Media.asr_benchmark "short.wav" --model-root "G:/AiNiee-Models" --recognizer qwen-gguf-0.6b --device auto --language ja --runs 5
 ```
 
 ```bash
-bash prepare_media.sh auto index nju qwen-asr-0.6b
+Resource/MediaRuntime/macos-arm64/bin/python -m ModuleFolders.Media.asr_benchmark short.wav --model-root tmp/models --recognizer qwen-gguf-0.6b --device metal --language ja --runs 5
 ```
 
-Select Qwen in the controller to enable it; installer arguments do not silently
-change the saved recognition selection. Then download models through the window.
-Keep language, translator, audio, endpoint and device settings fixed when
-comparing. The status shows ASR/translation time, segment-end-to-final-caption
-latency, queue wait and drops. That latency excludes earlier speech accumulation;
-it is not speech-onset-to-caption time or model TTFT. Warmup is outside these
-per-caption measurements. Recordings remain opt-in and include text, so keep
-recording off if only watching timing.
+Use a16kHz mono signed16 WAV, up to28seconds. The result separates load/first
+inference/warm median/max and ASR realtime factor without printing transcripts.
+Repeat with1.7B or SenseVoice and the same audio. Protocol/mock tests passed,
+but native model loading, encoder GPU support, recognition quality and actual
+latency still need your Windows/Mac test data. Linux is not covered by the
+current binary installer; vLLM remains a separate developer option below.
 
-For repeatable ASR-only timing, supply a 16 kHz mono signed-16 WAV (up to 28s):
+## Optional Qwen3-ASR via vLLM / FlashAttention 2
+
+SenseVoice remains the default installed recognizer. The previous Qwen native
+Transformers recognizer has been removed. Optional Qwen 0.6B/1.7B entries now
+use a separately started local vLLM service. LLM translators remain unchanged.
+Original-format Qwen weights are fetched from pinned ModelScope repositories;
+the old `-hf` folders are not renamed, deleted or compatible with this service.
+
+Official vLLM requires Linux; Windows can run the service inside WSL with NVIDIA
+GPU access and connect through localhost. This is not a native macOS acceleration
+path. MLX-Audio and GGUF versions exist but are not integrated in this change.
+The isolated service uses `qwen-asr[vllm]==0.0.6` / vLLM 0.14.0 and its own pinned
+Torch/Transformers dependencies, never installing these into the translation
+runtime. Run the following from the project root in Linux/WSL:
+
+```bash
+bash prepare_qwen_vllm.sh nju qwen-vllm-0.6b tmp/models
+bash LaunchQwenVllm.sh --recognizer qwen-vllm-0.6b --model-root tmp/models --attention fa2
+```
+
+Use `qwen-vllm-1.7b` in both commands for the larger model. You can reuse
+original-format weights downloaded by the controller by supplying their parent
+model root (e.g. `/mnt/g/AiNiee-Models` in WSL). Runtime packages use the selected
+source and measured download progress; model weights use ModelScope. Setup does
+not start capture or the service. Stop the service terminal with Ctrl+C.
+
+The launcher explicitly sets `--attention-config` to `FLASH_ATTN` with
+`flash_attn_version=2`. FA2 mode checks Ampere-or-newer CUDA hardware; support
+and active kernels must still be confirmed in service startup logs. Unsupported
+hardware fails rather than silently choosing another attention backend. You may
+explicitly pass `--attention auto` to let vLLM select another backend. CUDA Graph
+remains enabled by default; `--enforce-eager` is not set. The audio encoder's
+attention implementation is controlled internally by vLLM, so this setting is
+not proof that every encoder/decoder operation uses FA2.
+
+In the desktop select the matching **Qwen3-ASR (vLLM)** entry and set the service
+address (default `http://127.0.0.1:8001/v1`). Click Check environment after starting
+the service; model ID and service availability are checked. Only loopback HTTP
+addresses are accepted, proxies bypassed and redirects blocked; no remote audio
+upload or disk recording is performed. The service is loopback-only and not an
+authenticated remote deployment. `auto`/CPU/MPS settings in the controller do not
+select service hardware; its launching terminal owns GPU and attention settings.
+
+The adapter sends finalized 16 kHz VAD segments to `/audio/transcriptions` and
+returns source text to the existing translator. This is request-based short
+segment inference, not incremental streaming ASR. Compare ASR time, queue wait,
+drops and segment-end-to-caption latency using the same audio and translator.
+ASR time includes local HTTP transport and service work. Warmup is outside the
+per-caption metric. GPU memory fraction defaults to 0.25; use `--gpu-memory`
+when explicitly allocating more/less memory alongside the translation model.
+
+ASR-only repeatable test (16 kHz mono signed-16 WAV):
 
 ```powershell
-Resource\MediaRuntime\Scripts\python.exe -m ModuleFolders.Media.asr_benchmark "short.wav" --model-root "tmp/models" --recognizer qwen-asr-0.6b --device cuda:0 --language ja --runs 5
+Resource\MediaRuntime\Scripts\python.exe -m ModuleFolders.Media.asr_benchmark "short.wav" --model-root "tmp/models" --recognizer qwen-vllm-0.6b --endpoint http://127.0.0.1:8001/v1 --runs 5
 ```
 
-The benchmark reports load, first inference and warm median/max timings without
-printing or saving recognized text. Repeat with `sensevoice` and `qwen-asr-1.7b`
-after installing their weights, and with `--device cpu` for device comparison.
-This is an experimental backend: mock/API/config tests do not establish quality,
-actual model loading, Mac/Windows GPU compatibility or a 400 ms latency guarantee.
+Mock/local-HTTP tests establish protocol and config behavior only. No GPU vLLM
+service, FA2 kernels, native WSL networking, recognition quality or latency have
+been verified by this implementation. Do not infer real-time speed from package
+installation or a successful model-list response.
 
 ## Windows extension installer
 

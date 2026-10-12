@@ -39,6 +39,7 @@ class LiveConfig:
     max_segment_ms: int = 8000
     context_segments: int = 0
     recognizer: str = "sensevoice"
+    asr_endpoint: str = 'http://127.0.0.1:8001/v1'
 
     @property
     def translation_dir(self) -> Path:
@@ -48,7 +49,7 @@ class LiveConfig:
     def validate(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
-        if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu", "mps"}:
+        if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu", "mps", "vulkan", "metal"}:
             raise ValueError("Unsupported compute device")
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
             raise ValueError("Unsupported recognition language")
@@ -62,7 +63,11 @@ class LiveConfig:
             raise ValueError("Context must contain 0 to 3 segments (0 disables context)")
         root = Path(self.model_root).expanduser()
         from ModuleFolders.Media.asr_catalog import recognition_files_present, get_recognizer
-        if not recognition_files_present(root, self.recognizer):
+        model = get_recognizer(self.recognizer)
+        if model.backend == 'vllm':
+            from ModuleFolders.Media.vllm_asr import service_url
+            service_url(self.asr_endpoint)
+        elif not recognition_files_present(root, self.recognizer):
             raise ValueError(f"Recognition model files are missing: {root / get_recognizer(self.recognizer).directory}")
         if not model_files_present(root, self.family):
             raise ValueError(f"Translation model files are missing or incomplete: {self.translation_dir}")
@@ -189,8 +194,16 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         from ModuleFolders.Media.runtime import cuda_execution_check
         cuda_execution_check(torch)
     from ModuleFolders.Media.qwen_asr import recognition_device
+    from ModuleFolders.Media.asr_catalog import get_recognizer
     asr_device = (compute['asr_device'] if config.recognizer == 'sensevoice' and config.asr_device == 'auto' else
                   recognition_device(config.asr_device, config.recognizer, torch))
+    if get_recognizer(config.recognizer).backend == 'vllm':
+        asr_device = 'vllm-service'
+    if get_recognizer(config.recognizer).backend == 'gguf':
+        from ModuleFolders.Media.gguf_asr import select_asr_compute
+        asr_compute = select_asr_compute(config.asr_device, cuda_available=torch.cuda.is_available(),
+                                         adapters=selected_cuda_adapters(torch, detect_adapters()))
+        asr_device = asr_compute['translation_device']
     if asr_device == 'cuda:0' and device != 'cuda:0':
         from ModuleFolders.Media.runtime import cuda_execution_check
         cuda_execution_check(torch)
@@ -210,9 +223,14 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     recognition_model = get_recognizer(config.recognizer)
     if config.recognizer == 'sensevoice':
         recognizer = SenseVoiceRecognizer(Path(config.model_root) / recognition_model.directory, device=asr_device)
-    else:
-        from ModuleFolders.Media.qwen_asr import QwenSpeechRecognizer
-        recognizer = QwenSpeechRecognizer(Path(config.model_root) / recognition_model.directory, device=asr_device)
+    elif recognition_model.backend == 'gguf':
+        from ModuleFolders.Media.gguf_asr import GgufSpeechRecognizer
+        recognizer = GgufSpeechRecognizer(Path(config.model_root) / recognition_model.directory,
+                                         recognizer=config.recognizer, device=asr_device)
+    elif recognition_model.backend == 'vllm':
+        from ModuleFolders.Media.vllm_asr import VllmSpeechRecognizer
+        recognizer = VllmSpeechRecognizer(model=recognition_model.repo, endpoint=config.asr_endpoint)
+        asr_device = 'vllm-service'
     torch.set_num_threads(4)
     vad = SileroSpeechDetector()
     if stop.is_set():
@@ -342,3 +360,5 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
             worker.join(timeout=2)
         if hasattr(translator, "close"):
             translator.close()
+        if hasattr(recognizer, 'close'):
+            recognizer.close()
