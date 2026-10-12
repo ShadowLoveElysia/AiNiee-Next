@@ -1,4 +1,19 @@
 {
+    "media_catalog_model_name": "Model name",
+    "media_catalog_asr_section": "── ASR recognition · Audio → source text ──",
+    "media_catalog_llm_section": "── LLM translation · Source → translation ──",
+    "media_catalog_asr_hint": "ASR turns speech into source text; it does not translate. Download fetches only the selected recognition model; Use switches only the recognizer.",
+    "media_catalog_llm_hint": "The LLM translates recognized text into the target language. Download fetches only the selected translation model; Use switches only the translator.",
+    "media_catalog_roles_hint": "Live translation needs both ASR and LLM models. List downloads are independent; Download selected models in the main window prepares the current ASR + LLM pair.",
+    "media_download_models_named_hint": "Download {model} to {path}? About {gb} GB; matching existing files are reused.",
+    "media_model_path": "Model directory: {path}",
+
+    "media_timing_live": "ASR {asr} ms · Translation {translation} ms · Segment end to caption {latency} ms · Queue {queue} ms · Dropped {dropped}",
+
+    "media_recognizer": "Recognition model",
+    "media_recognition_device": "ASR device",
+    "media_qwen_asr_hint": "Optional experimental Qwen ASR uses finalized VAD segments. Auto prefers GPU and shares memory with translation. Compare ASR and caption latency; 400 ms is not guaranteed.",
+
     "media_package_source": "Dependency download source",
     "media_source_nju": "China mirror (Nanjing University)",
     "media_source_official": "Official (PyTorch / PyPI)",

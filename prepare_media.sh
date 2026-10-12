@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export UV_NO_PROGRESS=false
 task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$task_root"
 source "$task_root/Tools/Bootstrap/unix_environment.sh"
@@ -11,6 +12,7 @@ if [ "$task_system" != "Darwin" ] || [ "$task_arch" != "arm64" ]; then
 fi
 task_device="${1:-auto}"
 task_family="${2:-}"
+task_recognizer="${4:-sensevoice}"
 task_source="${3:-${AINIEE_MEDIA_PACKAGE_SOURCE:-}}"
 if [ -z "$task_source" ]; then
     task_source=nju
@@ -53,7 +55,7 @@ if [ ! -f "$task_media_python" ]; then
     "$task_uv" venv --python "$task_python" --seed --index-url "$task_pypi" --allow-existing "$task_runtime"
 fi
 "$task_media_python" -c 'import sys, platform; print(sys.version); assert sys.version_info[:2] == (3,12); assert platform.machine() == "arm64"'
-task_plan="$("$task_media_python" Tools/Bootstrap/prepare_media_runtime.py plan --device "$task_device" --family "$task_family" --format json)"
+task_plan="$("$task_media_python" Tools/Bootstrap/prepare_media_runtime.py plan --device "$task_device" --family "$task_family" --recognizer "$task_recognizer" --format json)"
 echo "$task_plan"
 task_fields="$("$task_media_python" -c 'import json,sys; p=json.loads(sys.argv[1]); print(p["family"], p["translation_device"], p["backend"], p["llama_backend"] or "none", sep="\t")' "$task_plan")"
 IFS=$'\t' read -r task_family task_selected task_backend task_llama <<< "$task_fields"
@@ -62,21 +64,23 @@ if [ "$task_selected" = "mlx" ]; then
 fi
 
 echo "[2/5] Installing matching Torch and torchaudio..."
-"$task_uv" pip install --python "$task_media_python" --index-url "$task_pypi" 'torch==2.9.1' 'torchaudio==2.9.1'
+"$task_media_python" -u -m ModuleFolders.Media.package_download --python "$task_media_python" --index-url "$task_pypi" 'torch==2.9.1' 'torchaudio==2.9.1'
 echo "[3/5] Installing recognition, translation and audio libraries..."
-task_packages=('transformers==5.7.0' accelerate 'funasr>=1.2,<2' sentencepiece silero-vad
+task_transformers='transformers==5.7.0'
+if [ "$task_recognizer" != 'sensevoice' ]; then task_transformers='transformers==5.13.0'; fi
+task_packages=("$task_transformers" accelerate 'funasr>=1.2,<2' sentencepiece silero-vad
                onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests)
 if [ "$task_selected" = "mlx" ]; then
     task_packages+=('mlx==0.32.3' 'mlx-lm==0.32.0')
 fi
-"$task_uv" pip install --python "$task_media_python" --index-url "$task_pypi" "${task_packages[@]}"
+"$task_media_python" -u -m ModuleFolders.Media.package_download --python "$task_media_python" --index-url "$task_pypi" "${task_packages[@]}"
 
 echo "[4/5] Preparing the selected translation backend..."
 if [ "$task_backend" = "gguf" ]; then
     "$task_media_python" -u -m ModuleFolders.Media.gguf_runtime --backend "$task_llama"
 fi
 echo "[5/5] Verifying inference libraries and saving the runtime..."
-"$task_media_python" Tools/Bootstrap/prepare_media_runtime.py verify --device "$task_device" --family "$task_family"
+"$task_media_python" Tools/Bootstrap/prepare_media_runtime.py verify --device "$task_device" --family "$task_family" --recognizer "$task_recognizer"
 echo "Inference environment is ready. Reopen the controller and check the environment."
 
 echo "Checking the optional native system-audio helper..."

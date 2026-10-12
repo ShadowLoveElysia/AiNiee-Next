@@ -522,9 +522,8 @@ class UpdateManager(Base):
                     response = requests.get(current_download_url, stream=True, timeout=30)
                     response.raise_for_status()
                     
-                    with open(temp_zip, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk: f.write(chunk)
+                    from ModuleFolders.Infrastructure.DownloadProgress import stream_response
+                    stream_response(response, temp_zip, "AiNiee update")
                     
                     success = True
                     break
@@ -831,8 +830,8 @@ class UpdateManager(Base):
                     self.print(f"[cyan]{self.get_msg('msg_web_downloading')} ({proxy or 'Direct'})...[/cyan]")
                     r = requests.get(target_url, stream=True, timeout=60)
                     r.raise_for_status()
-                    with open(temp_zip, 'wb') as f:
-                        for chunk in r.iter_content(8192): f.write(chunk)
+                    from ModuleFolders.Infrastructure.DownloadProgress import stream_response
+                    stream_response(r, temp_zip, "Web interface package")
                     success = True; break
                 except: continue
             

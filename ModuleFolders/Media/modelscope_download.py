@@ -8,6 +8,7 @@ import re
 import time
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
+from ModuleFolders.Infrastructure.DownloadProgress import DownloadProgress
 
 
 ENDPOINT = "https://modelscope.cn"
@@ -46,10 +47,14 @@ def verified(path: Path, size: int, digest: str) -> bool:
     return checksum.hexdigest() == digest.lower()
 
 
-def download_file(repo: str, revision: str, item: dict, target: Path) -> None:
+def download_file(repo: str, revision: str, item: dict, target: Path, *, progress=None) -> None:
+    if progress is None:
+        with DownloadProgress(item['Path'], item['Size']) as tracker:
+            return download_file(repo, revision, item, target, progress=tracker)
     destination = target / item["Path"]
     size, digest = item["Size"], item["Sha256"]
     if verified(destination, size, digest):
+        progress.set_position(item['Path'], size)
         return
     if destination.exists():
         raise RuntimeError(f"Existing model file failed verification: {destination.name}")
@@ -60,6 +65,7 @@ def download_file(repo: str, revision: str, item: dict, target: Path) -> None:
     url += urlencode({"Revision": revision, "FilePath": item["Path"]})
     for attempt in range(3):
         offset = partial.stat().st_size if partial.exists() else 0
+        progress.set_position(item['Path'], offset)
         if offset > size:
             raise RuntimeError("Model download exceeds expected size")
         if offset == size:
@@ -75,6 +81,7 @@ def download_file(repo: str, revision: str, item: dict, target: Path) -> None:
                 elif response.status == 200:
                     # Some CDN responses ignore Range; restart rather than append.
                     offset = 0
+                    progress.set_position(item['Path'], 0)
                 else:
                     raise RuntimeError("Unexpected ModelScope download response")
                 with partial.open("ab" if offset else "wb") as output:
@@ -83,6 +90,7 @@ def download_file(repo: str, revision: str, item: dict, target: Path) -> None:
                             raise RuntimeError("Model download exceeds expected size")
                         output.write(data)
                         offset += len(data)
+                        progress.set_position(item['Path'], offset, transferred=len(data))
             if offset == size:
                 break
         except (OSError, http.client.HTTPException):
@@ -90,6 +98,7 @@ def download_file(repo: str, revision: str, item: dict, target: Path) -> None:
                 raise RuntimeError(f"ModelScope download failed: {destination.name}") from None
         if attempt < 2:
             time.sleep(1)
+    progress.publish(force=True, stage='verifying')
     if not verified(partial, size, digest):
         if partial.exists() and partial.stat().st_size == size:
             partial.unlink()
@@ -101,8 +110,10 @@ def download_model(repo: str, revision: str, target: Path, *, filename: str = ""
     files = model_files(repo, revision, filename)
     print(json.dumps({"model": repo, "source": "modelscope", "stage": "download",
                       "bytes": sum(item["Size"] for item in files)}), flush=True)
-    for item in files:
-        download_file(repo, revision, item, target)
+    with DownloadProgress(repo, sum(item['Size'] for item in files)) as progress:
+        for item in files:
+            progress.publish(force=True, stage='download')
+            download_file(repo, revision, item, target, progress=progress)
     (target / "MODEL_INFO.json").write_text(json.dumps({"repo": repo, "revision": revision,
                                                       "source": "modelscope", "status": "verified"}, indent=2), encoding="utf-8")
     print(json.dumps({"model": repo, "source": "modelscope", "status": "verified"}), flush=True)

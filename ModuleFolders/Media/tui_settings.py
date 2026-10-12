@@ -15,6 +15,7 @@ FIELDS = [
     ("context_segments", "context_segments"), ("history_segments", "history_segments"),
     ("recording", "recording"), ("record_directory", "record_directory"),
     ("package_source", "package_source"),
+    ('recognizer', 'recognizer'), ('recognition_device', 'recognition_device'),
 ]
 
 

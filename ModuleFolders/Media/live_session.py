@@ -38,6 +38,7 @@ class LiveConfig:
     target_segment_ms: int = 3000
     max_segment_ms: int = 8000
     context_segments: int = 0
+    recognizer: str = "sensevoice"
 
     @property
     def translation_dir(self) -> Path:
@@ -47,7 +48,7 @@ class LiveConfig:
     def validate(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
-        if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu"}:
+        if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu", "mps"}:
             raise ValueError("Unsupported compute device")
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
             raise ValueError("Unsupported recognition language")
@@ -60,10 +61,9 @@ class LiveConfig:
         if self.context_segments not in {0, 1, 2, 3}:
             raise ValueError("Context must contain 0 to 3 segments (0 disables context)")
         root = Path(self.model_root).expanduser()
-        required = [root / "SenseVoiceSmall/model.pt", root / "SenseVoiceSmall/config.yaml"]
-        for path in required:
-            if not path.is_file():
-                raise ValueError(f"Model file is missing: {path}")
+        from ModuleFolders.Media.asr_catalog import recognition_files_present, get_recognizer
+        if not recognition_files_present(root, self.recognizer):
+            raise ValueError(f"Recognition model files are missing: {root / get_recognizer(self.recognizer).directory}")
         if not model_files_present(root, self.family):
             raise ValueError(f"Translation model files are missing or incomplete: {self.translation_dir}")
 
@@ -188,7 +188,12 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     if device == "cuda:0":
         from ModuleFolders.Media.runtime import cuda_execution_check
         cuda_execution_check(torch)
-    asr_device = compute["asr_device"] if config.asr_device in {"auto", "vulkan"} else config.asr_device
+    from ModuleFolders.Media.qwen_asr import recognition_device
+    asr_device = (compute['asr_device'] if config.recognizer == 'sensevoice' and config.asr_device == 'auto' else
+                  recognition_device(config.asr_device, config.recognizer, torch))
+    if asr_device == 'cuda:0' and device != 'cuda:0':
+        from ModuleFolders.Media.runtime import cuda_execution_check
+        cuda_execution_check(torch)
     if checkpoint.backend == "gguf":
         from ModuleFolders.Media.gguf_backend import GgufTranslator
         translator = GgufTranslator(config.translation_dir / checkpoint.filename, family=config.family, device=device)
@@ -201,7 +206,13 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     if stop.is_set():
         return
     emit({"type": "status", "message": "loading_asr"})
-    recognizer = SenseVoiceRecognizer(Path(config.model_root) / "SenseVoiceSmall", device=asr_device)
+    from ModuleFolders.Media.asr_catalog import get_recognizer
+    recognition_model = get_recognizer(config.recognizer)
+    if config.recognizer == 'sensevoice':
+        recognizer = SenseVoiceRecognizer(Path(config.model_root) / recognition_model.directory, device=asr_device)
+    else:
+        from ModuleFolders.Media.qwen_asr import QwenSpeechRecognizer
+        recognizer = QwenSpeechRecognizer(Path(config.model_root) / recognition_model.directory, device=asr_device)
     torch.set_num_threads(4)
     vad = SileroSpeechDetector()
     if stop.is_set():
@@ -265,6 +276,7 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
                     payload = asdict(event)
                     payload["type"] = "caption"
                     payload["metadata"].update(
+                        recognizer=config.recognizer, asr_device=asr_device,
                         audio_duration_ms=segment.end_ms - segment.start_ms,
                         endpoint_wait_ms=endpoint_wait_ms,
                         queue_depth=pending.qsize(), dropped_segments=dropped,

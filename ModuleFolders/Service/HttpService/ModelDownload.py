@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -490,6 +491,7 @@ class DownloadDisplay:
         self.current_downloaded = 0
         self.current_total = 0
         self.current_unit = "bytes"
+        self.transfer_started = time.monotonic()
         self.enabled = self.console is not None
         self.handles_events = self.enabled or self.quiet or self.progress_callback is not None
 
@@ -570,6 +572,7 @@ class DownloadDisplay:
             self.current_url = url
             self.status = "Downloading"
             self.current_downloaded = 0
+            self.transfer_started = time.monotonic()
             self.current_total = max(0, int(total or 0))
             self.current_unit = "bytes"
             self._emit("downloading", message=f"Downloading asset: {self.current_asset.asset_id}")
@@ -682,6 +685,9 @@ class DownloadDisplay:
 
     def _emit(self, stage: str, *, message: str = "", item_index: int | None = None, item_count: int | None = None) -> None:
         asset = self.current_asset
+        elapsed = max(.001, time.monotonic() - self.transfer_started)
+        speed = self.current_downloaded / elapsed if self.current_unit == "bytes" else None
+        remaining = max(0, self.current_total - self.current_downloaded)
         _emit_progress(
             self.progress_callback,
             kind="manga_model_download",
@@ -697,6 +703,8 @@ class DownloadDisplay:
             bytes_downloaded=self.current_downloaded,
             bytes_total=self.current_total,
             unit=self.current_unit,
+            speed_bps=speed,
+            eta_seconds=remaining / speed if speed and self.current_total else None,
         )
 
 
@@ -820,27 +828,16 @@ def _cleanup_partial(path: Path) -> None:
 
 
 def _stream_response_plain(response: requests.Response, partial_path: Path, total: int) -> int:
+    from ModuleFolders.Infrastructure.DownloadProgress import DownloadProgress
     downloaded = 0
-    next_progress = PROGRESS_INTERVAL_BYTES
-    with open(partial_path, "wb") as handle:
-        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-            if not chunk:
-                continue
-            handle.write(chunk)
-            downloaded += len(chunk)
-            if total and downloaded >= next_progress:
-                percent = min(downloaded / total * 100, 100)
-                print(
-                    f"      {downloaded / 1024 / 1024:.1f}MB / "
-                    f"{total / 1024 / 1024:.1f}MB ({percent:.1f}%)",
-                    end="\r",
-                    flush=True,
-                )
-                next_progress += PROGRESS_INTERVAL_BYTES
-    if total:
-        print(" " * 79, end="\r")
+    with DownloadProgress(partial_path.name, total or None) as progress:
+        with open(partial_path, "wb") as handle:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                if chunk:
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    progress.advance(len(chunk))
     return downloaded
-
 
 def _stream_response_rich(response: requests.Response, partial_path: Path, total: int, asset_id: str) -> int:
     console = _get_rich_console()

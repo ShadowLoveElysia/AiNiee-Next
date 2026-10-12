@@ -303,7 +303,7 @@ fn install_uv() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         let status = Command::new("sh")
-            .args(["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+            .args(["-c", "curl -fL --progress-bar https://astral.sh/uv/install.sh | sh"])
             .stdin(Stdio::null())
             .status()
             .map_err(|e| format!("Failed to execute uv installer: {e}"))?;
@@ -341,6 +341,7 @@ fn sync_runtime_dependencies(project_root: &Path, uv_path: &Path) -> Result<(), 
 
     let status = Command::new(uv_path)
         .args(["sync", "--frozen"])
+        .env("UV_NO_PROGRESS", "false")
         .current_dir(project_root)
         .stdin(Stdio::null())
         .status()
@@ -349,6 +350,7 @@ fn sync_runtime_dependencies(project_root: &Path, uv_path: &Path) -> Result<(), 
     if !status.success() {
         let fallback = Command::new(uv_path)
             .arg("sync")
+            .env("UV_NO_PROGRESS", "false")
             .current_dir(project_root)
             .stdin(Stdio::null())
             .status()

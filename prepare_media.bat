@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "UV_NO_PROGRESS=false"
 title AiNiee - Install Live Translation Extensions
 pushd "%~dp0" >nul
 if errorlevel 1 exit /b 1
@@ -42,6 +43,10 @@ set "MEDIA_PYPI_INDEX=https://mirror.nju.edu.cn/pypi/web/simple"
 set "MEDIA_TORCH_ROOT=https://mirror.nju.edu.cn/pytorch/whl"
 :source_ready
 echo Download source: %AINIEE_MEDIA_PACKAGE_SOURCE%
+set "MEDIA_RECOGNIZER=%~5"
+if not defined MEDIA_RECOGNIZER set "MEDIA_RECOGNIZER=sensevoice"
+set "MEDIA_TRANSFORMERS=transformers==5.6.0"
+if not "%MEDIA_RECOGNIZER%"=="sensevoice" set "MEDIA_TRANSFORMERS=transformers==5.13.0"
 set "MEDIA_FAMILY=%~2"
 set "AINIEE_MEDIA_CUDA_BUILD=%~3"
 if defined AINIEE_MEDIA_CUDA_BUILD echo Explicit CUDA build: %AINIEE_MEDIA_CUDA_BUILD%
@@ -63,7 +68,7 @@ if errorlevel 1 goto :failed
 :check_python
 "%MEDIA_PYTHON%" -c "import sys,struct; print(sys.version); assert sys.version_info[:2] == (3,12), 'Media runtime needs Python 3.12'; assert struct.calcsize('P') == 8, 'Media runtime needs 64-bit Python'"
 if errorlevel 1 goto :failed
-"%MEDIA_PYTHON%" Tools\Bootstrap\prepare_media_runtime.py plan --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%" > "%MEDIA_PLAN%"
+"%MEDIA_PYTHON%" Tools\Bootstrap\prepare_media_runtime.py plan --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%" --recognizer "%MEDIA_RECOGNIZER%" > "%MEDIA_PLAN%"
 if errorlevel 1 (
     type "%MEDIA_PLAN%"
     goto :failed
@@ -86,19 +91,19 @@ set "MEDIA_TORCH_SUFFIX=+%MEDIA_BUILD%"
 
 :install_torch
 echo [2/5] Installing matching Torch and torchaudio builds...
-uv pip install --python "%MEDIA_PYTHON%" --index-url "%MEDIA_TORCH_INDEX%" "torch==2.9.1%MEDIA_TORCH_SUFFIX%" "torchaudio==2.9.1%MEDIA_TORCH_SUFFIX%"
+"%MEDIA_PYTHON%" -u -m ModuleFolders.Media.package_download --python "%MEDIA_PYTHON%" --index-url "%MEDIA_TORCH_INDEX%" "torch==2.9.1%MEDIA_TORCH_SUFFIX%" "torchaudio==2.9.1%MEDIA_TORCH_SUFFIX%"
 if errorlevel 1 goto :failed
 
 echo [3/5] Installing ASR, translation and audio extensions...
-uv pip install --python "%MEDIA_PYTHON%" --index-url "%MEDIA_PYPI_INDEX%" "transformers==5.6.0" accelerate "funasr>=1.2,<2" sentencepiece silero-vad onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests
+"%MEDIA_PYTHON%" -u -m ModuleFolders.Media.package_download --python "%MEDIA_PYTHON%" --index-url "%MEDIA_PYPI_INDEX%" "%MEDIA_TRANSFORMERS%" accelerate "funasr>=1.2,<2" sentencepiece silero-vad onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests
 if errorlevel 1 goto :failed
 
 echo [4/5] Preparing the selected inference backend...
-"%MEDIA_PYTHON%" -u -m ModuleFolders.Media.runtime configure --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%"
+"%MEDIA_PYTHON%" -u -m ModuleFolders.Media.runtime configure --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%" --recognizer "%MEDIA_RECOGNIZER%"
 if errorlevel 1 goto :failed
 
 echo [5/5] Verifying installed extensions and device availability...
-"%MEDIA_PYTHON%" Tools\Bootstrap\prepare_media_runtime.py verify --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%"
+"%MEDIA_PYTHON%" Tools\Bootstrap\prepare_media_runtime.py verify --device "%MEDIA_DEVICE%" --family "%MEDIA_FAMILY%" --recognizer "%MEDIA_RECOGNIZER%"
 if errorlevel 1 goto :failed
 echo.
 echo Environment is ready. Reopen the controller and click Check environment.

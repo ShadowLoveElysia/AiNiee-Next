@@ -17,6 +17,8 @@ STAGES = {"worker_started", "importing_runtime", "translation_loaded", "loading_
 
 def diagnostic_event(event: dict) -> dict | None:
     kind = event.get("type")
+    if kind == 'download':
+        return {key: event.get(key) for key in ('type', 'model', 'stage', 'downloaded_bytes', 'total_bytes', 'percent', 'speed_bps', 'eta_seconds')}
     if kind not in {"status", "ready", "error", "stopped", "caption", "segment", "capture", "backlog"}:
         return None
     result = {"type": kind, "time": datetime.now().astimezone().isoformat(timespec="milliseconds")}
@@ -43,6 +45,11 @@ def emit_diagnostic(event: dict) -> None:
         print(PREFIX + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
+def emit_setup_line(message):
+    from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+    print(PREFIX + json.dumps({'type': 'setup_output', 'message': safe_installer_line(message)}, ensure_ascii=False), flush=True)
+
+
 class DiagnosticState:
     def __init__(self, limit=8):
         self.started = time.monotonic()
@@ -53,15 +60,23 @@ class DiagnosticState:
         self.captions = 0
         self.last_stage_started = self.started
         self.last_stage_duration = None
+        self.download = None
+        self.setup_output = ''
 
     def accept(self, event):
         if not isinstance(event, dict) or event.get("type") not in {
-            "status", "ready", "error", "stopped", "caption", "segment", "capture", "backlog"
+            "status", "ready", "error", "stopped", "caption", "segment", "capture", "backlog", 'download', 'setup_output'
         }:
             return
         self.last_update = time.monotonic()
         self.metrics.update({key: event[key] for key in METRICS if key in event})
         kind = event["type"]
+        if kind == 'download':
+            self.download = event
+            return
+        if kind == 'setup_output':
+            self.setup_output = event.get('message', '')
+            return
         if kind == "status":
             self.last_stage_duration = round((time.monotonic() - self.last_stage_started) * 1000)
             self.last_stage_started = time.monotonic()
@@ -135,7 +150,9 @@ class DiagnosticState:
         capture = Text(tr("capture_info").format(
             position=self._format(self.metrics.get("audio_position_ms"), seconds=True),
             capture=self._format(self.metrics.get("capture_ms")), vad=self._format(self.metrics.get("vad_ms"))))
-        return Panel(Group(summary, capture, table, Text(tr("scope"))), title=tr("title"), border_style="cyan")
+        from ModuleFolders.Infrastructure.DownloadProgress import format_progress
+        transfer = Text(format_progress(self.download) if self.download else self.setup_output)
+        return Panel(Group(summary, transfer, capture, table, Text(tr("scope"))), title=tr("title"), border_style="cyan")
 
     @staticmethod
     def _format(value, seconds=False):

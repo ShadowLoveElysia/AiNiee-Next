@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export UV_NO_PROGRESS=false
 task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$task_root"
 source "$task_root/Tools/Bootstrap/unix_environment.sh"

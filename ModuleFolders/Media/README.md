@@ -1,5 +1,106 @@
 # Media translation backends
 
+## Model selection and downloads
+
+The model catalog contains two separated sections: **ASR — audio to source
+text**, and **LLM — source text to translation**. Each section lists its own
+models, download sizes and installed/current status. Separator rows only explain
+the role and cannot be downloaded or activated. Downloading a model row fetches
+only that model; Use switches only its recognizer or translator after local
+availability is checked. Download does not change the active selection.
+
+The main controller's **Download selected models** button prepares both current
+ASR and LLM choices. The confirmation names the exact models and total size.
+SenseVoice remains the default recognizer; optional Qwen ASR weights can be
+downloaded independently from this same catalog.
+
+## Download feedback
+
+ModelScope ASR/translation weights and llama.cpp archives report transferred
+bytes, percentage, current transfer speed and estimated time remaining, refreshed
+about twice per second. Resumed bytes count toward completion but not download
+speed. Parallel archive ranges aggregate their positions; retries do not count
+the same stored bytes twice. Assembly and hash verification are separate stages,
+and failures never report successful completion. Unknown totals show `?` instead
+of a fabricated percentage or ETA.
+
+Direct terminal runs show readable progress; captured subprocesses emit JSON
+events for the controller. The controller displays the current transfer and
+forwards it to the managed TUI diagnostic panel or standalone terminal.
+Media dependency installation resolves exact artifacts with uv, downloads each
+wheel/source archive through a measured, resumable SHA-256 checked transfer, and
+installs the local files with uv. Torch now reports actual byte speed even when
+the controller captures installer output. This path requires a uv version with
+`pip compile --format pylock.toml` (tested with 0.13.0); installed exact package
+versions are skipped and verified downloaded artifacts are cached under
+`tmp/package-downloads`. No environment is cleared. Dependency resolution and
+source-package build requirements still use uv's native output; they do not have
+a fabricated byte rate. Other bootstrap installers retain native uv/pip output;
+stderr is no longer discarded, and inherited `UV_NO_PROGRESS` cannot suppress
+preparation progress. Model/package installers remain separate
+from model inference and no audio/source text is included in download events.
+
+Application updates, Web packages and the language detector use the same transfer
+display. Manga downloads retain their existing Rich download/speed/ETA display,
+with speed/ETA added to plain-terminal progress and byte callbacks. Shell uv
+bootstrap curl/wget progress is visible. Builds that hide the entire console,
+including a GUI shell without an attached terminal, still need their own viewer
+for inherited installer output. No download benchmark or native platform render
+has been established by these progress changes.
+
+## Optional Qwen3-ASR comparison
+
+SenseVoice remains the default recognizer and default dependency/model install.
+The controller now offers Qwen3-ASR 0.6B / 1.7B as explicit optional recognizers,
+independent of the translation model. Choose a recognizer, configure inference,
+then download the selected models. Download includes the chosen ASR and selected
+translator, not every ASR. Official `Qwen/Qwen3-ASR-0.6B-hf` (about 1.58 GB) and
+`Qwen/Qwen3-ASR-1.7B-hf` (about 4.09 GB) are fetched from pinned ModelScope
+revisions using the existing resume/SHA-256 downloader. Local loading is offline.
+The original non-`-hf` safetensors are a different checkpoint format; use the
+catalog download with config, tokenizer, processor and chat template files.
+
+Qwen selection uses native Transformers 5.13.0 and greedy, finalized short-VAD
+segments; it does not install `qwen-asr` (which pins an incompatible older
+Transformers) or vLLM. SenseVoice installs keep their existing dependency pins.
+Qwen ASR `auto` prefers CUDA, then MPS, then CPU. You can explicitly choose CPU
+or GPU for comparison. Qwen on GPU shares memory with translation; Mac MPS and
+older GPUs require runtime testing. No inference failure/quality auto-fallback.
+SenseVoice keeps its previous auto device policy. The selected device and
+recognizer are included in caption metadata.
+
+For optional terminal setup (defaults still SenseVoice):
+
+```bat
+prepare_media.bat auto index "" nju qwen-asr-0.6b
+prepare_media.bat auto index "" nju qwen-asr-1.7b
+```
+
+```bash
+bash prepare_media.sh auto index nju qwen-asr-0.6b
+```
+
+Select Qwen in the controller to enable it; installer arguments do not silently
+change the saved recognition selection. Then download models through the window.
+Keep language, translator, audio, endpoint and device settings fixed when
+comparing. The status shows ASR/translation time, segment-end-to-final-caption
+latency, queue wait and drops. That latency excludes earlier speech accumulation;
+it is not speech-onset-to-caption time or model TTFT. Warmup is outside these
+per-caption measurements. Recordings remain opt-in and include text, so keep
+recording off if only watching timing.
+
+For repeatable ASR-only timing, supply a 16 kHz mono signed-16 WAV (up to 28s):
+
+```powershell
+Resource\MediaRuntime\Scripts\python.exe -m ModuleFolders.Media.asr_benchmark "short.wav" --model-root "tmp/models" --recognizer qwen-asr-0.6b --device cuda:0 --language ja --runs 5
+```
+
+The benchmark reports load, first inference and warm median/max timings without
+printing or saving recognized text. Repeat with `sensevoice` and `qwen-asr-1.7b`
+after installing their weights, and with `--device cpu` for device comparison.
+This is an experimental backend: mock/API/config tests do not establish quality,
+actual model loading, Mac/Windows GPU compatibility or a 400 ms latency guarantee.
+
 ## Windows extension installer
 
 ### Package download source

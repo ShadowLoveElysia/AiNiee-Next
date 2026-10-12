@@ -614,7 +614,7 @@ class MangaRuntimeMenu:
     def _uv_pip_env(self, pip_args: list[str]) -> dict[str, str]:
         env = self._uv_env()
         env["UV_LINK_MODE"] = "copy"
-        env.pop("UV_NO_PROGRESS", None)
+        env["UV_NO_PROGRESS"] = "false"
 
         torch_backend = self._torch_backend_from_args(pip_args)
         if torch_backend:

@@ -10,6 +10,7 @@ import platform
 import tarfile
 import time
 import zipfile
+from ModuleFolders.Infrastructure.DownloadProgress import DownloadProgress, emit_progress
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "b11552"
@@ -72,6 +73,11 @@ def find_server(backend="cuda") -> Path | None:
 
 
 def download_verified(url: str, destination: Path, size: int, digest: str, emit=print) -> None:
+    with DownloadProgress(destination.name, size, emit=emit_progress if emit is print else lambda event: emit(json.dumps(event))) as progress:
+        return _download_verified(url, destination, size, digest, emit, progress)
+
+
+def _download_verified(url, destination, size, digest, emit, progress):
     import requests
 
     def valid(path):
@@ -84,6 +90,7 @@ def download_verified(url: str, destination: Path, size: int, digest: str, emit=
         return checksum.hexdigest() == digest
 
     if valid(destination):
+        progress.set_position('existing', size)
         return
     if destination.exists():
         raise RuntimeError(f"Existing runtime asset failed verification: {destination.name}")
@@ -101,14 +108,18 @@ def download_verified(url: str, destination: Path, size: int, digest: str, emit=
         raise RuntimeError("Invalid download prefix")
     step = 16 * 1024 * 1024
     ranges = [(start, min(size, start + step)) for start in range(prefix, size, step)]
+    progress.set_position('prefix', prefix)
+    for start, end in ranges:
+        path = parts / str(start)
+        progress.set_position(str(start), path.stat().st_size if path.exists() else 0)
     def transfer(bounds):
         start, end = bounds
         path = parts / str(start)
         with requests.Session() as session:
             for attempt in range(10):
                 offset = path.stat().st_size if path.exists() else 0
+                progress.set_position(str(start), offset)
                 if offset == end - start:
-                    emit(json.dumps({"model": destination.name, "stage": "download", "part": start}))
                     return
                 if offset > end - start:
                     raise RuntimeError("Invalid download range")
@@ -124,6 +135,7 @@ def download_verified(url: str, destination: Path, size: int, digest: str, emit=
                                     raise ValueError("Range exceeds expected size")
                                 output.write(data)
                                 offset += len(data)
+                                progress.set_position(str(start), offset, transferred=len(data))
                 except (requests.RequestException, ValueError):
                     if attempt == 9:
                         raise RuntimeError(f"Download range failed: {destination.name}") from None
@@ -132,6 +144,7 @@ def download_verified(url: str, destination: Path, size: int, digest: str, emit=
                 raise RuntimeError("Incomplete range")
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(transfer, ranges))
+    progress.publish(force=True, stage='assembling')
     with partial.open("r+b" if partial.exists() else "wb") as output:
         output.seek(prefix)
         for start, end in ranges:
@@ -139,6 +152,7 @@ def download_verified(url: str, destination: Path, size: int, digest: str, emit=
                 for data in iter(lambda: stream.read(8 * 1024 * 1024), b""):
                     output.write(data)
         output.truncate(size)
+    progress.publish(force=True, stage='verifying')
     if not valid(partial):
         raise RuntimeError(f"Checksum mismatch: {destination.name}")
     partial.rename(destination)
@@ -196,4 +210,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=(*BACKEND_ASSETS, "metal"), default="metal" if sys.platform == "darwin" else "cuda")
     args = parser.parse_args()
-    print(str(prepare(lambda value: print(value, flush=True), backend=args.backend)), flush=True)
+    print(str(prepare(backend=args.backend)), flush=True)

@@ -99,7 +99,15 @@ def get_lang_detector():
                 os.makedirs(model_dir, exist_ok=True)
                 url = "https://storage.googleapis.com/mediapipe-models/language_detector/language_detector/float32/1/language_detector.tflite"
                 _print(f"[[cyan]INFO[/]] Downloading from {url}...")
-                urllib.request.urlretrieve(url, model_path)
+                from ModuleFolders.Infrastructure.DownloadProgress import DownloadProgress
+                with DownloadProgress("Language detector", emit=(lambda _: None) if _SUPPRESS_OUTPUT else None) as progress:
+                    def reporthook(count, block_size, total_size):
+                        if total_size > 0:
+                            progress.total = total_size
+                        value = min(count * block_size, total_size) if total_size > 0 else count * block_size
+                        previous = progress.positions.get('file', 0)
+                        progress.set_position('file', value, transferred=max(0, value - previous))
+                    urllib.request.urlretrieve(url, model_path, reporthook=reporthook)
                 _print(f"[[green]SUCCESS[/]] 模型已下载至: {model_path}")
             except Exception as e:
                 _print(f"[[red]ERROR[/]] 自动下载失败: {e}")

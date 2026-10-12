@@ -73,11 +73,11 @@ def cuda_install_build(adapters=None, *, interpreter=None) -> str:
     return select_cuda_build(adapters, installed_build=build, selected_adapter=selected)
 
 
-def needs_install(device: str) -> bool:
+def needs_install(device: str, *, recognizer='sensevoice') -> bool:
     if any(importlib.util.find_spec(name) is None for name in required_packages(device)):
         return True
     minimums = {"torch": (2, 9, 1), "torchaudio": (2, 9, 1),
-                "transformers": (5, 7, 0) if sys.platform == "darwin" else (5, 6, 0)}
+                "transformers": (5, 13, 0) if recognizer != 'sensevoice' else (5, 7, 0) if sys.platform == "darwin" else (5, 6, 0)}
     if device == "mlx":
         minimums.update({"mlx": (0, 32, 3), "mlx-lm": (0, 32, 0)})
     for name, minimum in minimums.items():
@@ -223,9 +223,10 @@ def discover_devices(interpreter: str) -> list[str]:
     return speakers
 
 
-def probe(interpreter: str, device: str, family: str = "index") -> dict:
+def probe(interpreter: str, device: str, family: str = "index", *, recognizer='sensevoice', asr_device='auto') -> dict:
+    recognition_args = ["--recognizer", recognizer, "--asr-device", asr_device] if recognizer != 'sensevoice' or asr_device != 'auto' else []
     result = subprocess.run(
-        [interpreter, "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family], cwd=ROOT,
+        [interpreter, "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         env=subprocess_environment(),
         stdin=subprocess.DEVNULL,
@@ -237,7 +238,8 @@ def probe(interpreter: str, device: str, family: str = "index") -> dict:
     return report
 
 
-def install(device: str, *, translation_device: str = "") -> None:
+def install(device: str, *, translation_device: str = "", recognizer='sensevoice') -> None:
+    os.environ['UV_NO_PROGRESS'] = 'false'
     if translation_device == "mlx" and (sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}):
         raise RuntimeError("MLX requires native arm64 macOS Python")
     if translation_device == "mlx" and platform.mac_ver()[0] and int(platform.mac_ver()[0].split('.')[0]) < 14:
@@ -265,24 +267,37 @@ def install(device: str, *, translation_device: str = "") -> None:
     suffix = "+" + build if sys.platform != "darwin" else ""
     print(json.dumps({"package_source": indexes["source"], "torch_index": torch_index, "pypi_index": indexes["pypi"]}), flush=True)
     torch_packages = ["torch==2.9.1" + suffix, "torchaudio==2.9.1" + suffix]
-    subprocess.run([*installer, "--index-url", torch_index, *torch_packages], check=True)
+    if uv:
+        subprocess.run([sys.executable, '-u', '-m', 'ModuleFolders.Media.package_download', '--python', python,
+                        '--index-url', torch_index, *torch_packages], check=True)
+    else:
+        subprocess.run([*installer, "--index-url", torch_index, *torch_packages], check=True)
     apple_packages = ["mlx==0.32.3", "mlx-lm==0.32.0"] if translation_device == "mlx" else []
-    transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
-    subprocess.run([*installer, "--index-url", indexes["pypi"], "--extra-index-url", torch_index, *torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
-                    "silero-vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
-                    "huggingface-hub", "safetensors", *apple_packages], check=True)
+    transformers = "transformers==5.13.0" if recognizer != 'sensevoice' else "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
+    extensions = [*torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
+                  "silero-vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
+                  "huggingface-hub", "safetensors", *apple_packages]
+    if uv:
+        subprocess.run([sys.executable, '-u', '-m', 'ModuleFolders.Media.package_download', '--python', python,
+                        '--index-url', indexes['pypi'], '--extra-index-url', torch_index, *extensions], check=True)
+    else:
+        subprocess.run([*installer, '--index-url', indexes['pypi'], '--extra-index-url', torch_index, *extensions], check=True)
     print(json.dumps({"runtime_python": python}), flush=True)
 
 
-def download(root: Path, family: str) -> None:
+def download(root: Path, family: str, *, recognizer='sensevoice', scope='all') -> None:
     from ModuleFolders.Media.modelscope_download import download_model
 
     model = get_model(family)
-    for key in ("sensevoice", model.key):
-        repo, revision = MODELS[key]
-        target = root / ("SenseVoiceSmall" if key == "sensevoice" else model.directory)
-        filename = model.filename if key != "sensevoice" and model.backend == "gguf" else ""
-        download_model(repo, revision, target, filename=filename)
+    from ModuleFolders.Media.asr_catalog import get_recognizer
+    asr = get_recognizer(recognizer)
+    if scope not in {'all', 'asr', 'llm'}:
+        raise ValueError('Unknown model download scope')
+    if scope != 'llm':
+        download_model(asr.repo, asr.revision, root / asr.directory)
+    repo, revision = MODELS[model.key]
+    if scope != 'asr':
+        download_model(repo, revision, root / model.directory, filename=model.filename if model.backend == 'gguf' else '')
 
 
 def main():
@@ -292,6 +307,10 @@ def main():
     parser.add_argument("--model-root", type=Path)
     parser.add_argument("--family", choices=tuple(model.key for model in TRANSLATION_MODELS), default="index")
     parser.add_argument("--managed", action="store_true")
+    from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS
+    parser.add_argument('--recognizer', choices=tuple(model.key for model in RECOGNITION_MODELS), default='sensevoice')
+    parser.add_argument('--asr-device', choices=('auto', 'cpu', 'cuda:0', 'mps'), default='auto')
+    parser.add_argument('--download-scope', choices=('all', 'asr', 'llm'), default='all')
     args = parser.parse_args()
     if args.managed:
         from ModuleFolders.Media.supervisor import start_core_watchdog
@@ -325,9 +344,11 @@ def main():
                     versions[name] = module.__version__
                     if name == "transformers":
                         major, minor = (int(part) for part in module.__version__.split('.')[:2])
-                        minimum = (5, 7) if sys.platform == "darwin" else (5, 6)
+                        minimum = (5, 13) if args.recognizer != 'sensevoice' else (5, 7) if sys.platform == "darwin" else (5, 6)
                         if (major, minor) < minimum:
                             missing.append("transformers>=" + '.'.join(map(str, minimum)))
+                        elif args.recognizer != 'sensevoice':
+                            from transformers import AutoProcessor, AutoModelForMultimodalLM
                 except Exception:
                     missing.append(name)
         from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
@@ -342,6 +363,14 @@ def main():
                                      mlx_compatible=checkpoint.family == "index", mps_available=mps)
             if compute["translation_device"] == "cuda:0":
                 compute["cuda_check"] = cuda_execution_check(torch)
+            if 'torch' not in missing:
+                from ModuleFolders.Media.qwen_asr import recognition_device
+                if args.recognizer != 'sensevoice' or args.asr_device != 'auto':
+                    compute['asr_device'] = recognition_device(args.asr_device, args.recognizer, torch)
+                if compute['asr_device'] == 'cuda:0' and compute['translation_device'] != 'cuda:0':
+                    compute['cuda_check'] = cuda_execution_check(torch)
+                if compute['asr_device'] == 'mps' and not mps:
+                    raise RuntimeError('ASR MPS device is unavailable')
             if compute["translation_device"] == "mlx":
                 for name, minimum in (("mlx", (0, 32, 3)), ("mlx_lm", (0, 32, 0))):
                     if importlib.util.find_spec(name) is None:
@@ -395,13 +424,17 @@ def main():
         compute = select_compute(args.device, gguf=get_model(args.family).backend == "gguf",
                                  cuda_available=cuda_possible, adapters=adapters,
                                  mlx_compatible=get_model(args.family).family == "index")
-        if args.action == "install" or needs_install(compute["translation_device"]):
-            install(compute["asr_device"], translation_device=compute["translation_device"])
+        install_device = compute['asr_device']
+        if args.recognizer != 'sensevoice' and args.asr_device != 'cpu' and cuda_possible:
+            install_device = 'cuda:0'
+        check_device = 'cuda:0' if install_device == 'cuda:0' else compute['translation_device']
+        if args.action == "install" or needs_install(check_device, recognizer=args.recognizer):
+            install(install_device, translation_device=compute["translation_device"], recognizer=args.recognizer)
         else:
             print(json.dumps({"runtime_python": sys.executable}), flush=True)
         if args.action == "configure" and get_model(args.family).backend == "gguf":
             from ModuleFolders.Media.gguf_runtime import prepare
-            prepare(lambda value: print(value, flush=True), backend=compute["llama_backend"])
+            prepare(backend=compute["llama_backend"])
         if args.action == "configure" and sys.platform == "darwin":
             from ModuleFolders.Media.macos_audio import prepare_helper
             try:
@@ -412,7 +445,7 @@ def main():
     else:
         if args.model_root is None:
             parser.error("--model-root is required")
-        download(args.model_root, args.family)
+        download(args.model_root, args.family, recognizer=args.recognizer, scope=args.download_scope)
 
 
 if __name__ == "__main__":

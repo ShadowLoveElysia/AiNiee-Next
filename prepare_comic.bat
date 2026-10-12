@@ -1,5 +1,6 @@
 @echo off
 setlocal EnableExtensions
+set "UV_NO_PROGRESS=false"
 title AiNiee CLI - Prepare Comic Runtime
 pushd "%~dp0" >nul
 

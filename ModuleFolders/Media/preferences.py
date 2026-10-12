@@ -16,6 +16,7 @@ DEFAULTS = {
     "locked": False, "width": 900, "height": 240, "family": "index", "source": "ja",
     "target": "zh", "device": "auto", "runtime_python": "",
     "package_source": "nju",
+    "recognizer": "sensevoice", "recognition_device": "auto",
     "context_segments": 0, "history_segments": 3, "recording": False,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
 }
@@ -24,9 +25,12 @@ RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "context_segments": (0, 3), "history_segments": (2, 3)}
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
 from ModuleFolders.Media.compute import device_choices, model_device_choices
+from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS
 
 CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
-           "target": ("zh", "en", "ja", "ko"), "device": device_choices(), "package_source": ("nju", "official")}
+           "target": ("zh", "en", "ja", "ko"), "device": device_choices(), "package_source": ("nju", "official"),
+           "recognizer": tuple(model.key for model in RECOGNITION_MODELS),
+           "recognition_device": ("auto", "cpu", "mps") if sys.platform == 'darwin' else ("auto", "cpu", "cuda:0")}
 
 
 def default_model_root() -> str:
@@ -46,6 +50,9 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
         pass
     if data.get("package_source") not in CHOICES["package_source"]:
         data["package_source"] = DEFAULTS["package_source"]
+    for key in ('recognizer', 'recognition_device'):
+        if data.get(key) not in CHOICES[key]:
+            data[key] = DEFAULTS[key]
     if data.get("device") not in device_choices():
         data["device"] = "auto"
     try:

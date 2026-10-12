@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--format", choices=("bat", "json"), default="bat")
     parser.add_argument("--source", choices=("nju", "official"), default="")
     parser.add_argument("--build", choices=("cpu", "cu126", "cu128"), default="cpu")
+    parser.add_argument('--recognizer', default='sensevoice')
     args = parser.parse_args()
     from ModuleFolders.Media.package_sources import selected_source, package_indexes
     source = selected_source(args.source)
@@ -34,6 +35,8 @@ def main():
     preferences = read_preferences()
     family = args.family or preferences.get("family", "index")
     model = get_model(family)
+    from ModuleFolders.Media.asr_catalog import get_recognizer
+    get_recognizer(args.recognizer)
     if args.action == "plan":
         adapters = detect_adapters()
         compute = select_compute(args.device, gguf=model.backend == "gguf",
@@ -42,7 +45,8 @@ def main():
         from ModuleFolders.Media.runtime import cuda_install_build
         build = cuda_install_build(adapters) if compute["asr_device"] == "cuda:0" else "cpu"
         if args.format == "json":
-            print(json.dumps({"family": model.key, "model": model.name, "backend": model.backend, "torch_build": build, **compute}))
+            print(json.dumps({"family": model.key, "model": model.name, "backend": model.backend, "torch_build": build,
+                              "recognizer": args.recognizer, **compute}))
             return
         print(json.dumps({"model": model.name, "device": compute["translation_device"], "torch_build": build}))
         # Both lines are fixed, validated tokens consumed by the BAT installer.
@@ -50,7 +54,7 @@ def main():
         print(model.key)
         return
     from ModuleFolders.Media.runtime import probe
-    report = probe(sys.executable, args.device, family)
+    report = probe(sys.executable, args.device, family, **({'recognizer': args.recognizer} if args.recognizer != 'sensevoice' else {}))
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if not report["ready"]:
         print("[ERROR] Packages were installed, but inference readiness failed. See missing / compute_error above.")

@@ -1,5 +1,6 @@
 #!/bin/bash
 # Sourced by launchers to keep platform and interpreter selection consistent.
+export UV_NO_PROGRESS=false
 
 detect_environment() {
     task_system="$(uname -s)"
@@ -37,9 +38,9 @@ install_uv() {
     local task_installer task_result=0
     task_installer="$(mktemp "${TMPDIR:-/tmp}/ainiee-uv-install.XXXXXX")"
     if command -v curl >/dev/null 2>&1; then
-        curl -fLsS --connect-timeout 20 --max-time 180 https://astral.sh/uv/install.sh -o "$task_installer" || task_result=$?
+        curl -fL --progress-bar --connect-timeout 20 --max-time 180 https://astral.sh/uv/install.sh -o "$task_installer" || task_result=$?
     elif command -v wget >/dev/null 2>&1; then
-        wget --timeout=30 -q https://astral.sh/uv/install.sh -O "$task_installer" || task_result=$?
+        wget --timeout=30 --progress=bar:force https://astral.sh/uv/install.sh -O "$task_installer" || task_result=$?
     else
         echo "[ERROR] Install curl or wget, then rerun setup."
         task_result=1

@@ -64,6 +64,8 @@ class DesktopApp:
         self.root.bind("<FocusIn>", lambda _: self.root.after_idle(self._keep_controls_accessible))
         self.model_root = tk.StringVar(value=model_root or default_model_root())
         self.family = tk.StringVar(value="index")
+        self.recognizer = tk.StringVar(value='sensevoice')
+        self.recognition_device = tk.StringVar(value='auto')
         self.source = tk.StringVar(value="ja")
         self.target = tk.StringVar(value="zh")
         self.device = tk.StringVar(value="auto")
@@ -93,6 +95,8 @@ class DesktopApp:
         self._load_settings(model_root)
         from ModuleFolders.Media.model_catalog import get_model, TRANSLATION_MODELS
         self.model_choice = tk.StringVar(value=get_model(self.family.get()).name)
+        from ModuleFolders.Media.asr_catalog import get_recognizer, RECOGNITION_MODELS
+        self.recognizer_choice = tk.StringVar(value=get_recognizer(self.recognizer.get()).name)
         self.model_details = tk.StringVar()
         self.catalog_dialog = None
         from ModuleFolders.Media.preferences import read_preferences
@@ -130,6 +134,19 @@ class DesktopApp:
         self.model_selector.pack(fill="x")
         self.model_selector.bind("<<ComboboxSelected>>", self.select_model)
         ttk.Button(model_selection, text=self.t("model_catalog"), command=self.show_model_catalog).pack(anchor="w", pady=(6, 0))
+        asr_selection = ttk.Frame(model_selection)
+        asr_selection.pack(fill='x', pady=(8, 0))
+        ttk.Label(asr_selection, text=self.t('recognizer')).pack(side='left', padx=(0, 8))
+        self.recognizer_selector = ttk.Combobox(asr_selection, textvariable=self.recognizer_choice,
+                                               values=tuple(model.name for model in RECOGNITION_MODELS), state='readonly', width=26)
+        self.recognizer_selector.pack(side='left')
+        self.recognizer_selector.bind('<<ComboboxSelected>>', self.select_recognizer)
+        from ModuleFolders.Media.preferences import CHOICES
+        ttk.Label(asr_selection, text=self.t('recognition_device')).pack(side='left', padx=8)
+        self.recognition_device_selector = ttk.Combobox(asr_selection, textvariable=self.recognition_device,
+                                                       values=CHOICES['recognition_device'], state='readonly', width=9)
+        self.recognition_device_selector.pack(side='left')
+        self.recognition_device_selector.bind('<<ComboboxSelected>>', self.compute_changed)
         ttk.Label(frame, text=self.t("languages")).grid(row=4, column=0, sticky="w")
         languages = ttk.Frame(frame)
         languages.grid(row=4, column=1, columnspan=2, sticky="w")
@@ -356,6 +373,8 @@ class DesktopApp:
                 ("family", self.family, self._model_keys()),
                 ("source", self.source, {"auto", "ja", "en", "ko", "zh", "yue"}),
                 ("target", self.target, {"zh", "en", "ja", "ko"}),
+                ('recognizer', self.recognizer, {'sensevoice', 'qwen-asr-0.6b', 'qwen-asr-1.7b'}),
+                ('recognition_device', self.recognition_device, {'auto', 'cpu', 'cuda:0', 'mps'}),
             ]:
                 if data.get(key) in allowed:
                     variable.set(data[key])
@@ -387,6 +406,8 @@ class DesktopApp:
         data["device"] = self.device.get()
         data["runtime_python"] = self.runtime_interpreter
         data["package_source"] = self.package_source.get()
+        data['recognizer'] = self.recognizer.get()
+        data['recognition_device'] = self.recognition_device.get()
         save_preferences(data, self.settings_path)
 
     def select_package_source(self, event=None):
@@ -415,12 +436,25 @@ class DesktopApp:
             self.update_model_details()
             self.compute_changed()
 
-    def prepare_runtime(self, action: str, *, confirmed: bool = False, model_key: str | None = None) -> None:
+    def prepare_runtime(self, action: str, *, confirmed: bool = False, model_key: str | None = None,
+                        asr_key: str | None = None, download_scope: str = 'all') -> None:
         from ModuleFolders.Media.desktop_setup import prepare_runtime
-        prepare_runtime(self, action, confirmed=confirmed, model_key=model_key)
+        prepare_runtime(self, action, confirmed=confirmed, model_key=model_key, asr_key=asr_key, download_scope=download_scope)
 
     def runtime_signature(self):
-        return (self.runtime_interpreter, self.device.get(), self.family.get(), self.model_root.get())
+        signature = (self.runtime_interpreter, self.device.get(), self.family.get(), self.model_root.get())
+        return signature + ((self.recognizer.get(), self.recognition_device.get()) if hasattr(self, 'recognizer') else ())
+
+    def select_recognizer(self, event=None):
+        from ModuleFolders.Media.asr_catalog import get_recognizer
+        if self.session.active or self.setup_busy:
+            self.recognizer_choice.set(get_recognizer(self.recognizer.get()).name)
+            self.environment_status.set(self.t('stop_before_setup'))
+            return
+        self.recognizer.set(get_recognizer(self.recognizer_choice.get()).key)
+        self.update_model_details()
+        self.save_settings()
+        self.compute_changed()
 
     def compute_changed(self, event=None):
         if self.session.active or self.setup_busy:
@@ -534,6 +568,12 @@ class DesktopApp:
         self.model_details.set(describe_model(model.key, self.i18n.get) + "\n" +
                                self.t("model_installed" if installed else "model_not_downloaded") + "\n" +
                                self.t("model_memory_note"))
+        if hasattr(self, 'recognizer'):
+            from ModuleFolders.Media.asr_catalog import get_recognizer, recognition_files_present
+            asr = get_recognizer(self.recognizer.get())
+            self.model_details.set(self.model_details.get() + '\n' + asr.name + ' · ' +
+                                   self.t('model_installed' if recognition_files_present(self.model_root.get(), asr.key) else 'model_not_downloaded') +
+                                   ('\n' + self.t('qwen_asr_hint') if asr.key != 'sensevoice' else ''))
 
     def select_model(self, event=None) -> None:
         from ModuleFolders.Media.model_catalog import get_model
@@ -561,8 +601,8 @@ class DesktopApp:
         self.catalog_dialog = dialog
         dialog.title(self.t("model_catalog"))
         dialog.transient(self.root)
-        dialog.geometry("850x470")
-        dialog.minsize(650, 430)
+        dialog.geometry("850x640")
+        dialog.minsize(650, 540)
         frame = ttk.Frame(dialog, padding=20)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
@@ -570,8 +610,9 @@ class DesktopApp:
         listing = ttk.Frame(frame)
         listing.grid(row=0, column=0, sticky="nsew")
         columns = ("name", "size", "vram", "state")
-        self.model_list = ttk.Treeview(listing, columns=columns, show="headings", selectmode="browse", height=6)
-        for column, label, width in (("name", "translator", 250), ("size", "model_download_size", 110),
+        self.model_list = ttk.Treeview(listing, columns=columns, show="headings", selectmode="browse", height=13)
+        self.model_list.tag_configure('section', background='#dde7ef', foreground='#162635')
+        for column, label, width in (("name", "catalog_model_name", 250), ("size", "model_download_size", 110),
                                      ("vram", "model_vram", 130), ("state", "model_state", 170)):
             self.model_list.heading(column, text=self.t(label))
             self.model_list.column(column, width=width, minwidth=80, anchor="w")
@@ -591,7 +632,7 @@ class DesktopApp:
         self.catalog_download_button = ttk.Button(actions, text=self.t("download_models"), command=self.download_catalog_model)
         self.catalog_download_button.pack(side="left", padx=(0, 8))
         ttk.Button(actions, text=self.t("refresh"), command=self.refresh_model_list).pack(side="left")
-        ttk.Label(frame, text=self.t("model_memory_note"), wraplength=790).grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        ttk.Label(frame, text=self.t("catalog_roles_hint"), wraplength=790).grid(row=4, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(frame, text=self.t("model_speed_note"), wraplength=790).grid(row=5, column=0, sticky="ew", pady=(4, 0))
         self.model_list.bind("<<TreeviewSelect>>", self.update_catalog_selection)
         dialog.bind("<Escape>", lambda _: dialog.destroy())
@@ -600,12 +641,22 @@ class DesktopApp:
 
     def refresh_model_list(self) -> None:
         from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS, model_files_present
+        from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS, recognition_files_present
         if self.catalog_dialog is None or not self.catalog_dialog.winfo_exists():
             return
         previous = self.model_list.selection()
         selected = previous[0] if previous else self.family.get()
         for key in self.model_list.get_children():
             self.model_list.delete(key)
+        self.model_list.insert('', 'end', iid='section-asr', values=(self.t('catalog_asr_section'), '', '', ''), tags=('section',))
+        for model in RECOGNITION_MODELS:
+            installed = recognition_files_present(self.model_root.get(), model.key)
+            state = self.t('model_installed' if installed else 'model_not_downloaded')
+            if hasattr(self, 'recognizer') and model.key == self.recognizer.get():
+                state += ' · ' + self.t('model_current')
+            self.model_list.insert('', 'end', iid='asr:' + model.key,
+                                   values=(model.name, f'{model.download_gb:.2f} GB', '—', state))
+        self.model_list.insert('', 'end', iid='section-llm', values=(self.t('catalog_llm_section'), '', '', ''), tags=('section',))
         for model in TRANSLATION_MODELS:
             installed = model_files_present(self.model_root.get(), model.key)
             state = self.t("model_installed" if installed else "model_not_downloaded")
@@ -623,9 +674,22 @@ class DesktopApp:
         if not selection:
             return
         key = selection[0]
-        self.catalog_details.set(describe_model(key, self.i18n.get))
+        if key.startswith('section-'):
+            self.catalog_details.set(self.t('catalog_asr_hint' if key == 'section-asr' else 'catalog_llm_hint'))
+            self.catalog_use_button.configure(state='disabled')
+            self.catalog_download_button.configure(state='disabled')
+            return
+        if key.startswith('asr:'):
+            from ModuleFolders.Media.asr_catalog import get_recognizer, recognition_files_present
+            model = get_recognizer(key.removeprefix('asr:'))
+            installed = recognition_files_present(self.model_root.get(), model.key)
+            self.catalog_details.set(model.name + '\n' + self.t('catalog_asr_hint') + '\n' +
+                                     self.t('model_path', path=str(Path(self.model_root.get()) / model.directory)) +
+                                     ('\n' + self.t('qwen_asr_hint') if model.key != 'sensevoice' else ''))
+        else:
+            self.catalog_details.set(self.t('catalog_llm_hint') + '\n' + describe_model(key, self.i18n.get))
+            installed = model_files_present(self.model_root.get(), key)
         blocked = self.session.active or self.setup_busy or self.closing
-        installed = model_files_present(self.model_root.get(), key)
         self.catalog_use_button.configure(state="disabled" if blocked or not installed else "normal")
         self.catalog_download_button.configure(state="disabled" if blocked else "normal")
 
@@ -637,15 +701,29 @@ class DesktopApp:
         selection = self.model_list.selection()
         if not selection:
             return
-        self.model_choice.set(get_model(selection[0]).name)
-        self.select_model()
+        key = selection[0]
+        if key.startswith('section-'):
+            return
+        if key.startswith('asr:'):
+            from ModuleFolders.Media.asr_catalog import get_recognizer
+            self.recognizer_choice.set(get_recognizer(key.removeprefix('asr:')).name)
+            self.select_recognizer()
+        else:
+            self.model_choice.set(get_model(key).name)
+            self.select_model()
         self.refresh_model_list()
 
     def download_catalog_model(self) -> None:
         selection = self.model_list.selection()
         if not selection:
             return
-        self.prepare_runtime("download", model_key=selection[0])
+        key = selection[0]
+        if key.startswith('section-'):
+            return
+        if key.startswith('asr:'):
+            self.prepare_runtime('download', asr_key=key.removeprefix('asr:'), download_scope='asr')
+        else:
+            self.prepare_runtime('download', model_key=key, download_scope='llm')
         self.update_catalog_selection()
 
     def finish_preparation(self, event: dict) -> None:
@@ -916,6 +994,7 @@ class DesktopApp:
                 speaker=selected_audio,
                 device=(self._checked_compute or {}).get("translation_device", self.device.get()),
                 asr_device=(self._checked_compute or {}).get("asr_device", "auto"),
+                recognizer=self.recognizer.get() if hasattr(self, 'recognizer') else 'sensevoice',
                 context_segments=self.context_segments.get(),
             )
             self.session.start(config, interpreter=self.runtime_interpreter)
@@ -930,6 +1009,9 @@ class DesktopApp:
         self.state = "loading"
         self.context_spin.configure(state="disabled")
         self.compute_selector.configure(state="disabled")
+        if hasattr(self, 'recognizer_selector'):
+            self.recognizer_selector.configure(state='disabled')
+            self.recognition_device_selector.configure(state='disabled')
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(self.t("starting_worker"))
@@ -988,7 +1070,9 @@ class DesktopApp:
             if kind == "caption":
                 metadata = event.get("metadata", {})
                 self.overlay_status.configure(text=self.t("subtitles"))
-                self.status.set(self.t("timing", asr=metadata.get("asr_ms", 0), translation=metadata.get("translation_ms", 0)))
+                self.status.set(self.t("timing_live", asr=metadata.get("asr_ms", 0), translation=metadata.get("translation_ms", 0),
+                                       latency=metadata.get('latency_from_segment_end_ms', 0),
+                                       queue=metadata.get('queue_wait_ms', 0), dropped=metadata.get('dropped_segments', 0)))
             elif kind == "partial":
                 self.overlay_status.configure(text=self.t("generating"))
         elif kind == "backlog":
@@ -1002,6 +1086,9 @@ class DesktopApp:
             self.record_status.set(self.t("recording_wait" if self.recording.get() else "recording_off"))
             self.context_spin.configure(state="normal")
             self.compute_selector.configure(state="readonly")
+            if hasattr(self, 'recognizer_selector'):
+                self.recognizer_selector.configure(state='readonly')
+                self.recognition_device_selector.configure(state='readonly')
             if self.state != "error":
                 self.status.set(self.t("stopped") if event.get("requested") or event.get("exit_code") == 0
                                 else self.t("process_exit", code=event.get("exit_code")))
@@ -1051,6 +1138,14 @@ class DesktopApp:
                     self.finish_preparation(event)
                 elif event["type"] == "progress":
                     self.environment_status.set(event["message"])
+                    if self.managed and event.get('download'):
+                        from ModuleFolders.Media.diagnostics import emit_diagnostic
+                        emit_diagnostic(event['download'])
+                    elif self.managed:
+                        from ModuleFolders.Media.diagnostics import emit_setup_line
+                        emit_setup_line(event['message'])
+                    else:
+                        print(event['message'], flush=True)
                     if self.catalog_dialog is not None and self.catalog_dialog.winfo_exists():
                         self.catalog_status.set(event["message"])
         except queue.Empty:

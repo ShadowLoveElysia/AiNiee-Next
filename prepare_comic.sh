@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+export UV_NO_PROGRESS=false
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
@@ -50,7 +51,7 @@ fi
 echo "[1/4] Checking for uv..."
 if ! command -v uv &> /dev/null; then
     echo "uv not found. Starting automatic installation..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    curl -fL --progress-bar https://astral.sh/uv/install.sh | sh
 
     if [ -f "$HOME/.cargo/env" ]; then
         # shellcheck disable=SC1090

@@ -1,4 +1,19 @@
 {
+    "media_catalog_model_name": "模型名称",
+    "media_catalog_asr_section": "── ASR 识别模型 · 声音 → 原文 ──",
+    "media_catalog_llm_section": "── LLM 翻译模型 · 原文 → 译文 ──",
+    "media_catalog_asr_hint": "ASR 负责把语音识别为原文，不负责翻译。下载选中行只获取该识别模型；使用所选模型只切换识别器。",
+    "media_catalog_llm_hint": "LLM 负责把识别出的原文翻译为目标语言。下载选中行只获取该翻译模型；使用所选模型只切换翻译器。",
+    "media_catalog_roles_hint": "同传需要 ASR 和 LLM 两类模型。列表按类型分组，下载各自独立；主窗口“下载所选模型”会同时准备当前选中的 ASR＋LLM。",
+    "media_download_models_named_hint": "下载 {model} 到 {path}？约 {gb} GB，已有匹配文件会复用。",
+    "media_model_path": "模型目录：{path}",
+
+    "media_timing_live": "识别 {asr} ms · 翻译 {translation} ms · 片段结束到字幕 {latency} ms · 排队 {queue} ms · 丢段 {dropped}",
+
+    "media_recognizer": "识别模型",
+    "media_recognition_device": "识别设备",
+    "media_qwen_asr_hint": "QwenASR 为可选实验后端，按现有 VAD 短句识别；auto 优先 GPU，会和翻译共享显存。比较 ASR 耗时和字幕延迟，不保证 400 ms。",
+
     "media_package_source": "依赖下载源",
     "media_source_nju": "国内源（南京大学）",
     "media_source_official": "官方源（PyTorch / PyPI）",

@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "UV_NO_PROGRESS=false"
 title AiNiee CLI - Prepare Environment
 pushd "%~dp0" >nul
 if errorlevel 1 exit /b 1

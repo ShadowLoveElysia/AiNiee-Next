@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -94,6 +95,9 @@ def _snapshot_progress_class(progress_callback: DownloadProgressCallback | None 
             self.total = int(kwargs.get("total") or 0)
             self.n = int(kwargs.get("initial") or 0)
             self.description = str(kwargs.get("desc") or "Hugging Face snapshot")
+            self.unit = "bytes" if kwargs.get("unit") in {"B", "bytes"} else "files"
+            self.initial = self.n
+            self.started_at = time.monotonic()
 
         def __enter__(self):
             self._emit()
@@ -141,7 +145,8 @@ def _snapshot_progress_class(progress_callback: DownloadProgressCallback | None 
                         "message": self.description,
                         "bytes_downloaded": self.n,
                         "bytes_total": self.total,
-                        "unit": "files",
+                        "unit": self.unit,
+                        "speed_bps": (self.n - self.initial) / max(.001, time.monotonic() - self.started_at) if self.unit == "bytes" else None,
                     }
                 )
             except Exception:
