@@ -10,7 +10,7 @@
   "stroke_color": "#ffffff",
   "show_source": false,
   "topmost": true,
-  "locked": true,
+  "locked": false,
   "width": 900,
   "height": 452,
   "family": "index-q6",

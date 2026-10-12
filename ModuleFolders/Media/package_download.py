@@ -202,7 +202,8 @@ except ImportError:
  from pip._vendor.packaging.markers import default_environment
 print(json.dumps({'tags':[str(t) for t in sys_tags()], 'environment':default_environment(),
  'installed':{d.metadata['Name'].lower().replace('_','-'):d.version for d in importlib.metadata.distributions() if d.metadata.get('Name')}}))'''
-    result = subprocess.run([str(python), '-c', script], check=True, capture_output=True, text=True)
+    result = subprocess.run([str(python), '-X', 'utf8', '-c', script], check=True, capture_output=True,
+                            text=True, encoding='utf-8', errors='replace')
     return json.loads(result.stdout.splitlines()[-1])
 
 
@@ -235,7 +236,8 @@ try:
 except ImportError:
  from pip._vendor.packaging.markers import Marker
 print(json.dumps([not m or Marker(m).evaluate() for m in json.loads(sys.argv[1])]))'''
-    result = subprocess.run([str(python), '-c', script, json.dumps(markers)], check=True, capture_output=True, text=True)
+    result = subprocess.run([str(python), '-X', 'utf8', '-c', script, json.dumps(markers)], check=True,
+                            capture_output=True, text=True, encoding='utf-8', errors='replace')
     enabled = json.loads(result.stdout.splitlines()[-1])
     return [package for package, active in zip(packages, enabled, strict=True) if active]
 

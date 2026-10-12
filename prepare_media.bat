@@ -1,6 +1,8 @@
 @echo off
 setlocal
 set "UV_NO_PROGRESS=false"
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 title AiNiee - Install Live Translation Extensions
 pushd "%~dp0" >nul
 if errorlevel 1 exit /b 1

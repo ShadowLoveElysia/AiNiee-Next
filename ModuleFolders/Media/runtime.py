@@ -8,6 +8,7 @@ import json
 import os
 import platform
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -37,19 +38,57 @@ def required_packages(device: str = "cpu") -> tuple[str, ...]:
     return PACKAGES + (("mlx", "mlx_lm") if device == "mlx" else ())
 
 
+class RuntimeProbeError(RuntimeError):
+    """A runtime child failed before producing its readiness report."""
+
+
+def probe_stage(name: str) -> None:
+    print("[runtime probe] " + name, file=sys.stderr, flush=True)
+
+
+def child_failure(label: str, result) -> RuntimeProbeError:
+    from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+    code = result.returncode
+    status = code & 0xFFFFFFFF
+    category = {0xC0000005: "NativeAccessViolation", 0xC000001D: "IllegalInstruction",
+                0xC0000135: "NativeDependencyMissing", 0xC000007B: "InvalidNativeImage"}.get(status, "")
+    message = f"{label} exited: {code}"
+    if category or status >= 0x80000000 and code > 0:
+        message += f" (0x{status:08X}{' / ' + category if category else ''})"
+    stages = [line for line in (result.stderr or '').splitlines() if line.startswith('[runtime probe] ')]
+    if stages:
+        message += '\nLast stage: ' + safe_installer_line(stages[-1])[len('[runtime probe] '):]
+    # Preserve the last phase and native stack, excluding complete readiness JSON.
+    for stream, output in (("stdout", result.stdout), ("stderr", result.stderr)):
+        lines = []
+        for line in (output or '').splitlines():
+            if not line.strip() or line.lstrip().startswith('{'):
+                continue
+            line = re.sub(r'''(?i)((?:authorization|api[_-]?key|access[_-]?token|token|password|secret)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|\S+)''',
+                          r'\1[redacted]', line)
+            lines.append(safe_installer_line(line))
+        if lines:
+            message += f"\n{stream}:\n" + '\n'.join(lines[-20:])[-3000:]
+    return RuntimeProbeError(message)
+
+
 def torch_runtime_info(interpreter=None, *, check_execution=False):
     """Release native DLLs by completing discovery in a short-lived child."""
     python = str(interpreter or sys.executable)
-    script = ("import json,torch; info={'version':torch.version.cuda,'available':torch.cuda.is_available()}; "
+    script = ("from ModuleFolders.Media.runtime import probe_stage; probe_stage('import torch'); "
+              "import json,torch; probe_stage('torch.cuda.is_available'); "
+              "info={'version':torch.version.cuda,'available':torch.cuda.is_available()}; "
+              "probe_stage('CUDA device properties'); "
               "info.update({'name':torch.cuda.get_device_name(0),'capability':list(torch.cuda.get_device_capability(0))}) "
               "if info['available'] else None; ")
     if check_execution:
-        script += "from ModuleFolders.Media.runtime import cuda_execution_check; info['check']=cuda_execution_check(torch); "
+        script += "from ModuleFolders.Media.runtime import cuda_execution_check; probe_stage('CUDA execution'); info['check']=cuda_execution_check(torch, stage=probe_stage); "
     script += "print(json.dumps(info))"
-    result = subprocess.run([python, '-c', script], capture_output=True, text=True, timeout=45,
+    result = subprocess.run([python, '-X', 'utf8', '-X', 'faulthandler', '-u', '-c', script],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=45,
                             cwd=ROOT, env=subprocess_environment(), stdin=subprocess.DEVNULL)
     if result.returncode:
-        raise RuntimeError(f'Torch discovery/check exited: {result.returncode}')
+        raise child_failure('Torch discovery/check', result)
     return json.loads(result.stdout.splitlines()[-1])
 
 
@@ -106,7 +145,9 @@ def needs_install(device: str, *, recognizer='sensevoice') -> bool:
     return False
 
 
-def cuda_execution_check(torch) -> dict:
+def cuda_execution_check(torch, *, stage=None) -> dict:
+    if stage:
+        stage('CUDA device capability')
     capability = torch.cuda.get_device_capability(0)
     version = torch.version.cuda or ""
     if capability[0] >= 10 and (not version or tuple(map(int, version.split('.')[:2])) < (12, 8)):
@@ -114,6 +155,8 @@ def cuda_execution_check(torch) -> dict:
     if capability[0] < 7 and version and tuple(map(int, version.split('.')[:2])) >= (12, 8):
         raise RuntimeError("Maxwell/Pascal GPU requires the cu126 build; rerun prepare_media.bat to replace cu128")
     import re
+    if stage:
+        stage('CUDA compiled architectures')
     arches = torch.cuda.get_arch_list()
     compatible = False
     for arch in arches:
@@ -129,8 +172,14 @@ def cuda_execution_check(torch) -> dict:
         raise RuntimeError(f"PyTorch build does not include compatible kernels for sm_{capability[0]}{capability[1]}; rerun prepare_media.bat with the GPU-appropriate build")
     try:
         # Device discovery alone succeeds even when this wheel lacks GPU kernels.
+        if stage:
+            stage('CUDA tensor allocation')
         value = torch.ones((16, 16), device="cuda:0")
+        if stage:
+            stage('CUDA matrix multiplication')
         result = (value @ value).sum().item()
+        if stage:
+            stage('CUDA synchronization')
         torch.cuda.synchronize()
         if result != 4096:
             raise RuntimeError("Unexpected CUDA result")
@@ -159,6 +208,7 @@ def subprocess_environment() -> dict:
     for name in ("PYTHONHOME", "PYTHONPATH"):
         environment.pop(name, None)
     environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
     return environment
 
 
@@ -235,13 +285,13 @@ def probe(interpreter: str, device: str, family: str = "index", *, recognizer='s
     if asr_endpoint != 'http://127.0.0.1:8001/v1':
         recognition_args += ['--asr-endpoint', asr_endpoint]
     result = subprocess.run(
-        [interpreter, "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
+        [interpreter, "-X", "utf8", "-X", "faulthandler", "-u", "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         env=subprocess_environment(),
         stdin=subprocess.DEVNULL,
     )
     if result.returncode:
-        raise RuntimeError(f"Runtime check exited: {result.returncode}")
+        raise child_failure('Runtime check', result)
     report = json.loads(result.stdout.splitlines()[-1])
     report["ready"] = not report["missing"] and not report.get("compute_error")
     return report
@@ -338,6 +388,9 @@ def main():
             os._exit(1)
         start_core_watchdog(parent_gone)
     if args.action == "probe":
+        import faulthandler
+        faulthandler.enable()
+        probe_stage('package discovery')
         missing = [name for name in PACKAGES if importlib.util.find_spec(name) is None]
         cuda, gpu, mps = False, "", False
         versions = {}
@@ -349,11 +402,15 @@ def main():
                 pass
         if "torch" not in missing:
             try:
+                probe_stage('import torch')
                 import torch
                 versions["torch"] = torch.__version__
+                probe_stage('torch.cuda.is_available')
                 cuda = torch.cuda.is_available()
+                probe_stage('torch.backends.mps.is_available')
                 mps = torch.backends.mps.is_available()
                 if cuda:
+                    probe_stage('CUDA device name')
                     gpu = torch.cuda.get_device_name(0)
             except Exception as error:
                 from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
@@ -362,6 +419,7 @@ def main():
         for name in ("torchaudio", "transformers", "onnxruntime"):
             if name not in missing:
                 try:
+                    probe_stage('import ' + name)
                     module = importlib.import_module(name)
                     versions[name] = module.__version__
                     if name == "transformers":
@@ -378,28 +436,33 @@ def main():
         if torch_version and audio_version and torch_version != audio_version:
             missing.append('matching torch/torchaudio versions')
         from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
+        probe_stage('adapter discovery')
         adapters = detect_adapters()
         if cuda:
+            probe_stage('selected CUDA adapter')
             adapters = selected_cuda_adapters(torch, adapters)
         checkpoint = get_model(args.family)
         compute_error = ""
         compute = {}
         try:
+            probe_stage('compute selection')
             compute = select_compute(args.device, gguf=checkpoint.backend == "gguf", cuda_available=cuda, adapters=adapters,
                                      mlx_compatible=checkpoint.family == "index", mps_available=mps)
             if compute["translation_device"] == "cuda:0":
-                compute["cuda_check"] = cuda_execution_check(torch)
+                compute["cuda_check"] = cuda_execution_check(torch, stage=probe_stage)
             if 'torch' not in missing:
                 from ModuleFolders.Media.qwen_asr import recognition_device
+                probe_stage('ASR device selection')
                 if args.recognizer == 'sensevoice' and args.asr_device != 'auto':
                     compute['asr_device'] = recognition_device(args.asr_device, args.recognizer, torch)
                 if args.recognizer == 'sensevoice' and compute['asr_device'] == 'cuda:0' and compute['translation_device'] != 'cuda:0':
-                    compute['cuda_check'] = cuda_execution_check(torch)
+                    compute['cuda_check'] = cuda_execution_check(torch, stage=probe_stage)
                 if args.recognizer == 'sensevoice' and compute['asr_device'] == 'mps' and not mps:
                     raise RuntimeError('ASR MPS device is unavailable')
             from ModuleFolders.Media.asr_catalog import get_recognizer
             if get_recognizer(args.recognizer).backend == 'gguf':
                 from ModuleFolders.Media.gguf_asr import select_asr_compute
+                probe_stage('GGUF ASR backend')
                 asr_compute = select_asr_compute(args.asr_device, cuda_available=cuda, adapters=adapters)
                 compute['asr_device'] = asr_compute['translation_device']
                 compute['asr_llama_backend'] = asr_compute['llama_backend']
@@ -407,8 +470,9 @@ def main():
                 if find_server(asr_compute['llama_backend']) is None:
                     missing.append('llama.cpp ASR ' + asr_compute['llama_backend'])
                 if asr_compute['translation_device'] == 'cuda:0' and compute['translation_device'] != 'cuda:0':
-                    compute['cuda_check'] = cuda_execution_check(torch)
+                    compute['cuda_check'] = cuda_execution_check(torch, stage=probe_stage)
             if get_recognizer(args.recognizer).backend == 'vllm':
+                probe_stage('vLLM service')
                 from ModuleFolders.Media.vllm_asr import available_models
                 try:
                     if get_recognizer(args.recognizer).repo not in available_models(args.asr_endpoint):
@@ -417,6 +481,7 @@ def main():
                     raise RuntimeError('Local vLLM service unavailable; start it in Linux/WSL and retry') from None
                 compute['asr_device'] = 'vllm-service'
             if compute["translation_device"] == "mlx":
+                probe_stage('MLX imports and Metal availability')
                 for name, minimum in (("mlx", (0, 32, 3)), ("mlx_lm", (0, 32, 0))):
                     if importlib.util.find_spec(name) is None:
                         missing.append(name)
@@ -436,11 +501,13 @@ def main():
             if sys.platform == "darwin":
                 gpu = adapters[0]["name"] if adapters else ""
             if checkpoint.backend == "gguf":
+                probe_stage('GGUF translation backend')
                 from ModuleFolders.Media.gguf_runtime import find_server
                 if find_server(compute["llama_backend"]) is None:
                     missing.append("llama.cpp " + compute["llama_backend"])
         except RuntimeError as exc:
             compute_error = str(exc)
+        probe_stage('report ready')
         print(json.dumps({"python": sys.executable, "version": sys.version.split()[0], "missing": missing,
                           "cuda": cuda, "gpu": gpu, "versions": versions, "import_errors": import_errors, "adapters": adapters,
                           "mps": mps, "platform": sys.platform, "architecture": platform.machine(),
@@ -508,6 +575,8 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
+        if isinstance(exc, RuntimeProbeError):
+            print(json.dumps({"error_detail": str(exc)}), flush=True)
         if isinstance(exc, RuntimeError) and any(fragment in str(exc) for fragment in (
                 "NVIDIA architecture", "Mixed legacy", "GPU architecture", "CUDA build", "Blackwell GPU", "Maxwell/Pascal")):
             print(json.dumps({"error_detail": str(exc)[:1600]}), flush=True)
