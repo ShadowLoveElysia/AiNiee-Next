@@ -79,6 +79,13 @@ def needs_install(device: str, *, recognizer='sensevoice') -> bool:
         return True
     minimums = {"torch": (2, 9, 1), "torchaudio": (2, 9, 1),
                 "transformers": (5, 7, 0) if sys.platform == "darwin" else (5, 6, 0)}
+    try:
+        torch_version = importlib.metadata.version('torch')
+        audio_version = importlib.metadata.version('torchaudio')
+        if torch_version.split('+')[0] != audio_version.split('+')[0]:
+            return True
+    except importlib.metadata.PackageNotFoundError:
+        return True
     if device == "mlx":
         minimums.update({"mlx": (0, 32, 3), "mlx-lm": (0, 32, 0)})
     for name, minimum in minimums.items():
@@ -334,6 +341,12 @@ def main():
         missing = [name for name in PACKAGES if importlib.util.find_spec(name) is None]
         cuda, gpu, mps = False, "", False
         versions = {}
+        import_errors = {}
+        for name in ('torch', 'torchaudio'):
+            try:
+                versions[name + '_installed'] = importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError:
+                pass
         if "torch" not in missing:
             try:
                 import torch
@@ -342,7 +355,9 @@ def main():
                 mps = torch.backends.mps.is_available()
                 if cuda:
                     gpu = torch.cuda.get_device_name(0)
-            except Exception:
+            except Exception as error:
+                from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+                import_errors['torch'] = safe_installer_line(f'{type(error).__name__}: {error}')
                 missing.append("torch")
         for name in ("torchaudio", "transformers", "onnxruntime"):
             if name not in missing:
@@ -354,8 +369,14 @@ def main():
                         minimum = (5, 7) if sys.platform == "darwin" else (5, 6)
                         if (major, minor) < minimum:
                             missing.append("transformers>=" + '.'.join(map(str, minimum)))
-                except Exception:
+                except Exception as error:
+                    from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+                    import_errors[name] = safe_installer_line(f'{type(error).__name__}: {error}')
                     missing.append(name)
+        torch_version = versions.get('torch_installed', '').split('+')[0]
+        audio_version = versions.get('torchaudio_installed', '').split('+')[0]
+        if torch_version and audio_version and torch_version != audio_version:
+            missing.append('matching torch/torchaudio versions')
         from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
         adapters = detect_adapters()
         if cuda:
@@ -421,7 +442,7 @@ def main():
         except RuntimeError as exc:
             compute_error = str(exc)
         print(json.dumps({"python": sys.executable, "version": sys.version.split()[0], "missing": missing,
-                          "cuda": cuda, "gpu": gpu, "versions": versions, "adapters": adapters,
+                          "cuda": cuda, "gpu": gpu, "versions": versions, "import_errors": import_errors, "adapters": adapters,
                           "mps": mps, "platform": sys.platform, "architecture": platform.machine(),
                           "compute": compute, "compute_error": compute_error}), flush=True)
     elif args.action == "devices":

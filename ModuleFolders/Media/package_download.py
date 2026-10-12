@@ -240,6 +240,17 @@ print(json.dumps([not m or Marker(m).evaluate() for m in json.loads(sys.argv[1])
     return [package for package, active in zip(packages, enabled, strict=True) if active]
 
 
+def preserve_torch_pair(packages, installed):
+    explicit = set()
+    for requirement in packages:
+        match = re.match(r'^\s*([A-Za-z0-9_.-]+)', requirement)
+        if match:
+            explicit.add(match[1].lower().replace('_', '-'))
+    # Keep binary-compatible libraries paired during unrelated dependency installs.
+    return [f'{name}=={installed[name]}' for name in ('torch', 'torchaudio')
+            if name in installed and name not in explicit]
+
+
 def install_packages(uv, python, packages, *, index, extra_index='', cache=CACHE):
     info = target_info(python)
     cache.mkdir(parents=True, exist_ok=True)
@@ -249,6 +260,11 @@ def install_packages(uv, python, packages, *, index, extra_index='', cache=CACHE
         requirements.write_text('\n'.join(packages) + '\n', encoding='utf-8')
         command = [uv, 'pip', 'compile', '--python', str(python), '--format', 'pylock.toml',
                    '--quiet', '--index-url', index, '--output-file', str(lock), str(requirements)]
+        pins = preserve_torch_pair(packages, info['installed'])
+        if pins:
+            constraints = Path(directory) / 'binary-pair.txt'
+            constraints.write_text('\n'.join(pins) + '\n', encoding='utf-8')
+            command += ['--constraint', str(constraints)]
         if extra_index and extra_index != index:
             command += ['--extra-index-url', extra_index]
         print('Resolving package artifacts; byte progress starts when downloads begin.', flush=True)
