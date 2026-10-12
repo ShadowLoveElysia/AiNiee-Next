@@ -22,7 +22,7 @@ RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "width": (360, 2400), "height": (120, 1000),
           "context_segments": (0, 3), "history_segments": (2, 3)}
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
-from ModuleFolders.Media.compute import device_choices
+from ModuleFolders.Media.compute import device_choices, model_device_choices
 
 CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
            "target": ("zh", "en", "ja", "ko"), "device": device_choices()}
@@ -45,6 +45,11 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
         pass
     if data.get("device") not in device_choices():
         data["device"] = "auto"
+    try:
+        if data["device"] not in model_device_choices(data.get("family", "index")):
+            data["device"] = "auto"
+    except ValueError:
+        pass
     if sys.platform == "darwin":
         if data.get("font_family") in {"Microsoft YaHei UI", "Segoe UI"}:
             data["font_family"] = "PingFang SC"

@@ -61,6 +61,7 @@ class DesktopApp:
         self.root.minsize(680, 520)
         self.root.protocol("WM_DELETE_WINDOW", lambda: self.root.after(0, self.close))
         self.root.bind("<Escape>", lambda _: self.hide_overlay())
+        self.root.bind("<FocusIn>", lambda _: self.root.after_idle(self._keep_controls_accessible))
         self.model_root = tk.StringVar(value=model_root or default_model_root())
         self.family = tk.StringVar(value="index")
         self.source = tk.StringVar(value="ja")
@@ -134,8 +135,8 @@ class DesktopApp:
         ttk.Label(languages, text="  →  ").pack(side="left")
         ttk.Combobox(languages, textvariable=self.target, values=("zh", "en", "ja", "ko"), state="readonly", width=10).pack(side="left")
         ttk.Label(languages, text=self.t("device")).pack(side="left")
-        from ModuleFolders.Media.compute import device_choices
-        self.compute_selector = ttk.Combobox(languages, textvariable=self.device, values=device_choices(), state="readonly", width=9)
+        from ModuleFolders.Media.compute import model_device_choices
+        self.compute_selector = ttk.Combobox(languages, textvariable=self.device, values=model_device_choices(self.family.get()), state="readonly", width=9)
         self.compute_selector.pack(side="left")
         self.compute_selector.bind("<<ComboboxSelected>>", self.compute_changed)
         ttk.Label(frame, text=self.t("audio")).grid(row=5, column=0, sticky="w", pady=12)
@@ -279,6 +280,8 @@ class DesktopApp:
             widget.bind("<ButtonRelease-1>", lambda _: setattr(self, "_drag_origin", None))
         self.overlay_width.set(min(self.overlay_width.get(), max(360, screen_width - 80)))
         self.overlay_height.set(min(self.overlay_height.get(), max(120, screen_height - 120)))
+        if self.is_macos:
+            self.overlay_height.set(min(self.overlay_height.get(), max(120, screen_height // 3)))
         self.reset_overlay_position()
         self.apply_appearance()
         self._poll_after = self.root.after(60, self.poll)
@@ -367,6 +370,7 @@ class DesktopApp:
             ("context_segments", self.context_segments), ("history_segments", self.history_segments),
             ("recording", self.recording), ("record_directory", self.record_directory),
         ]}
+        data["height"] = getattr(self, "_overlay_base_height", self.overlay_height.get())
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
         from ModuleFolders.Media.preferences import save_preferences
         data["device"] = self.device.get()
@@ -448,6 +452,7 @@ class DesktopApp:
         scrollbar.pack(side="right", fill="y")
         self.history_text.pack(fill="both", expand=True)
         self.render_history()
+        self.root.after_idle(self._keep_controls_accessible)
 
     def render_history(self):
         try:
@@ -485,12 +490,8 @@ class DesktopApp:
             self.history.set_limit(max(2, min(3, self.history_segments.get())))
         except self.tk.TclError:
             pass
-        entries = list(self.history.captions)
-        if not final:
-            entries = entries[-(self.history.captions.maxlen - 1):]
-            entries.append({"source_text": source, "translated_text": translation})
-        self.translation_label.configure(text="\n".join(item.get("translated_text") or "" for item in entries))
-        self.source_label.configure(text="\n".join(item.get("source_text") or "" for item in entries))
+        self.translation_label.configure(text=translation)
+        self.source_label.configure(text=source)
         if self._fit_after is None:
             self._fit_after = self.root.after_idle(self.fit_caption_history)
 
@@ -498,13 +499,16 @@ class DesktopApp:
         self._fit_after = None
         if self.closed:
             return
+        if self.translation_label.winfo_width() <= 1:
+            return
         required = self.translation_label.winfo_reqheight() + 12
         if self.show_source.get():
             required += self.source_label.winfo_reqheight() + 14
-        height = min(required, max(120, self.root.winfo_screenheight() - 120))
-        if height > self.overlay.winfo_height():
+        height = min(max(required, getattr(self, "_overlay_base_height", 240)),
+                     1000, max(120, self.root.winfo_screenheight() - 120))
+        if height != self.overlay.winfo_height():
             self.overlay_height.set(height)
-            self.resize_overlay()
+            self.resize_overlay(automatic=True)
 
     def update_model_details(self) -> None:
         from ModuleFolders.Media.model_catalog import describe_model, get_model, model_files_present
@@ -522,6 +526,11 @@ class DesktopApp:
             self.environment_status.set(self.t("stop_before_setup"))
             return
         self.family.set(get_model(self.model_choice.get()).key)
+        from ModuleFolders.Media.compute import model_device_choices
+        choices = model_device_choices(self.family.get())
+        self.compute_selector.configure(values=choices)
+        if self.device.get() not in choices:
+            self.device.set("auto")
         self.update_model_details()
         self.save_settings()
         self.compute_changed()
@@ -571,6 +580,7 @@ class DesktopApp:
         self.model_list.bind("<<TreeviewSelect>>", self.update_catalog_selection)
         dialog.bind("<Escape>", lambda _: dialog.destroy())
         self.refresh_model_list()
+        self.root.after_idle(self._keep_controls_accessible)
 
     def refresh_model_list(self) -> None:
         from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS, model_files_present
@@ -699,6 +709,7 @@ class DesktopApp:
                       command=lambda _: self.apply_appearance(), highlightthickness=0).grid(row=6, column=1, sticky="ew")
         ttk.Label(frame, text=self.t("style_hint"), wraplength=420).grid(
             row=7, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self.root.after_idle(self._keep_controls_accessible)
 
     def _swatch_foreground(self, color: str) -> str:
         r, g, b = self.root.winfo_rgb(color)
@@ -736,6 +747,10 @@ class DesktopApp:
             self.source_label.configure(wraplength=width)
             self.translation_label.configure(wraplength=width)
             self._sync_layers()
+            if width != getattr(self, "_last_wrap_width", None):
+                self._last_wrap_width = width
+                if self._fit_after is None:
+                    self._fit_after = self.root.after_idle(self.fit_caption_history)
 
     def _sync_layers(self) -> None:
         if self.closed or not hasattr(self, "background"):
@@ -751,11 +766,24 @@ class DesktopApp:
         self.background.deiconify()
         self.overlay.lift(self.background)
 
+    def _keep_controls_accessible(self):
+        if not self.is_macos or self.closed:
+            return
+        from ModuleFolders.Media.macos_window import keep_controls_accessible
+        dialogs = [window for name in ("style_dialog", "history_dialog", "catalog_dialog")
+                   if (window := getattr(self, name, None)) is not None and window.winfo_exists()]
+        try:
+            keep_controls_accessible(self.root, self.overlay, dialogs,
+                                     visible=self.overlay.state() != "withdrawn")
+        except (RuntimeError, OSError, self.tk.TclError):
+            self.status.set(self.t("unsupported_window"))
+
     def hide_overlay(self) -> None:
         self.overlay.withdraw()
         self.background.withdraw()
+        self._keep_controls_accessible()
 
-    def resize_overlay(self) -> None:
+    def resize_overlay(self, *, automatic=False) -> None:
         if not hasattr(self, "overlay"):
             return
         try:
@@ -765,6 +793,8 @@ class DesktopApp:
             return
         self.overlay_width.set(width)
         self.overlay_height.set(height)
+        if not automatic:
+            self._overlay_base_height = height
         self.overlay.geometry(f"{width}x{height}")
 
     def reset_overlay_position(self) -> None:
@@ -806,14 +836,15 @@ class DesktopApp:
             self._sync_layers()
             self.root.update_idletasks()
             for window in (self.background, self.overlay):
-                set_mouse_passthrough(window, self.locked.get())
+                set_mouse_passthrough(window, self.locked.get() or (self.is_macos and window is self.background))
+            self._keep_controls_accessible()
         except (self.tk.TclError, OSError, RuntimeError):
             if self.locked.get():
                 self.locked.set(False)
                 self.topmost_button.configure(state="normal")
                 for window in (self.background, self.overlay):
                     try:
-                        set_mouse_passthrough(window, False)
+                        set_mouse_passthrough(window, self.is_macos and window is self.background)
                         window.attributes("-topmost", self.topmost.get())
                     except (self.tk.TclError, OSError, RuntimeError):
                         pass
@@ -844,6 +875,7 @@ class DesktopApp:
         self.overlay.deiconify()
         self._sync_layers()
         self.overlay.lift()
+        self._keep_controls_accessible()
 
     def start(self) -> None:
         from tkinter import messagebox
@@ -875,6 +907,8 @@ class DesktopApp:
             messagebox.showerror(self.t("cannot_start"), str(exc), parent=self.root)
             return
         self.source_text = self.translation_text = ""
+        self.history.clear()
+        self.render_history()
         self.source_label.configure(text="")
         self.translation_label.configure(text=self.t("loading"))
         self.state = "loading"

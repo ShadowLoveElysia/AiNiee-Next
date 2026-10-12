@@ -41,3 +41,15 @@ def configure_window(window, *, passthrough: bool) -> None:
     # Join Spaces and allow the floating subtitle beside full-screen apps.
     behavior = _send(native, "collectionBehavior", ctypes.c_ulong)
     _send(native, "setCollectionBehavior:", None, (ctypes.c_ulong,), (behavior | 1 | 256,))
+
+
+def keep_controls_accessible(controller, overlay, dialogs=(), *, visible=True) -> None:
+    level = _send(native_window(overlay), "level", ctypes.c_long) + 1 if visible else 0
+    for window in (controller, *dialogs):
+        _send(native_window(window), "setLevel:", None, (ctypes.c_long,), (level,))
+
+
+def invalidate_content(window) -> None:
+    native = native_window(window)
+    _send(native, "setViewsNeedDisplay:", None, (ctypes.c_bool,), (True,))
+    _send(_send(native, "contentView"), "setNeedsDisplay:", None, (ctypes.c_bool,), (True,))

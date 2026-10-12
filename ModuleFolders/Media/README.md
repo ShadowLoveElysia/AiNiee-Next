@@ -58,8 +58,17 @@ The Mac controller uses Aqua controls, PingFang subtitles, trackpad scrolling,
 transparent subtitle/background layers and Cocoa mouse passthrough. Lock/unlock
 remains accessible from the controller. The Cocoa layers join Spaces and allow
 full-screen auxiliary windows; actual full-screen ordering depends on macOS.
+The background layer always ignores mouse events on macOS; the controller and
+its dialogs sit above the subtitle layer while it is visible. Subtitle sizing
+waits for layout, returns to the selected base height after long text, and does
+not persist automatic growth as the next launch's size. Each new caption replaces
+the displayed text; previous captions remain available in the history dialog.
+Mac transparent content is explicitly invalidated after redraw.
 Windows device/font preferences copied to a Mac are normalized in memory;
 unrelated preferences are preserved.
+Compute choices follow the selected model: GGUF offers Metal/CPU and excludes
+MPS/MLX. An incompatible saved backend is reset to auto, and choosing a different
+model rechecks its backend while preserving compatible manual choices.
 
 On native Apple Silicon, `auto` selects:
 

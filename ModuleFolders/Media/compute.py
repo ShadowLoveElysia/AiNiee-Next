@@ -71,3 +71,12 @@ def select_compute(requested: str, *, gguf: bool, cuda_available: bool, adapters
 
 def device_choices() -> tuple[str, ...]:
     return ("auto", "mlx", "metal", "mps", "cpu") if sys.platform == "darwin" else ("auto", "cuda:0", "vulkan", "cpu")
+
+
+def model_device_choices(family: str) -> tuple[str, ...]:
+    from ModuleFolders.Media.model_catalog import get_model
+    model = get_model(family)
+    excluded = {"mlx", "mps"} if model.backend == "gguf" else {"metal", "vulkan"}
+    if model.family != "index":
+        excluded.add("mlx")
+    return tuple(choice for choice in device_choices() if choice not in excluded)

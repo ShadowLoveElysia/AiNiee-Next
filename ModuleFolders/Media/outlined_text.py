@@ -1,6 +1,7 @@
 """Wrapped subtitle text with an adjustable, fully opaque outline."""
 
 import math
+import sys
 import tkinter as tk
 
 
@@ -9,6 +10,8 @@ class OutlinedText(tk.Canvas):
                  stroke_width=2, stroke_color="#000000", **kwargs):
         for option in ("justify", "anchor"):
             kwargs.pop(option, None)
+        kwargs.setdefault("width", 1)
+        kwargs.setdefault("height", 1)
         super().__init__(master, highlightthickness=0, borderwidth=0, **kwargs)
         self._text_options = dict(text=text, fg=fg, font=font or ("Segoe UI", 26),
                                   wraplength=wraplength, stroke_width=stroke_width, stroke_color=stroke_color)
@@ -49,6 +52,9 @@ class OutlinedText(tk.Canvas):
 
     def _render(self):
         self._render_after = None
+        # Wait for the packer to allocate width; a 1px wrap would inflate the panel.
+        if self.winfo_width() <= 1:
+            return
         self.delete("all")
         options = self._text_options
         radius = max(0, min(6, int(options["stroke_width"])))
@@ -70,3 +76,9 @@ class OutlinedText(tk.Canvas):
             for dx, dy in sorted(offsets):
                 self.create_text(padding + dx, y + dy, fill=options["stroke_color"], tags="outline", **text)
             self.tag_raise(front)
+        if sys.platform == "darwin":
+            from ModuleFolders.Media.macos_window import invalidate_content
+            try:
+                invalidate_content(self.winfo_toplevel())
+            except (OSError, RuntimeError, tk.TclError):
+                pass
