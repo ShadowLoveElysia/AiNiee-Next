@@ -172,7 +172,7 @@ def install(device: str, *, translation_device: str = "") -> None:
         print("Creating isolated media runtime", flush=True)
         if uv:
             subprocess.run([uv, "venv", "--python", sys.executable if sys.platform == "darwin" else "3.12",
-                            "--seed", str(destination)], check=True)
+                            "--seed", "--allow-existing", str(destination)], check=True)
         elif getattr(sys, "frozen", False):
             raise RuntimeError("A Python 3.12 interpreter or uv is required to install the media runtime")
         else:

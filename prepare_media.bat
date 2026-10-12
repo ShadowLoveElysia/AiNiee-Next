@@ -35,7 +35,7 @@ echo [1/5] Preparing isolated Python 3.12...
 if not exist "tmp\test" mkdir "tmp\test"
 if errorlevel 1 goto :failed
 if exist "%MEDIA_PYTHON%" goto :check_python
-uv venv --python 3.12 --seed "Resource\MediaRuntime"
+uv venv --python 3.12 --seed --allow-existing "Resource\MediaRuntime"
 if errorlevel 1 goto :failed
 
 :check_python
