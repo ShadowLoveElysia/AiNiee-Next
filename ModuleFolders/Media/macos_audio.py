@@ -82,13 +82,20 @@ def prepare_helper(emit=lambda _: None) -> Path:
         # Compiler diagnostics describe project source; do not include audio or environment.
         detail = '\n'.join(result.stderr.splitlines()[-12:])
         raise RuntimeError("macOS capture build failed; use Xcode 15.3+ Command Line Tools: " + detail)
+    codesign = shutil.which('codesign') or '/usr/bin/codesign'
     (contents / "source.sha256").write_text(build_signature(), encoding="ascii")
     try:
-        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "ai.ainiee.system-audio",
-                        str(helper_directory())], check=True, capture_output=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+        executable_result = subprocess.run([codesign, '--force', '--sign', '-', '--timestamp=none',
+                                            '--identifier', 'ai.ainiee.system-audio', str(executable)],
+                                           check=True, capture_output=True, text=True, timeout=30)
+        subprocess.run([codesign, '--force', '--sign', '-', '--timestamp=none',
+                        '--identifier', 'ai.ainiee.system-audio', str(helper_directory())],
+                       check=True, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
         (contents / "source.sha256").unlink(missing_ok=True)
-        raise RuntimeError("macOS audio helper signing failed; verify Xcode Command Line Tools") from None
+        detail = getattr(error, 'stderr', '') or str(error)
+        detail = ' '.join(str(detail).split())[:800]
+        raise RuntimeError("macOS audio helper signing failed (" + detail + "). Verify xcrun --find codesign and Xcode Command Line Tools") from None
     emit(json.dumps({"model": "macOS system audio", "stage": "ready"}))
     return executable
 

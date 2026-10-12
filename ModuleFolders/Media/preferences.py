@@ -54,9 +54,12 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
     for key in ('recognizer', 'recognition_device'):
         if data.get(key) not in CHOICES[key]:
             data[key] = DEFAULTS[key]
-    from ModuleFolders.Media.gguf_asr import asr_device_choices
-    if data['recognition_device'] not in asr_device_choices(data['recognizer']):
-        data['recognition_device'] = 'auto'
+    try:
+        from ModuleFolders.Media.gguf_asr import asr_device_choices
+        if data['recognition_device'] not in asr_device_choices(data['recognizer']):
+            data['recognition_device'] = 'auto'
+    except (ImportError, ModuleNotFoundError):
+        pass
     if data.get("device") not in device_choices():
         data["device"] = "auto"
     try:
