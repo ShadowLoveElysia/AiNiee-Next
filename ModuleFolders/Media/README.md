@@ -20,7 +20,7 @@ ModelScope ASR/translation weights and llama.cpp archives report transferred
 bytes, percentage, current transfer speed and estimated time remaining, refreshed
 about twice per second. Resumed bytes count toward completion but not download
 speed. Parallel archive ranges aggregate their positions; retries do not count
-the same stored bytes twice. Assembly and hash verification are separate stages,
+the same stored bytes twice. Assembly remains a separate stage,
 and failures never report successful completion. Unknown totals show `?` instead
 of a fabricated percentage or ETA.
 
@@ -28,8 +28,8 @@ Direct terminal runs show readable progress; captured subprocesses emit JSON
 events for the controller. The controller displays the current transfer and
 forwards it to the managed TUI diagnostic panel or standalone terminal.
 Media dependency installation resolves exact artifacts with uv, downloads each
-wheel/source archive through a measured, resumable SHA-256 checked transfer, and
-installs the local files with uv. Torch now reports actual byte speed even when
+wheel/source archive through a measured, resumable transfer, and installs the local
+files with uv. Torch now reports actual byte speed even when
 the controller captures installer output. This path requires a uv version with
 `pip compile --format pylock.toml` (tested with 0.13.0); installed exact package
 versions are skipped and verified downloaded artifacts are cached under
@@ -43,8 +43,7 @@ from model inference and no audio/source text is included in download events.
 Package request failures report bounded HTTP/TLS/DNS/timeout categories and the
 download hostname, without authenticated URLs. Python requests respect explicit
 CA bundle settings. After repeated network failures, the same URL can be retried
-with system curl (Windows `curl.exe`), retaining byte progress, resume and the
-original hash. No certificate verification bypass or automatic source change
+with system curl (Windows `curl.exe`), retaining byte progress and resume. No certificate verification bypass or automatic source change
 is used. Filesystem permission failures are reported as filesystem failures.
 Both media install stages pin matching Torch/torchaudio versions. Installing
 other dependencies also preserves an existing Torch pair unless explicitly
@@ -498,7 +497,7 @@ frozen-distribution installation and cross-platform capture need separate valida
 The current source launcher has been validated on Windows. Fresh multi-GB
 installation and public-model downloading require network access and have not
 been repeated as part of the desktop integration tests; installer commands,
-consent branches and download hash verification have regression coverage.
+consent branches and ModelScope integrity verification have regression coverage.
 
 
 Open the independent desktop controller from the TUI's **Live Translation
@@ -559,6 +558,12 @@ Both recording and translation-context settings are available in the TUI and des
 The model directory is selected through the controller or
 `AINIEE_MEDIA_MODEL_ROOT`; an existing `G:\AiNiee-Models` is detected on Windows.
 Models are not downloaded automatically. Existing batch profiles are unchanged.
+
+The Python package installer delegates wheel content acceptance to uv and the
+package index. It does not apply a project-side SHA-256 or advertised-size check;
+HTTPS transport, response handling, and resumable download behavior remain in
+place. ModelScope models and native runtime assets continue to require their
+pinned SHA-256 checksums.
 
 Startup checks the inference environment alongside audio-device discovery, so a
 slow device enumeration does not delay readiness checks. Audio enumeration has a
