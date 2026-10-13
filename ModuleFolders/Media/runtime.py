@@ -54,6 +54,23 @@ def probe_stage(name: str) -> None:
     print("[runtime probe] " + name, file=sys.stderr, flush=True)
 
 
+def check_vad_runtime(torch) -> dict:
+    """Validate the bundled CPU VAD without audio capture or remote downloads."""
+    from ModuleFolders.Media.local_backends import SileroSpeechDetector
+    import math
+
+    threads = torch.get_num_threads()
+    try:
+        detector = SileroSpeechDetector()
+        probability = detector.probability(bytes(1024))
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
+            raise RuntimeError('Silero VAD returned an invalid speech probability')
+        return {'backend': 'torchscript', 'sample_rate': 16000, 'frame_samples': 512}
+    finally:
+        # Importing Silero can change the process-wide Torch thread count.
+        torch.set_num_threads(threads)
+
+
 def child_failure(label: str, result) -> RuntimeProbeError:
     from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
     code = result.returncode
@@ -394,7 +411,7 @@ def install(device: str, *, translation_device: str = "", recognizer='sensevoice
     apple_packages = ["mlx==0.32.3", "mlx-lm==0.32.0"] if translation_device == "mlx" else []
     transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
     extensions = [*torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
-                  "silero-vad", "soundcard", "numpy", "soundfile", "librosa",
+                  "silero-vad==6.2.3", "soundcard", "numpy", "soundfile", "librosa",
                   "huggingface-hub", "safetensors", *apple_packages]
     if uv:
         subprocess.run([sys.executable, '-u', '-m', 'ModuleFolders.Media.package_download', '--python', python,
@@ -456,6 +473,7 @@ def main():
         cuda, gpu, mps = False, "", False
         versions = {}
         import_errors = {}
+        vad = {}
         for name in ('torch', 'torchaudio'):
             try:
                 versions[name + '_installed'] = importlib.metadata.version(name)
@@ -502,6 +520,14 @@ def main():
         audio_version = versions.get('torchaudio_installed', '').split('+')[0]
         if torch_version and audio_version and torch_version != audio_version:
             missing.append('matching torch/torchaudio versions')
+        if 'torch' not in missing and 'silero_vad' not in missing:
+            probe_stage('Silero VAD model load and inference')
+            try:
+                vad = check_vad_runtime(torch)
+            except Exception as error:
+                from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
+                import_errors['silero_vad'] = safe_installer_line(f'{type(error).__name__}: {error}')
+                missing.append('silero_vad')
         from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
         probe_stage('adapter discovery')
         if cuda:
@@ -578,7 +604,7 @@ def main():
             compute_error = str(exc)
         probe_stage('report ready')
         print(json.dumps({"python": sys.executable, "version": sys.version.split()[0], "missing": missing,
-                          "cuda": cuda, "gpu": gpu, "versions": versions, "import_errors": import_errors, "adapters": adapters,
+                          "cuda": cuda, "gpu": gpu, "versions": versions, "import_errors": import_errors, "vad": vad, "adapters": adapters,
                           "mps": mps, "platform": sys.platform, "architecture": platform.machine(),
                           "compute": compute, "compute_error": compute_error}), flush=True)
     elif args.action == "devices":

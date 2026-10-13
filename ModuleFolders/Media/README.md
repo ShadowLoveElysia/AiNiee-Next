@@ -49,8 +49,9 @@ is used. Filesystem permission failures are reported as filesystem failures.
 Both media install stages pin matching Torch/torchaudio versions. Installing
 other dependencies also preserves an existing Torch pair unless explicitly
 requested otherwise. The runtime report includes installed versions and bounded
-import errors; `missing: torchaudio` can mean its native extension failed to load,
-not just that its package was never downloaded.
+import errors; it also loads the bundled Silero TorchScript model and runs one
+512-sample silent-frame check. `missing: silero_vad` therefore covers both a
+missing package and an unusable bundled VAD model before capture starts.
 Installer GPU discovery runs in short-lived children so the installer does not
 hold Torch DLLs open while replacing them. If Windows reports access denied for
 `torch/_C*.pyd`, close capture and other processes using that environment before
