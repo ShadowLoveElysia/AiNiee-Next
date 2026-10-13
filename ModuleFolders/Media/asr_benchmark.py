@@ -20,9 +20,8 @@ def main():
     parser.add_argument('--language', choices=('auto', 'ja', 'en', 'zh', 'ko', 'yue'), default='ja')
     parser.add_argument('--endpoint', default='http://127.0.0.1:8001/v1')
     parser.add_argument('--runs', type=int, default=5)
-    parser.add_argument('--cpu-threads', type=int, default=4)
     args = parser.parse_args()
-    if not 1 <= args.runs <= 30 or not 1 <= args.cpu_threads <= 64:
+    if not 1 <= args.runs <= 30:
         parser.error('--runs must be between 1 and 30')
     if get_recognizer(args.recognizer).backend != 'vllm' and not recognition_files_present(args.model_root, args.recognizer):
         parser.error('Recognition weights are missing; download the selected model first')
@@ -35,8 +34,6 @@ def main():
         pcm = stream.readframes(frames)
     model = get_recognizer(args.recognizer)
     import torch
-    if args.device == 'cpu':
-        torch.set_num_threads(args.cpu_threads)
     if model.backend == 'gguf':
         from ModuleFolders.Media.gguf_asr import select_asr_compute
         from ModuleFolders.Media.compute import detect_adapters, selected_cuda_adapters
@@ -51,8 +48,7 @@ def main():
         recognizer = SenseVoiceRecognizer(args.model_root / model.directory, device=args.device)
     elif model.backend == 'gguf':
         from ModuleFolders.Media.gguf_asr import GgufSpeechRecognizer
-        recognizer = GgufSpeechRecognizer(args.model_root / model.directory, recognizer=model.key,
-                                           device=args.device, cpu_threads=args.cpu_threads)
+        recognizer = GgufSpeechRecognizer(args.model_root / model.directory, recognizer=model.key, device=args.device)
     else:
         from ModuleFolders.Media.vllm_asr import VllmSpeechRecognizer
         recognizer = VllmSpeechRecognizer(model=model.repo, endpoint=args.endpoint)
@@ -74,12 +70,9 @@ def main():
             recognizer.close()
     print(json.dumps({'recognizer': args.recognizer, 'device': 'vllm-service' if model.backend == 'vllm' else args.device, 'audio_ms': segment.end_ms,
                       'load_ms': round(load_ms, 2), 'first_asr_ms': round(durations[0], 2),
-                      'warm_median_ms': round(statistics.median(warm), 2),
-                      'warm_p90_ms': round(statistics.quantiles(warm, n=10, method='inclusive')[8], 2) if len(warm) >= 2 else round(warm[0], 2),
-                      'warm_max_ms': round(max(warm), 2),
+                      'warm_median_ms': round(statistics.median(warm), 2), 'warm_max_ms': round(max(warm), 2),
                       'asr_realtime_factor': round(statistics.median(warm) / segment.end_ms, 4),
-                      'cpu_threads': args.cpu_threads, 'runs': args.runs,
-                      'scope': 'ASR only; excludes endpoint, translation and queue'}, ensure_ascii=False))
+                      'runs': args.runs, 'scope': 'ASR only; excludes endpoint, translation and queue'}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

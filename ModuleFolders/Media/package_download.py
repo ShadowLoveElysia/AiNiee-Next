@@ -101,22 +101,33 @@ def curl_download(url, partial, progress, expected_size):
             process.stderr.close()
 
 
+def checksum(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(4 * 1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def fetch_artifact(artifact, name, *, cache=CACHE):
     url = artifact['url']
     if urlparse(url).scheme != 'https':
         raise ValueError('Package download requires HTTPS')
+    digest = artifact.get('hashes', {}).get('sha256', '')
+    if not re.fullmatch('[a-fA-F0-9]{64}', digest):
+        raise ValueError('Package SHA-256 is required')
+    digest = digest.lower()
     filename = unquote(Path(urlparse(url).path).name)
     if Path(filename).name != filename or '\\' in filename or not filename:
         raise ValueError('Invalid package artifact name')
-    # The cache key identifies the URL only; package content is intentionally not
-    # checked against lockfile hashes or advertised sizes.
-    cache_key = hashlib.sha256(url.encode('utf-8')).hexdigest()
-    destination = cache / cache_key / filename
+    destination = cache / digest / filename
     destination.parent.mkdir(parents=True, exist_ok=True)
     size = artifact.get('size')
     with DownloadProgress(name + ' / ' + filename, size) as progress:
         if destination.is_file():
-            progress.publish(force=True, stage='cached')
+            progress.publish(force=True, stage='verifying')
+            if checksum(destination) != digest:
+                raise RuntimeError('Cached package hash mismatch: ' + filename)
             progress.set_position('file', destination.stat().st_size)
             return destination
         partial = destination.with_name(filename + '.incomplete')
@@ -125,6 +136,10 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
         for attempt in range(3):
             offset = partial.stat().st_size if partial.exists() else 0
             progress.set_position('file', offset)
+            if size is not None and offset > size:
+                raise RuntimeError('Partial package exceeds expected size')
+            if size is not None and offset == size:
+                break
             headers = {'Accept-Encoding': 'identity', 'User-Agent': 'AiNiee-PackageDownloader/1.0'}
             if offset:
                 headers['Range'] = f'bytes={offset}-'
@@ -132,19 +147,26 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
                 with urlopen(Request(url, headers=headers), timeout=45, context=context) as response:
                     if response.status == 206:
                         match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
-                        if not match or int(match[1]) != offset or int(match[2]) != int(match[3]) - 1:
+                        if not match or int(match[1]) != offset or (size is not None and int(match[3]) != size) or int(match[2]) != int(match[3]) - 1:
                             raise RuntimeError('Package resume response mismatch')
+                        size = int(match[3])
                     elif response.status == 200:
                         offset = 0
                         progress.set_position('file', 0)
+                        if size is None and response.headers.get('Content-Length'):
+                            size = int(response.headers['Content-Length'])
                     else:
                         raise RuntimeError('Unexpected package download status')
+                    progress.total = size
                     with partial.open('ab' if offset else 'wb') as output:
                         while block := response.read(256 * 1024):
+                            if size is not None and offset + len(block) > size:
+                                raise RuntimeError('Package exceeds expected size')
                             output.write(block)
                             offset += len(block)
                             progress.set_position('file', offset, transferred=len(block))
-                break
+                if size is None or offset == size:
+                    break
             except NETWORK_ERRORS as error:
                 last_error = network_error_detail(error)
                 if isinstance(error, HTTPError):
@@ -152,17 +174,20 @@ def fetch_artifact(artifact, name, *, cache=CACHE):
                 host = urlparse(url).hostname or 'download host'
                 print(f'Package request {attempt + 1}/3 failed ({host}): {last_error}', flush=True)
                 if attempt == 2:
-                    print('Retrying the same package URL with system curl.', flush=True)
-                    fallback_error = curl_download(url, partial, progress, None)
+                    print('Retrying the same package URL with system curl; source and SHA-256 remain unchanged.', flush=True)
+                    fallback_error = curl_download(url, partial, progress, size)
                     if fallback_error == '':
+                        if size is None and partial.is_file():
+                            size = partial.stat().st_size
+                            progress.total = size
                         break
                     if fallback_error:
                         last_error += '; ' + fallback_error
                     raise RuntimeError('Package download failed: ' + filename + ' (' + host + '): ' + last_error) from None
             time.sleep(1)
-        progress.publish(force=True, stage='downloaded')
-        if not partial.is_file():
-            raise RuntimeError('Package download produced no file: ' + filename)
+        progress.publish(force=True, stage='verifying')
+        if not partial.is_file() or (size is not None and partial.stat().st_size != size) or checksum(partial) != digest:
+            raise RuntimeError('Package size/hash verification failed: ' + filename)
         partial.rename(destination)
         return destination
 
