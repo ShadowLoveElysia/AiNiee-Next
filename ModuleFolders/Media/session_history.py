@@ -1,4 +1,4 @@
-"""Bounded in-memory captions with explicitly opt-in transcript recording."""
+"""Session captions with explicitly opt-in transcript recording."""
 
 from collections import deque
 from datetime import datetime, timezone
@@ -8,15 +8,10 @@ import uuid
 
 
 class SessionHistory:
-    def __init__(self, limit: int = 3):
-        self.captions = deque(maxlen=limit)
+    def __init__(self):
+        self.captions = deque()
         self._record = None
         self.record_path = None
-
-    def set_limit(self, limit: int):
-        if limit not in {2, 3}:
-            raise ValueError("History size must be 2 or 3")
-        self.captions = deque(self.captions, maxlen=limit)
 
     @property
     def recording(self):

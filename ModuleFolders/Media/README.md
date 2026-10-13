@@ -291,8 +291,11 @@ full-screen auxiliary windows; actual full-screen ordering depends on macOS.
 The background layer always ignores mouse events on macOS; the controller and
 its dialogs sit above the subtitle layer while it is visible. Subtitle sizing
 waits for layout, returns to the selected base height after long text, and does
-not persist automatic growth as the next launch's size. Each new caption replaces
-the displayed text; previous captions remain available in the history dialog.
+not persist automatic growth as the next launch's size. The rounded subtitle
+panel follows new captions. When unlocked and background opacity is at least 10%,
+the mouse wheel or trackpad scrolls through the current session's captions;
+Page Up/Page Down and End also work after focusing the panel. New captions preserve
+the reader's position until scrolling back to the bottom or pressing End.
 Mac transparent content is explicitly invalidated after redraw.
 Windows device/font preferences copied to a Mac are normalized in memory;
 unrelated preferences are preserved.
@@ -537,9 +540,12 @@ away or minimized while the subtitle window stays visible.
 
 Model and appearance preferences are saved to `Resource/media_overlay.json`
 as they are edited and when closing the controller. Recording is off by default;
-only the last 2–3 completed captions are retained in memory and displayed in the
-overlay. Recent translations opens a scrollable view of these entries so wrapped
-text can be read fully. Dynamic translation context is off by default (0).
+completed captions remain in memory for the current session and can be scrolled
+directly in the overlay when unlocked with opacity at least 10%. Locking the panel
+or lowering opacity below 10% returns to the latest captions and disables scrolling.
+Recent translations also opens a separate scrollable view. There is no visible
+history-count setting; restarting clears the previous session. Dynamic translation
+context is off by default (0).
 Users may enable up to 3 previous source/translation pairs within a
 1600-character budget. In-memory caption history and recording remain independent
 of the context sent to the translation model.
@@ -549,10 +555,21 @@ are written to a new UTF-8 JSONL file in the selected recording directory, inclu
 ASR source text and final translated text. Intermediate generated text and audio
 are not recorded. Disabling recording or stopping closes the file; earlier files
 remain available. Enabling recording does not retroactively save in-memory history.
-Both recording and history/context settings are available in the TUI and desktop.
+Both recording and translation-context settings are available in the TUI and desktop.
 The model directory is selected through the controller or
 `AINIEE_MEDIA_MODEL_ROOT`; an existing `G:\AiNiee-Models` is detected on Windows.
 Models are not downloaded automatically. Existing batch profiles are unchanged.
+
+Startup checks the inference environment alongside audio-device discovery, so a
+slow device enumeration does not delay readiness checks. Audio enumeration has a
+15-second per-interpreter limit and a 20-second total budget. Successful desktop
+readiness checks are reused for 60 seconds for the same interpreter and backend;
+package/interpreter changes and installation invalidate this cache. Failed checks
+and vLLM service checks are always retried. Direct runtime `probe` commands always
+perform a fresh check. CUDA checks use Torch's selected adapter rather than an
+additional system inventory; GGUF checks inspect the Transformers package version
+without importing it. CUDA execution validation is still performed. A readiness
+timeout includes the last completed stage for diagnosis.
 
 Dependencies are optional: Torch/torchaudio with matching CUDA builds,
 Transformers 5.6.0, accelerate, FunASR, sentencepiece, Silero VAD, ONNX Runtime,

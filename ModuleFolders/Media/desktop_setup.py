@@ -8,7 +8,7 @@ import threading
 import json
 
 from ModuleFolders.Media.preferences import PROJECT_ROOT
-from ModuleFolders.Media.runtime import probe, runtime_python, subprocess_environment
+from ModuleFolders.Media.runtime import cached_probe as probe, clear_probe_cache, runtime_python, subprocess_environment
 
 
 def stop_setup_process(process):
@@ -88,6 +88,7 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 except ValueError:
                     message += " · " + text["models_missing"]
             else:
+                clear_probe_cache()
                 args = [sys.executable if action in {"install", "configure"} else interpreter,
                         "-m", "ModuleFolders.Media.runtime", action, "--managed"]
                 args += ['--recognizer', asr_key or recognizer, '--asr-device', asr_device]
@@ -153,7 +154,9 @@ def prepare_runtime(app, action: str, *, confirmed: bool = False, model_key: str
                 message = text["setup_complete"]
             success = True
         except Exception as exc:
-            message = text["setup_failed"].format(detail=setup_error or type(exc).__name__)
+            from ModuleFolders.Media.runtime import RuntimeProbeError
+            detail = str(exc) if isinstance(exc, RuntimeProbeError) else type(exc).__name__
+            message = text["setup_failed"].format(detail=setup_error or detail)
         results.put({"type": "finished", "message": message, "report": report, "action": action,
                      "success": success, "runtime_python": prepared_python if action in {"install", "configure"} else None,
                      "runtime_signature": ((prepared_python or str(runtime_python())) if action in {"install", "configure"} else interpreter,

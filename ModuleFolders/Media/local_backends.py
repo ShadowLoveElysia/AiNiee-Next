@@ -149,7 +149,9 @@ class SileroSpeechDetector:
     def __init__(self) -> None:
         from silero_vad import load_silero_vad
 
-        self.model = load_silero_vad(onnx=True)
+        # Keep the live path independent from ONNX Runtime native DLLs; some Windows
+        # driver/CPU combinations crash while importing the extension.
+        self.model = load_silero_vad(onnx=False)
         self.model.reset_states()
 
     def probability(self, pcm_s16le: bytes) -> float:

@@ -68,7 +68,7 @@ echo "[2/5] Installing matching Torch and torchaudio..."
 echo "[3/5] Installing recognition, translation and audio libraries..."
 task_transformers='transformers==5.7.0'
 task_packages=('torch==2.9.1' 'torchaudio==2.9.1' "$task_transformers" accelerate 'funasr>=1.2,<2' sentencepiece silero-vad
-               onnxruntime soundcard numpy soundfile librosa huggingface-hub safetensors requests)
+               soundcard numpy soundfile librosa huggingface-hub safetensors requests)
 if [ "$task_selected" = "mlx" ]; then
     task_packages+=('mlx==0.32.3' 'mlx-lm==0.32.0')
 fi

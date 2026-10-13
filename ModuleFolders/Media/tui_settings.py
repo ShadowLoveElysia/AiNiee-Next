@@ -12,7 +12,7 @@ FIELDS = [
     ("background_color", "background_color"), ("stroke_width", "stroke_width"),
     ("stroke_color", "stroke_color"), ("show_source", "bilingual"), ("topmost", "topmost"),
     ("locked", "lock_position"), ("width", "width"), ("height", "height"),
-    ("context_segments", "context_segments"), ("history_segments", "history_segments"),
+    ("context_segments", "context_segments"),
     ("recording", "recording"), ("record_directory", "record_directory"),
     ("package_source", "package_source"),
     ('recognizer', 'recognizer'), ('recognition_device', 'recognition_device'),

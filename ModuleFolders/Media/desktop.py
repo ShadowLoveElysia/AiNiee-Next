@@ -41,7 +41,7 @@ class DesktopApp:
         self.session = LiveSession()
         self.device_results = queue.Queue()
         self.device_probe_busy = False
-        self._startup_check_pending = True
+        self._audio_recheck_pending = False
         self.settings_path = PROJECT_ROOT / "Resource/media_overlay.json"
         self.closing = False
         self.initialized = False
@@ -87,7 +87,6 @@ class DesktopApp:
         self.overlay_width = tk.IntVar(value=900)
         self.overlay_height = tk.IntVar(value=240)
         self.context_segments = tk.IntVar(value=0)
-        self.history_segments = tk.IntVar(value=3)
         self.recording = tk.BooleanVar(value=False)
         self.record_directory = tk.StringVar(value=str(PROJECT_ROOT / "Resource/MediaRecords"))
         from ModuleFolders.Media.session_history import SessionHistory
@@ -249,9 +248,6 @@ class DesktopApp:
         ttk.Label(memory, text=self.t("context_segments")).grid(row=0, column=0, sticky="w")
         self.context_spin = ttk.Spinbox(memory, from_=0, to=3, width=4, textvariable=self.context_segments)
         self.context_spin.grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Label(memory, text=self.t("history_segments")).grid(row=1, column=0, sticky="w", pady=8)
-        ttk.Spinbox(memory, from_=2, to=3, width=4, textvariable=self.history_segments,
-                    command=self.refresh_caption_history).grid(row=1, column=1, sticky="w", padx=8)
         ttk.Checkbutton(memory, text=self.t("recording"), variable=self.recording,
                         command=self.toggle_recording).grid(row=2, column=0, columnspan=2, sticky="w")
         ttk.Label(memory, text=self.t("record_directory")).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -302,16 +298,28 @@ class DesktopApp:
         self.overlay.bind("<Configure>", self._resize)
         self.overlay_status = tk.Label(self.overlay, text=self.t("waiting"), bg="#101827", fg="#b6c7df",
                                        anchor="w", font=(self.ui_font, 10))
+        from ModuleFolders.Media.caption_viewport import CaptionViewport
+        self.caption_viewport = CaptionViewport(self.overlay, bg=self._transparent_color)
+        self.caption_viewport.pack(fill="both", expand=True, padx=8, pady=8)
         from ModuleFolders.Media.outlined_text import OutlinedText
-        self.translation_label = OutlinedText(self.overlay, text=self.t("placeholder"), bg=self._transparent_color,
+        self.translation_label = OutlinedText(self.caption_viewport.current_frame, text=self.t("placeholder"), bg=self._transparent_color,
                                          fg="#ffffff", justify="left", anchor="w", wraplength=840)
         self.translation_label.pack(fill="both", expand=True, padx=20, pady=4)
-        self.source_label = OutlinedText(self.overlay, bg=self._transparent_color, fg="#c8d4e5", justify="left", anchor="w", wraplength=840)
+        self.source_label = OutlinedText(self.caption_viewport.current_frame, bg=self._transparent_color, fg="#c8d4e5", justify="left", anchor="w", wraplength=840)
         self._drag_origin = None
-        for widget in (self.overlay, self.background, self.translation_label, self.source_label):
+        for widget in (self.overlay, self.background, self.caption_viewport,
+                       self.caption_viewport.current_frame, self.translation_label, self.source_label):
             widget.bind("<ButtonPress-1>", self._begin_drag)
             widget.bind("<B1-Motion>", self._drag)
             widget.bind("<ButtonRelease-1>", lambda _: setattr(self, "_drag_origin", None))
+        for window in (self.overlay, self.background):
+            window.bind("<MouseWheel>", self._scroll_captions)
+            window.bind("<Button-4>", self._scroll_captions)
+            window.bind("<Button-5>", self._scroll_captions)
+            window.bind("<Prior>", lambda event: self._scroll_captions(event, -self.caption_viewport.winfo_height()))
+            window.bind("<Next>", lambda event: self._scroll_captions(event, self.caption_viewport.winfo_height()))
+            window.bind("<End>", self._show_latest_caption)
+        self.background.bind("<Configure>", self._round_layers)
         self.overlay_width.set(min(self.overlay_width.get(), max(360, screen_width - 80)))
         self.overlay_height.set(min(self.overlay_height.get(), max(120, screen_height - 120)))
         if self.is_macos:
@@ -323,7 +331,7 @@ class DesktopApp:
             from ModuleFolders.Media.supervisor import start_core_watchdog
             start_core_watchdog(self.core_gone.set)
         self.refresh_devices()
-        self._setup_after = self.root.after(0, lambda: None)
+        self._setup_after = self.root.after_idle(lambda: self.prepare_runtime("check"))
         self.initialized = True
         if self.close_requested:
             self.root.after_idle(self.close)
@@ -369,7 +377,6 @@ class DesktopApp:
             self.overlay_width.set(max(360, min(2400, int(data.get("width", 900)))))
             self.overlay_height.set(max(120, min(1000, int(data.get("height", 240)))))
             self.context_segments.set(max(0, min(3, int(data.get("context_segments", 0)))))
-            self.history_segments.set(max(2, min(3, int(data.get("history_segments", 3)))))
             self.recording.set(bool(data.get("recording", False)))
             if isinstance(data.get("record_directory"), str) and data["record_directory"].strip():
                 self.record_directory.set(data["record_directory"])
@@ -404,7 +411,7 @@ class DesktopApp:
             ("translation_color", self.translation_color), ("source_color", self.source_color),
             ("background_color", self.background_color),
             ("stroke_width", self.stroke_width), ("stroke_color", self.stroke_color),
-            ("context_segments", self.context_segments), ("history_segments", self.history_segments),
+            ("context_segments", self.context_segments),
             ("recording", self.recording), ("record_directory", self.record_directory),
         ]}
         data["height"] = getattr(self, "_overlay_base_height", self.overlay_height.get())
@@ -519,10 +526,6 @@ class DesktopApp:
         self.root.after_idle(self._keep_controls_accessible)
 
     def render_history(self):
-        try:
-            self.history.set_limit(max(2, min(3, self.history_segments.get())))
-        except self.tk.TclError:
-            return
         if not hasattr(self, "history_text") or self.history_text is None or not self.history_text.winfo_exists():
             return
         chunks = []
@@ -550,10 +553,10 @@ class DesktopApp:
             return
 
     def render_caption_stack(self, source: str, translation: str, *, final: bool = False):
-        try:
-            self.history.set_limit(max(2, min(3, self.history_segments.get())))
-        except self.tk.TclError:
-            pass
+        captions = list(self.history.captions)
+        if final and captions:
+            captions.pop()
+        self.caption_viewport.set_history(captions)
         self.translation_label.configure(text=translation)
         self.source_label.configure(text=source)
         if self._fit_after is None:
@@ -767,6 +770,9 @@ class DesktopApp:
         self.environment_status.set(event["message"])
         self.update_model_details()
         self.refresh_model_list()
+        if self._audio_recheck_pending and not self.closing:
+            self._audio_recheck_pending = False
+            self.root.after_idle(lambda: self.prepare_runtime("check"))
         if self.catalog_dialog is not None and self.catalog_dialog.winfo_exists():
             self.catalog_status.set(event["message"])
         if report and report.get("missing") and not self.install_prompted and not self.closing:
@@ -851,14 +857,41 @@ class DesktopApp:
 
     def _resize(self, event) -> None:
         if event.widget is self.overlay:
-            width = max(280, event.width - 40)
+            width = max(280, event.width - 56)
             self.source_label.configure(wraplength=width)
             self.translation_label.configure(wraplength=width)
             self._sync_layers()
+            self._round_layers()
             if width != getattr(self, "_last_wrap_width", None):
                 self._last_wrap_width = width
                 if self._fit_after is None:
                     self._fit_after = self.root.after_idle(self.fit_caption_history)
+
+    def _round_layers(self, event=None):
+        from ModuleFolders.Media.window_effects import set_rounded_corners
+        for window in (self.background, self.overlay):
+            try:
+                set_rounded_corners(window, 18)
+            except (self.tk.TclError, OSError, RuntimeError):
+                pass
+
+    def _scroll_captions(self, event, pixels=None):
+        if self.locked.get() or self.opacity.get() < 10:
+            return "break"
+        if pixels is None:
+            button = getattr(event, "num", None)
+            if button in (4, 5):
+                pixels = -48 if button == 4 else 48
+            else:
+                delta = getattr(event, "delta", 0)
+                pixels = -delta * 4 if self.is_macos else -delta / 120 * 48
+        self.caption_viewport.scroll(pixels)
+        return "break"
+
+    def _show_latest_caption(self, event=None):
+        if not self.locked.get() and self.opacity.get() >= 10:
+            self.caption_viewport.show_latest()
+        return "break"
 
     def _sync_layers(self) -> None:
         if self.closed or not hasattr(self, "background"):
@@ -943,6 +976,7 @@ class DesktopApp:
             self.topmost_button.configure(state="disabled" if self.locked.get() else "normal")
             self._sync_layers()
             self.root.update_idletasks()
+            self._round_layers()
             for window in (self.background, self.overlay):
                 set_mouse_passthrough(window, self.locked.get() or (self.is_macos and window is self.background))
             self._keep_controls_accessible()
@@ -973,6 +1007,13 @@ class DesktopApp:
                                     fg=self.source_color.get(), bg=self._transparent_color)
         for label in (self.translation_label, self.source_label):
             label.configure(stroke_width=self.stroke_width.get(), stroke_color=self.stroke_color.get())
+        self.caption_viewport.set_appearance(
+            background=self._transparent_color,
+            translation_font=self.translation_label.cget("font"), source_font=self.source_label.cget("font"),
+            translation_color=self.translation_color.get(), source_color=self.source_color.get(),
+            stroke_width=self.stroke_width.get(), stroke_color=self.stroke_color.get(), show_source=self.show_source.get())
+        if self.locked.get() or self.opacity.get() < 10:
+            self.caption_viewport.show_latest()
         if self.show_source.get():
             self.source_label.pack(fill="x", padx=20, pady=(2, 12))
         else:
@@ -1018,6 +1059,8 @@ class DesktopApp:
             return
         self.source_text = self.translation_text = ""
         self.history.clear()
+        self.caption_viewport.set_history([])
+        self.caption_viewport.show_latest()
         self.render_history()
         self.source_label.configure(text="")
         self.translation_label.configure(text=self.t("loading"))
@@ -1123,7 +1166,16 @@ class DesktopApp:
                 self.device_probe_busy = False
                 self.refresh_button.configure(state="normal")
                 if ok:
+                    interpreter_changed = self.runtime_interpreter != result["interpreter"]
                     self.runtime_interpreter = result["interpreter"]
+                    if interpreter_changed:
+                        self.runtime_ready = False
+                        self._checked_runtime_signature = None
+                        self.start_button.configure(state="disabled")
+                        if self.setup_busy:
+                            self._audio_recheck_pending = True
+                        else:
+                            self.root.after_idle(lambda: self.prepare_runtime("check"))
                     result = result["speakers"]
                     if self.is_macos:
                         from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO
@@ -1133,15 +1185,13 @@ class DesktopApp:
                     if self.speaker.get() not in self.devices.cget("values"):
                         self.speaker.set(self.t("default_output"))
                     self.status.set(self.t("audio_devices_ready", count=len(result)))
-                    self.environment_status.set(self.t("runtime_path", path=self.runtime_interpreter))
+                    if not self.setup_busy:
+                        self.environment_status.set(self.t("runtime_path", path=self.runtime_interpreter))
                 else:
                     if isinstance(result, dict) and result.get("code") == "timeout":
                         self.status.set(self.t("audio_probe_timeout"))
                     else:
                         self.status.set(self.t("audio_error", message=result))
-                if self._startup_check_pending:
-                    self._startup_check_pending = False
-                    self._setup_after = self.root.after_idle(lambda: self.prepare_runtime("check"))
         except queue.Empty:
             pass
         if self.managed and self.core_gone.is_set():

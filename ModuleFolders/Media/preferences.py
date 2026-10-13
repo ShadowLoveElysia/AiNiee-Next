@@ -18,12 +18,12 @@ DEFAULTS = {
     "package_source": "nju",
     "recognizer": "sensevoice", "recognition_device": "auto",
     "asr_endpoint": "http://127.0.0.1:8001/v1",
-    "context_segments": 0, "history_segments": 3, "recording": False,
+    "context_segments": 0, "recording": False,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
 }
 RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "width": (360, 2400), "height": (120, 1000),
-          "context_segments": (0, 3), "history_segments": (2, 3)}
+          "context_segments": (0, 3)}
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
 from ModuleFolders.Media.compute import device_choices, model_device_choices
 from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS
@@ -49,6 +49,7 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
             data.update(saved)
     except (OSError, ValueError):
         pass
+    data.pop("history_segments", None)
     if data.get("package_source") not in CHOICES["package_source"]:
         data["package_source"] = DEFAULTS["package_source"]
     for key in ('recognizer', 'recognition_device'):
@@ -101,6 +102,7 @@ def save_preferences(changes: dict, path=SETTINGS_PATH) -> None:
     path = Path(path)
     data = read_preferences(path)
     data.update(changes)
+    data.pop("history_segments", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     try:

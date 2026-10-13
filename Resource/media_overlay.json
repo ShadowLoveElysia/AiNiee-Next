@@ -1,5 +1,5 @@
 {
-  "opacity": 0,
+  "opacity": 38,
   "font_size": 32,
   "font_family": "字魂扁桃体",
   "font_bold": true,
@@ -11,8 +11,8 @@
   "show_source": false,
   "topmost": true,
   "locked": false,
-  "width": 900,
-  "height": 452,
+  "width": 920,
+  "height": 180,
   "family": "index-q6",
   "source": "ja",
   "target": "zh",
@@ -23,7 +23,6 @@
   "recognition_device": "auto",
   "asr_endpoint": "http://127.0.0.1:8001/v1",
   "context_segments": 3,
-  "history_segments": 3,
   "recording": false,
   "record_directory": "D:\\AiNiee-Next-main\\AiNiee-Next\\Resource\\MediaRecords",
   "model_root": "G:\\AiNiee-Models"

@@ -1,6 +1,7 @@
 """On-demand media dependencies and public model preparation; no base imports."""
 
 import argparse
+import copy
 import importlib
 import importlib.util
 import importlib.metadata
@@ -12,14 +13,21 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import venv
 
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS, get_model
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = ROOT / "Resource/MediaRuntime"
+AUDIO_PROBE_TIMEOUT = 15
+AUDIO_DISCOVERY_TIMEOUT = 20
+PROBE_CACHE_SECONDS = 60
+_probe_cache = {}
+_probe_cache_lock = threading.Lock()
 PACKAGES = ("torch", "torchaudio", "transformers", "accelerate", "funasr", "sentencepiece",
-            "silero_vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
+            "silero_vad", "soundcard", "numpy", "soundfile", "librosa",
             "huggingface_hub", "safetensors")
 MODELS = {
     "sensevoice": ("iic/SenseVoiceSmall", "7bf452403abd7353a300cd760f7adae7701c92c1"),
@@ -228,9 +236,15 @@ def audio_interpreters(preferred: str) -> list[str]:
 
 def discover_audio_runtime(preferred: str) -> tuple[str, list[str]]:
     last_error = None
+    deadline = time.monotonic() + AUDIO_DISCOVERY_TIMEOUT
     for interpreter in audio_interpreters(preferred):
         try:
-            return interpreter, discover_devices(interpreter)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AudioDeviceProbeTimeout("Audio device detection exceeded its total deadline")
+            if remaining >= AUDIO_PROBE_TIMEOUT:
+                return interpreter, discover_devices(interpreter)
+            return interpreter, discover_devices(interpreter, timeout=remaining)
         except (RuntimeError, OSError) as exc:
             last_error = exc
     if last_error:
@@ -242,19 +256,19 @@ class AudioDeviceProbeTimeout(RuntimeError):
     """Enumeration deadline expired; this does not imply a broken audio device."""
 
 
-def discover_devices(interpreter: str) -> list[str]:
+def discover_devices(interpreter: str, *, timeout: float = AUDIO_PROBE_TIMEOUT) -> list[str]:
     # Device listing needs only SoundCard, not the project runtime/model catalog.
     listing = "sc.all_microphones(include_loopback=False)" if sys.platform == "darwin" else "sc.all_speakers()"
     script = "import json; import soundcard as sc; print(json.dumps({'speakers': [s.name for s in " + listing + "]}), flush=True)"
     try:
         result = subprocess.run(
             [interpreter, "-u", "-c", script], cwd=ROOT,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             env=subprocess_environment(),
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        raise AudioDeviceProbeTimeout("Audio device detection timed out after 60 seconds") from None
+        raise AudioDeviceProbeTimeout(f"Audio device detection timed out after {timeout:g} seconds") from None
     lines = result.stdout.splitlines()
     try:
         report = json.loads(lines[-1]) if lines else {}
@@ -280,16 +294,62 @@ def discover_devices(interpreter: str) -> list[str]:
     return speakers
 
 
+def clear_probe_cache() -> None:
+    with _probe_cache_lock:
+        _probe_cache.clear()
+
+
+def _probe_fingerprint(interpreter):
+    python = Path(interpreter or sys.executable)
+    prefix = python.parent.parent
+    paths = [python, prefix / 'Lib/site-packages', RUNTIME_ROOT / 'llama-cpp']
+    paths.extend(prefix.glob('lib/python*/site-packages'))
+    fingerprint = []
+    for path in paths:
+        try:
+            info = path.stat()
+            fingerprint.append((str(path), info.st_mtime_ns, info.st_size))
+        except OSError:
+            fingerprint.append((str(path), None, None))
+    return tuple(fingerprint), os.environ.get('CUDA_VISIBLE_DEVICES')
+
+
+def cached_probe(interpreter, device, family="index", **kwargs):
+    """Reuse only successful checks briefly; explicit probe and service checks stay fresh."""
+    if str(kwargs.get('recognizer', '')).startswith('qwen-vllm'):
+        return probe(interpreter, device, family, **kwargs)
+    key = (interpreter, device, family, tuple(sorted(kwargs.items())), _probe_fingerprint(interpreter))
+    with _probe_cache_lock:
+        cached = _probe_cache.get(key)
+        if cached and time.monotonic() - cached[0] < PROBE_CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+    report = probe(interpreter, device, family, **kwargs)
+    if report.get('ready'):
+        with _probe_cache_lock:
+            _probe_cache[key] = (time.monotonic(), copy.deepcopy(report))
+            for old in list(_probe_cache):
+                if time.monotonic() - _probe_cache[old][0] >= PROBE_CACHE_SECONDS:
+                    del _probe_cache[old]
+    return report
+
+
 def probe(interpreter: str, device: str, family: str = "index", *, recognizer='sensevoice', asr_device='auto', asr_endpoint='http://127.0.0.1:8001/v1') -> dict:
     recognition_args = ["--recognizer", recognizer, "--asr-device", asr_device] if recognizer != 'sensevoice' or asr_device != 'auto' else []
     if asr_endpoint != 'http://127.0.0.1:8001/v1':
         recognition_args += ['--asr-endpoint', asr_endpoint]
-    result = subprocess.run(
-        [interpreter, "-X", "utf8", "-X", "faulthandler", "-u", "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-        env=subprocess_environment(),
-        stdin=subprocess.DEVNULL,
-    )
+    try:
+        result = subprocess.run(
+            [interpreter, "-X", "utf8", "-X", "faulthandler", "-u", "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            env=subprocess_environment(),
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr or ''
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', errors='replace')
+        diagnostic = child_failure('Runtime check', subprocess.CompletedProcess([], 1, '', stderr))
+        raise RuntimeProbeError('Runtime check timed out after 120 seconds\n' + str(diagnostic)) from None
     if result.returncode:
         raise child_failure('Runtime check', result)
     report = json.loads(result.stdout.splitlines()[-1])
@@ -334,7 +394,7 @@ def install(device: str, *, translation_device: str = "", recognizer='sensevoice
     apple_packages = ["mlx==0.32.3", "mlx-lm==0.32.0"] if translation_device == "mlx" else []
     transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
     extensions = [*torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
-                  "silero-vad", "onnxruntime", "soundcard", "numpy", "soundfile", "librosa",
+                  "silero-vad", "soundcard", "numpy", "soundfile", "librosa",
                   "huggingface-hub", "safetensors", *apple_packages]
     if uv:
         subprocess.run([sys.executable, '-u', '-m', 'ModuleFolders.Media.package_download', '--python', python,
@@ -388,6 +448,7 @@ def main():
             os._exit(1)
         start_core_watchdog(parent_gone)
     if args.action == "probe":
+        checkpoint = get_model(args.family)
         import faulthandler
         faulthandler.enable()
         probe_stage('package discovery')
@@ -406,7 +467,9 @@ def main():
                 import torch
                 versions["torch"] = torch.__version__
                 probe_stage('torch.cuda.is_available')
-                cuda = torch.cuda.is_available()
+                needs_cuda = (args.device != 'cpu' or args.asr_device == 'cuda:0' or
+                              args.asr_device == 'auto' and args.recognizer != 'sensevoice')
+                cuda = torch.cuda.is_available() if needs_cuda else False
                 probe_stage('torch.backends.mps.is_available')
                 mps = torch.backends.mps.is_available()
                 if cuda:
@@ -416,14 +479,18 @@ def main():
                 from ModuleFolders.Infrastructure.DownloadProgress import safe_installer_line
                 import_errors['torch'] = safe_installer_line(f'{type(error).__name__}: {error}')
                 missing.append("torch")
-        for name in ("torchaudio", "transformers", "onnxruntime"):
+        for name in ("torchaudio", "transformers"):
             if name not in missing:
                 try:
-                    probe_stage('import ' + name)
-                    module = importlib.import_module(name)
-                    versions[name] = module.__version__
+                    if name == 'transformers' and checkpoint.backend == 'gguf':
+                        probe_stage('transformers package version')
+                        versions[name] = importlib.metadata.version(name)
+                    else:
+                        probe_stage('import ' + name)
+                        module = importlib.import_module(name)
+                        versions[name] = module.__version__
                     if name == "transformers":
-                        major, minor = (int(part) for part in module.__version__.split('.')[:2])
+                        major, minor = (int(part) for part in versions[name].split('.')[:2])
                         minimum = (5, 7) if sys.platform == "darwin" else (5, 6)
                         if (major, minor) < minimum:
                             missing.append("transformers>=" + '.'.join(map(str, minimum)))
@@ -437,11 +504,13 @@ def main():
             missing.append('matching torch/torchaudio versions')
         from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
         probe_stage('adapter discovery')
-        adapters = detect_adapters()
         if cuda:
             probe_stage('selected CUDA adapter')
-            adapters = selected_cuda_adapters(torch, adapters)
-        checkpoint = get_model(args.family)
+            adapters = selected_cuda_adapters(torch, [])
+        elif args.device == 'cpu' and args.asr_device in {'auto', 'cpu'} and args.recognizer == 'sensevoice':
+            adapters = []
+        else:
+            adapters = detect_adapters()
         compute_error = ""
         compute = {}
         try:

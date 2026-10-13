@@ -43,6 +43,18 @@ def configure_window(window, *, passthrough: bool) -> None:
     _send(native, "setCollectionBehavior:", None, (ctypes.c_ulong,), (behavior | 1 | 256,))
 
 
+def set_rounded_corners(window, radius: int = 18) -> None:
+    native = native_window(window)
+    _send(native, "setOpaque:", None, (ctypes.c_bool,), (False,))
+    clear = _send(_objc().objc_getClass(b"NSColor"), "clearColor")
+    _send(native, "setBackgroundColor:", None, (ctypes.c_void_p,), (clear,))
+    view = _send(native, "contentView")
+    _send(view, "setWantsLayer:", None, (ctypes.c_bool,), (True,))
+    layer = _send(view, "layer")
+    _send(layer, "setCornerRadius:", None, (ctypes.c_double,), (float(radius),))
+    _send(layer, "setMasksToBounds:", None, (ctypes.c_bool,), (True,))
+
+
 def keep_controls_accessible(controller, overlay, dialogs=(), *, visible=True) -> None:
     level = _send(native_window(overlay), "level", ctypes.c_long) + 1 if visible else 0
     for window in (controller, *dialogs):
