@@ -147,11 +147,18 @@ class SileroSpeechDetector:
     """One stateful Silero instance per 16 kHz, 512-sample audio stream."""
 
     def __init__(self) -> None:
-        from silero_vad import load_silero_vad
+        from importlib import resources
+        import io
+        import torch
 
-        # Keep the live path independent from ONNX Runtime native DLLs; some Windows
-        # driver/CPU combinations crash while importing the extension.
-        self.model = load_silero_vad(onnx=False)
+        # Windows TorchScript's native path reader can fail on Unicode names.
+        # Python reads the bundled JIT so Torch receives bytes instead of a path.
+        threads = torch.get_num_threads()
+        try:
+            model = resources.files('silero_vad').joinpath('data', 'silero_vad.jit')
+            self.model = torch.jit.load(io.BytesIO(model.read_bytes()), map_location='cpu').eval()
+        finally:
+            torch.set_num_threads(threads)
         self.model.reset_states()
 
     def probability(self, pcm_s16le: bytes) -> float:

@@ -52,6 +52,7 @@ requested otherwise. The runtime report includes installed versions and bounded
 import errors; it also loads the bundled Silero TorchScript model and runs one
 512-sample silent-frame check. `missing: silero_vad` therefore covers both a
 missing package and an unusable bundled VAD model before capture starts.
+On Windows, the VAD TorchScript resource is read through Python bytes before `torch.jit.load`; this avoids the native Torch path reader failing on Chinese/non-ASCII directories. This workaround is specific to the VAD resource; other Torch model loaders still require separate path validation.
 Installer GPU discovery runs in short-lived children so the installer does not
 hold Torch DLLs open while replacing them. If Windows reports access denied for
 `torch/_C*.pyd`, close capture and other processes using that environment before
