@@ -571,7 +571,11 @@ and vLLM service checks are always retried. Direct runtime `probe` commands alwa
 perform a fresh check. CUDA checks use Torch's selected adapter rather than an
 additional system inventory; GGUF checks inspect the Transformers package version
 without importing it. CUDA execution validation is still performed. A readiness
-timeout includes the last completed stage for diagnosis.
+check and the installer's Torch/CUDA discovery each allow up to 600 seconds for
+cold native-library loading on slower disks. These checks run outside the GUI
+thread. A readiness timeout includes the limit and last completed stage for
+diagnosis. This limit does not cover uv dependency synchronization or installation;
+audio-device discovery retains its separate, shorter limits.
 
 Dependencies are optional: Torch/torchaudio with matching CUDA builds,
 Transformers 5.6.0, accelerate, FunASR, sentencepiece, Silero VAD, ONNX Runtime,

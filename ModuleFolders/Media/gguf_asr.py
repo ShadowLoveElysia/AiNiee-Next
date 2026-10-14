@@ -29,14 +29,16 @@ def asr_device_choices(recognizer):
 
 
 class GgufSpeechRecognizer(GgufTranslator):
-    def __init__(self, model_dir, *, recognizer='qwen-gguf-0.6b', device='cpu', max_new_tokens=256):
+    def __init__(self, model_dir, *, recognizer='qwen-gguf-0.6b', device='cpu', max_new_tokens=256,
+                 cpu_threads=4):
         from ModuleFolders.Media.asr_catalog import get_recognizer
         model = get_recognizer(recognizer)
         if model.backend != 'gguf':
             raise ValueError('Select a GGUF recognition model')
         root = Path(model_dir).expanduser()
         super().__init__(root / model.filename, family='qwen-asr', model_name=model.name,
-                         projector=root / model.projector, device=device, max_new_tokens=max_new_tokens)
+                         projector=root / model.projector, device=device, max_new_tokens=max_new_tokens,
+                         cpu_threads=cpu_threads)
 
     def transcribe(self, segment, *, language):
         if segment.sample_rate != 16000 or language not in LANGUAGES:

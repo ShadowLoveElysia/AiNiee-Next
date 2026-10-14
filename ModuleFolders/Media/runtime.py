@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = ROOT / "Resource/MediaRuntime"
 AUDIO_PROBE_TIMEOUT = 15
 AUDIO_DISCOVERY_TIMEOUT = 20
+RUNTIME_PROBE_TIMEOUT = 600
 PROBE_CACHE_SECONDS = 60
 _probe_cache = {}
 _probe_cache_lock = threading.Lock()
@@ -110,7 +111,7 @@ def torch_runtime_info(interpreter=None, *, check_execution=False):
         script += "from ModuleFolders.Media.runtime import cuda_execution_check; probe_stage('CUDA execution'); info['check']=cuda_execution_check(torch, stage=probe_stage); "
     script += "print(json.dumps(info))"
     result = subprocess.run([python, '-X', 'utf8', '-X', 'faulthandler', '-u', '-c', script],
-                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=45,
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=RUNTIME_PROBE_TIMEOUT,
                             cwd=ROOT, env=subprocess_environment(), stdin=subprocess.DEVNULL)
     if result.returncode:
         raise child_failure('Torch discovery/check', result)
@@ -357,7 +358,7 @@ def probe(interpreter: str, device: str, family: str = "index", *, recognizer='s
     try:
         result = subprocess.run(
             [interpreter, "-X", "utf8", "-X", "faulthandler", "-u", "-m", "ModuleFolders.Media.runtime", "probe", "--device", device, "--family", family, *recognition_args], cwd=ROOT,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=RUNTIME_PROBE_TIMEOUT,
             env=subprocess_environment(),
             stdin=subprocess.DEVNULL,
         )
@@ -366,7 +367,7 @@ def probe(interpreter: str, device: str, family: str = "index", *, recognizer='s
         if isinstance(stderr, bytes):
             stderr = stderr.decode('utf-8', errors='replace')
         diagnostic = child_failure('Runtime check', subprocess.CompletedProcess([], 1, '', stderr))
-        raise RuntimeProbeError('Runtime check timed out after 120 seconds\n' + str(diagnostic)) from None
+        raise RuntimeProbeError(f'Runtime check timed out after {RUNTIME_PROBE_TIMEOUT} seconds\n' + str(diagnostic)) from None
     if result.returncode:
         raise child_failure('Runtime check', result)
     report = json.loads(result.stdout.splitlines()[-1])

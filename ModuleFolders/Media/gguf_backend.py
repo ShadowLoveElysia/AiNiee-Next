@@ -68,7 +68,9 @@ class GgufTranslator:
             projector = Path(projector).resolve()
             if not projector.is_file():
                 raise FileNotFoundError(projector)
-            args += ['--mmproj', str(projector), '--flash-attn', 'auto', '--log-disable']
+            args += ['--mmproj', str(projector), '--log-disable']
+            if backend != 'cpu':
+                args += ['--flash-attn', 'auto']
         self._process = subprocess.Popen(args, cwd=server.parent, env=subprocess_environment(),
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                          stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
