@@ -1,5 +1,49 @@
 # Media translation backends
 
+## Application audio capture
+
+On x64 Windows build 20348 or later, enable **Capture one application's audio**
+in the controller, refresh the list, and select the browser or player before
+starting. Capture includes that process and its children across audio devices;
+other applications' audio is excluded. Multiple tabs in the same browser may
+share the selected process tree. This selects an application, not an individual
+browser tab. After the application restarts, refresh and select it again.
+
+The process identity includes its creation time to reject reused PIDs. Target
+exit or capture failure stops the session and requires a new selection; capture
+never switches to system audio automatically. Application selection is not
+persisted between launches. Existing system-output and macOS capture remain
+available. This application mode is currently Windows-only.
+
+The owned native bridge is built on first use with Windows' .NET Framework
+C# compiler, without installing a compiler or audio-routing driver. Source is
+`native/ProcessAudio.cs`; compiled helpers live under the MediaRuntime directory.
+PCM travels through a bounded memory pipe as 16 kHz mono float samples. No audio
+file is created. Packaged distributions must include the native source file.
+
+## Streamer glossaries and chat length
+
+Use **Streamer glossary → Edit** to name a glossary and add source language,
+source term, target language and preferred translation. Each entry works in
+both directions. **Save and select** persists only the explicitly entered
+glossary. Choose the desired glossary, then start live translation; changing
+the active glossary requires stopping the session first.
+
+The selected glossary is shared by live subtitles and private translations.
+Only matching terms for the current language pair enter the prompt (up to 16
+matches and 1,200 characters). Glossaries guide the model's wording; they do
+not repair speech recognition errors or guarantee that every model follows a
+preferred translation. Profiles support up to 100 terms each.
+
+The private translation panel counts Unicode code points, including spaces
+and punctuation, and accepts an optional 0–1,000 character limit (0 disables
+the limit). Overlong results remain visible and copyable. **Shorten** asks the
+same local model to translate the submitted source more concisely, without
+live context or subtitle output. It runs only on request and still displays
+any excess after completion; model instructions cannot guarantee the length.
+Different chat platforms may count characters differently. Only the limit
+setting is persisted; typed messages and translations remain in memory.
+
 ## Two-way translation window
 
 Open **Two-way translation** in the live controller to translate typed chat

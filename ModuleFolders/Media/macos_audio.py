@@ -123,12 +123,18 @@ class NativeRecorder:
         self.closed = threading.Event()
         self.pending = bytearray()
 
-    def __enter__(self):
+    def _launch(self):
         from ModuleFolders.Media.runtime import subprocess_environment
         executable = prepare_helper()
-        self.process = subprocess.Popen([str(executable), "screen" if self.screen else "auto"],
+        return subprocess.Popen([str(executable), "screen" if self.screen else "auto"],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         cwd=ROOT, env=subprocess_environment(), bufsize=0)
+
+    def initialization_timeout_message(self):
+        return "macOS system audio initialization timed out. Respond to the recording permission prompt and restart capture."
+
+    def __enter__(self):
+        self.process = self._launch()
         process = self.process
         header = queue.Queue(maxsize=1)
 
@@ -187,7 +193,7 @@ class NativeRecorder:
             try:
                 report = header.get(timeout=90)
             except queue.Empty:
-                raise RuntimeError("macOS system audio initialization timed out. Respond to the recording permission prompt and restart capture.") from None
+                raise RuntimeError(self.initialization_timeout_message()) from None
             if not report:
                 raise RuntimeError(self.error_message())
             self.backend = report.get("backend", "native")

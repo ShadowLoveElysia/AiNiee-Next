@@ -16,6 +16,7 @@ class TextTranslationRequest:
     text: str
     source_lang: str
     target_lang: str
+    max_characters: int = 0
 
     def validate(self):
         if not isinstance(self.request_id, str) or not 0 < len(self.request_id) <= 64:
@@ -26,6 +27,8 @@ class TextTranslationRequest:
             raise ValueError("Unsupported translation language")
         if self.source_lang == self.target_lang:
             raise ValueError("Choose different translation languages")
+        if isinstance(self.max_characters, bool) or not isinstance(self.max_characters, int) or not 0 <= self.max_characters <= 1000:
+            raise ValueError("Character limit must be 0 to 1000")
 
 
 class LiveInferenceQueue:
@@ -72,6 +75,8 @@ class LiveInferenceQueue:
 def translate_private(request, translator, emit):
     """Reuse the loaded translator without caption callbacks or context history."""
     callback = translator.on_partial
+    previous_limit = getattr(translator, "max_characters", 0)
+    translator.max_characters = request.max_characters
     translator.on_partial = None
     try:
         emit({"type": "mutual_started", "request_id": request.request_id})
@@ -87,3 +92,4 @@ def translate_private(request, translator, emit):
         emit({"type": "mutual_error", "request_id": request.request_id, "code": "inference_failed"})
     finally:
         translator.on_partial = callback
+        translator.max_characters = previous_limit

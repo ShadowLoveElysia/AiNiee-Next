@@ -72,6 +72,11 @@ class DesktopApp:
         self.target = tk.StringVar(value="zh")
         self.device = tk.StringVar(value="auto")
         self.speaker = tk.StringVar(value=self.t("default_output"))
+        self.application_audio = tk.BooleanVar(value=False)
+        self.application_choice = tk.StringVar()
+        self.audio_applications = {}
+        self.application_results = queue.Queue()
+        self.application_probe_busy = False
         self.opacity = tk.IntVar(value=88)
         self.font_size = tk.IntVar(value=26)
         self.font_family = tk.StringVar(value="PingFang SC" if self.is_macos else "Microsoft YaHei UI")
@@ -88,6 +93,11 @@ class DesktopApp:
         self.overlay_width = tk.IntVar(value=900)
         self.overlay_height = tk.IntVar(value=240)
         self.context_segments = tk.IntVar(value=0)
+        self.glossary_profile = tk.StringVar()
+        self.glossary_choice = tk.StringVar()
+        self.glossary_profiles = {}
+        self.glossary_dialog = None
+        self.chat_character_limit = tk.IntVar(value=0)
         self.recording = tk.BooleanVar(value=False)
         self.record_directory = tk.StringVar(value=str(PROJECT_ROOT / "Resource/MediaRecords"))
         from ModuleFolders.Media.session_history import SessionHistory
@@ -165,8 +175,25 @@ class DesktopApp:
         self.compute_selector.pack(side="left")
         self.compute_selector.bind("<<ComboboxSelected>>", self.compute_changed)
         ttk.Label(frame, text=self.t("audio")).grid(row=5, column=0, sticky="w", pady=12)
-        self.devices = ttk.Combobox(frame, textvariable=self.speaker, state="readonly")
-        self.devices.grid(row=5, column=1, sticky="ew")
+        audio_options = ttk.Frame(frame)
+        audio_options.grid(row=5, column=1, sticky="ew")
+        self.devices = ttk.Combobox(audio_options, textvariable=self.speaker, state="readonly")
+        self.devices.pack(fill="x")
+        self.application_toggle = ttk.Checkbutton(audio_options, text=self.t("application_audio"),
+                                                  variable=self.application_audio, command=self.application_audio_changed)
+        self.application_toggle.pack(anchor="w", pady=(6, 0))
+        application_selection = ttk.Frame(audio_options)
+        application_selection.pack(fill="x", pady=(4, 0))
+        self.application_selector = ttk.Combobox(application_selection, textvariable=self.application_choice,
+                                                 state="disabled")
+        self.application_selector.pack(side="left", fill="x", expand=True)
+        self.application_refresh = ttk.Button(application_selection, text=self.t("refresh"),
+                                               command=self.refresh_applications, state="disabled")
+        self.application_refresh.pack(side="left", padx=(6, 0))
+        ttk.Label(audio_options, text=self.t("application_audio_hint"), wraplength=440).pack(anchor="w", pady=(4, 0))
+        from ModuleFolders.Media.windows_audio import supported as application_capture_supported
+        if not application_capture_supported():
+            self.application_toggle.configure(state="disabled")
         self.refresh_button = ttk.Button(frame, text=self.t("refresh"), command=self.refresh_devices)
         self.refresh_button.grid(row=5, column=2, padx=(8, 0))
 
@@ -258,6 +285,13 @@ class DesktopApp:
         ttk.Label(memory, textvariable=self.record_status, wraplength=280).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(memory, text=self.t("show_history"), command=self.show_history).grid(row=6, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(memory, text=self.t("mutual_title"), command=self.show_mutual_window).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(memory, text=self.t("glossary_title")).grid(row=8, column=0, columnspan=2, sticky="w")
+        self.glossary_selector = ttk.Combobox(memory, textvariable=self.glossary_choice, state="readonly", width=16)
+        self.glossary_selector.grid(row=9, column=0, sticky="ew")
+        self.glossary_selector.bind("<<ComboboxSelected>>", self.select_glossary)
+        self.glossary_edit_button = ttk.Button(memory, text=self.t("glossary_edit"), command=self.show_glossary_editor)
+        self.glossary_edit_button.grid(row=9, column=1, padx=8)
+        self.refresh_glossary_choices()
         self.history_dialog = None
         self.history_text = None
         buttons = ttk.Frame(frame)
@@ -357,6 +391,9 @@ class DesktopApp:
         try:
             from ModuleFolders.Media.preferences import read_preferences
             data = read_preferences(self.settings_path)
+            self.glossary_profiles = data["glossary_profiles"]
+            self.glossary_profile.set(data["glossary_profile"])
+            self.chat_character_limit.set(data["chat_character_limit"])
             self.opacity.set(max(0, min(100, int(data.get("opacity", 88)))))
             self.font_size.set(max(16, min(48, int(data.get("font_size", 26)))))
             if isinstance(data.get("font_family"), str) and data["font_family"].strip():
@@ -415,8 +452,10 @@ class DesktopApp:
             ("stroke_width", self.stroke_width), ("stroke_color", self.stroke_color),
             ("context_segments", self.context_segments),
             ("recording", self.recording), ("record_directory", self.record_directory),
+            ("glossary_profile", self.glossary_profile), ("chat_character_limit", self.chat_character_limit),
         ]}
         data["height"] = getattr(self, "_overlay_base_height", self.overlay_height.get())
+        data["glossary_profiles"] = self.glossary_profiles
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
         from ModuleFolders.Media.preferences import save_preferences
         data["device"] = self.device.get()
@@ -435,7 +474,7 @@ class DesktopApp:
         try:
             snapshot = tuple((name, variable.get()) for name, variable in vars(self).items()
                              if isinstance(variable, (self.tk.StringVar, self.tk.IntVar, self.tk.BooleanVar))
-                             and name not in {"status", "environment_status", "speaker", "record_status"})
+                             and name not in {"status", "environment_status", "speaker", "record_status", "application_choice", "glossary_choice"})
         except self.tk.TclError:
             return
         if snapshot != self._last_saved_preferences:
@@ -857,6 +896,39 @@ class DesktopApp:
                 results.put((False, str(exc)))
         threading.Thread(target=discover, daemon=True).start()
 
+    def application_audio_changed(self):
+        enabled = self.application_audio.get()
+        self.devices.configure(state="disabled" if enabled else "readonly")
+        self.application_selector.configure(state="readonly" if enabled else "disabled")
+        self.application_refresh.configure(state="normal" if enabled and not self.application_probe_busy else "disabled")
+        if enabled and not self.audio_applications and not self.application_probe_busy:
+            if getattr(self, "_application_list_attempted", False):
+                return
+            self.refresh_applications()
+
+    def refresh_applications(self):
+        if self.application_probe_busy or self.session.active:
+            return
+        self.application_probe_busy = True
+        self._application_list_attempted = True
+        self.application_refresh.configure(state="disabled")
+        def discover():
+            try:
+                from ModuleFolders.Media.windows_audio import applications
+                self.application_results.put((True, applications()))
+            except Exception:
+                self.application_results.put((False, None))
+        threading.Thread(target=discover, name="media-application-list", daemon=True).start()
+
+    def application_capture_config(self):
+        if not self.application_audio.get():
+            return {}
+        application = self.audio_applications.get(self.application_choice.get())
+        if application is None:
+            raise ValueError(self.t("application_choose"))
+        return {"application_pid": application.pid, "application_started": application.started,
+                "application_name": application.name}
+
     def _resize(self, event) -> None:
         if event.widget is self.overlay:
             width = max(280, event.width - 56)
@@ -1032,6 +1104,23 @@ class DesktopApp:
             self.mutual_window.window.deiconify()
             self.mutual_window.window.lift()
 
+    def refresh_glossary_choices(self):
+        self.glossary_selector.configure(values=[self.t("glossary_off"), *self.glossary_profiles])
+        self.glossary_choice.set(self.glossary_profile.get() or self.t("glossary_off"))
+
+    def select_glossary(self, event=None):
+        if self.session.active:
+            self.refresh_glossary_choices()
+            self.status.set(self.t("stop_before_setup"))
+            return
+        choice = self.glossary_choice.get()
+        self.glossary_profile.set(choice if choice in self.glossary_profiles else "")
+        self.save_settings()
+
+    def show_glossary_editor(self):
+        from ModuleFolders.Media.glossary_window import open_glossary_editor
+        open_glossary_editor(self)
+
     def show_overlay(self) -> None:
         self.overlay.deiconify()
         self._sync_layers()
@@ -1064,6 +1153,8 @@ class DesktopApp:
                 recognizer=self.recognizer.get() if hasattr(self, 'recognizer') else 'sensevoice',
                 asr_endpoint=self.asr_endpoint.get() if hasattr(self, 'asr_endpoint') else 'http://127.0.0.1:8001/v1',
                 context_segments=self.context_segments.get(),
+                **self.application_capture_config(),
+                glossary=tuple(self.glossary_profiles.get(self.glossary_profile.get(), [])),
             )
             self.session.start(config, interpreter=self.runtime_interpreter)
         except Exception as exc:
@@ -1077,6 +1168,10 @@ class DesktopApp:
         self.source_label.configure(text="")
         self.translation_label.configure(text=self.t("loading"))
         self.state = "loading"
+        self.glossary_selector.configure(state="disabled")
+        self.glossary_edit_button.configure(state="disabled")
+        for widget in (self.application_toggle, self.application_selector, self.application_refresh, self.devices):
+            widget.configure(state="disabled")
         self.context_spin.configure(state="disabled")
         self.compute_selector.configure(state="disabled")
         if hasattr(self, 'recognizer_selector'):
@@ -1157,6 +1252,11 @@ class DesktopApp:
             self.status.set(self.t("error", message=event["message"]))
             self.overlay_status.configure(text=self.t("see_error"))
         elif kind == "stopped":
+            self.glossary_selector.configure(state="readonly")
+            self.glossary_edit_button.configure(state="normal")
+            from ModuleFolders.Media.windows_audio import supported as application_capture_supported
+            self.application_toggle.configure(state="normal" if application_capture_supported() else "disabled")
+            self.application_audio_changed()
             self.history.end_recording()
             self.record_status.set(self.t("recording_wait" if self.recording.get() else "recording_off"))
             self.context_spin.configure(state="normal")
@@ -1176,6 +1276,21 @@ class DesktopApp:
     def poll(self) -> None:
         if self.closed:
             return
+        try:
+            ok, applications = self.application_results.get_nowait()
+            self.application_probe_busy = False
+            if ok:
+                self.audio_applications = {app.selection: app for app in applications}
+                self.application_selector.configure(values=list(self.audio_applications))
+                if self.application_choice.get() not in self.audio_applications:
+                    self.application_choice.set("")
+                self.status.set(self.t("application_list_ready", count=len(applications)))
+            else:
+                self.status.set(self.t("application_list_error"))
+            if not self.session.active:
+                self.application_audio_changed()
+        except queue.Empty:
+            pass
         try:
             while True:
                 ok, result = self.device_results.get_nowait()

@@ -25,5 +25,8 @@
   "context_segments": 3,
   "recording": false,
   "record_directory": "D:\\AiNiee-Next-main\\AiNiee-Next\\Resource\\MediaRecords",
+  "glossary_profiles": {},
+  "glossary_profile": "",
+  "chat_character_limit": 0,
   "model_root": "G:\\AiNiee-Models"
 }

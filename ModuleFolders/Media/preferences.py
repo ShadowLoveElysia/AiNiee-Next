@@ -20,10 +20,11 @@ DEFAULTS = {
     "asr_endpoint": "http://127.0.0.1:8001/v1",
     "context_segments": 0, "recording": False,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
+    "glossary_profiles": {}, "glossary_profile": "", "chat_character_limit": 0,
 }
 RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "width": (360, 2400), "height": (120, 1000),
-          "context_segments": (0, 3)}
+          "context_segments": (0, 3), "chat_character_limit": (0, 1000)}
 from ModuleFolders.Media.model_catalog import TRANSLATION_MODELS
 from ModuleFolders.Media.compute import device_choices, model_device_choices
 from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS
@@ -50,6 +51,17 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
     except (OSError, ValueError):
         pass
     data.pop("history_segments", None)
+    from ModuleFolders.Media.glossary import validate_profiles
+    try:
+        data["glossary_profiles"] = validate_profiles(data.get("glossary_profiles", {}))
+    except ValueError:
+        data["glossary_profiles"] = {}
+    if data.get("glossary_profile") not in data["glossary_profiles"]:
+        data["glossary_profile"] = ""
+    try:
+        data["chat_character_limit"] = validate_preference("chat_character_limit", data.get("chat_character_limit", 0))
+    except (ValueError, TypeError):
+        data["chat_character_limit"] = 0
     if data.get("package_source") not in CHOICES["package_source"]:
         data["package_source"] = DEFAULTS["package_source"]
     for key in ('recognizer', 'recognition_device'):

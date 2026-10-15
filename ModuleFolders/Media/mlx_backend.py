@@ -38,7 +38,8 @@ class MlxTextTranslator:
         from mlx_lm.sample_utils import make_sampler
 
         prompt = translation_prompt(text, family=self.family, source_lang=source_lang,
-                                    target_lang=target_lang, context=context)
+                                    target_lang=target_lang, context=context, glossary=getattr(self, "glossary", ()),
+                                    max_characters=getattr(self, "max_characters", 0))
         tokens = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}], tokenize=True,
             add_generation_prompt=True, enable_thinking=False,

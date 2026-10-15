@@ -42,6 +42,7 @@ def main():
                 if command.get("type") == "mutual_translate":
                     pending.put_text(TextTranslationRequest(
                         request_id, command.get("text"), command.get("source_lang"), command.get("target_lang"),
+                        command.get("max_characters", 0),
                     ))
                 elif command.get("type") == "mutual_cancel":
                     pending.cancel_text(request_id)

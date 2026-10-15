@@ -141,7 +141,8 @@ class GgufTranslator:
         return self._http.open(request, timeout=timeout)
 
     def translate(self, text, *, source_lang, target_lang, context):
-        prompt = translation_prompt(text, family=self.family, source_lang=source_lang, target_lang=target_lang, context=context)
+        prompt = translation_prompt(text, family=self.family, source_lang=source_lang, target_lang=target_lang, context=context,
+                                    glossary=getattr(self, "glossary", ()), max_characters=getattr(self, "max_characters", 0))
         body = {"messages": [{"role": "user", "content": prompt}], "temperature": 0,
                 "max_tokens": self.max_new_tokens, "stream": True, "cache_prompt": True,
                 "chat_template_kwargs": {"enable_thinking": False}}

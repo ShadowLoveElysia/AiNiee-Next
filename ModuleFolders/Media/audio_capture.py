@@ -13,7 +13,12 @@ def devices(soundcard) -> list:
     return soundcard.all_speakers()
 
 
-def capture_device(soundcard, selected: str):
+def capture_device(soundcard, selected: str, *, application_pid=0, application_started="", application_name=""):
+    if application_pid:
+        if sys.platform != "win32":
+            raise RuntimeError("Application audio capture is currently available on Windows only")
+        from ModuleFolders.Media.windows_audio import WindowsApplicationAudio
+        return WindowsApplicationAudio(application_pid, application_started, application_name)
     if sys.platform == "darwin":
         from ModuleFolders.Media.macos_audio import SYSTEM_AUDIO, SCREEN_AUDIO, NativeSystemAudio
         if selected in {SYSTEM_AUDIO, SCREEN_AUDIO}:

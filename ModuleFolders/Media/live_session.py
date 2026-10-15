@@ -40,6 +40,10 @@ class LiveConfig:
     context_segments: int = 0
     recognizer: str = "sensevoice"
     asr_endpoint: str = 'http://127.0.0.1:8001/v1'
+    application_pid: int = 0
+    application_started: str = ""
+    application_name: str = ""
+    glossary: tuple = ()
 
     @property
     def translation_dir(self) -> Path:
@@ -49,6 +53,11 @@ class LiveConfig:
     def validate(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
+        from ModuleFolders.Media.glossary import validate_entries
+        validate_entries(self.glossary)
+        if self.application_pid:
+            from ModuleFolders.Media.windows_audio import validate_target
+            validate_target(self.application_pid, self.application_started)
         if self.device not in {"auto", "cuda:0", "vulkan", "cpu", "mlx", "metal", "mps"} or self.asr_device not in {"auto", "cuda:0", "cpu", "mps", "vulkan", "metal"}:
             raise ValueError("Unsupported compute device")
         if self.source_lang not in {"auto", "ja", "en", "ko", "zh", "yue"}:
@@ -141,11 +150,11 @@ class LiveSession:
         except (OSError, ValueError):
             raise RuntimeError("The live model connection is closed") from None
 
-    def translate_text(self, text, *, source_lang, target_lang):
+    def translate_text(self, text, *, source_lang, target_lang, max_characters=0):
         from ModuleFolders.Media.inference_queue import TextTranslationRequest
         if not self.ready or self._text_request_id is not None:
             raise RuntimeError("The live model is not ready or a text request is pending")
-        request = TextTranslationRequest(uuid.uuid4().hex, text, source_lang, target_lang)
+        request = TextTranslationRequest(uuid.uuid4().hex, text, source_lang, target_lang, max_characters)
         request.validate()
         self._send_command({"type": "mutual_translate", **asdict(request)})
         self._text_request_id = request.request_id
@@ -265,6 +274,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop, *, pending=None) -> N
     else:
         translator = LocalTextTranslator(config.translation_dir, family=config.family, device=device)
     emit({"type": "status", "message": "translation_loaded"})
+    from ModuleFolders.Media.glossary import validate_entries
+    translator.glossary = tuple(validate_entries(config.glossary))
     if stop.is_set():
         return
     emit({"type": "status", "message": "loading_asr"})
@@ -317,7 +328,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop, *, pending=None) -> N
         max_segment_ms=config.max_segment_ms, pause_silence_ms=192,
     )
     from ModuleFolders.Media.audio_capture import capture_device
-    loopback = capture_device(sc, config.speaker)
+    loopback = capture_device(sc, config.speaker, application_pid=config.application_pid,
+                              application_started=config.application_started, application_name=config.application_name)
     channels = loopback.channels
 
     from ModuleFolders.Media.inference_queue import LiveInferenceQueue, TextTranslationRequest, translate_private
