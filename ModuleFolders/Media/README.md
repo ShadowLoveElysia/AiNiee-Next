@@ -1,5 +1,27 @@
 # Media translation backends
 
+## Two-way translation window
+
+Open **Two-way translation** in the live controller to translate typed chat
+messages with the currently running local translator. Start live translation
+and wait for readiness first. The panel defaults to the reverse of the live
+language pair and supports selecting either direction, swapping languages,
+Ctrl+Enter (Command+Enter on macOS), and explicitly copying the result.
+Input is limited to 2,000 characters; only one panel request can be pending.
+
+The panel attaches beside the controller (or below on narrow screens). Moving
+either window moves the other. Closing the panel leaves live capture running;
+closing the controller also closes the panel and its owned worker. Closing the
+panel clears its contents and cancels a queued request. An already running
+inference finishes normally, with its result discarded by the closed panel.
+
+Private requests run on the same inference thread and loaded translator, after
+the current job and before queued audio. Audio capture continues, retaining its
+bounded backlog/drop policy. Every private translation uses empty context and
+temporarily disables subtitle streaming callbacks. Its dedicated result events
+never reach subtitles, session history, recordings, preferences, or diagnostics.
+Text stays in memory; no remote translation API or additional model is used.
+
 ## Model selection and downloads
 
 The model catalog contains two separated sections: **ASR — audio to source

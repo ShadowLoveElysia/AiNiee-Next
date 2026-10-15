@@ -82,6 +82,9 @@ class LiveSession:
         self._stop_deadline = None
         self._startup_deadline = None
         self._worker_started = False
+        self.ready = False
+        self.config = None
+        self._text_request_id = None
 
     @property
     def active(self) -> bool:
@@ -125,8 +128,41 @@ class LiveSession:
         self._stop_deadline = None
         self._startup_deadline = time.monotonic() + 60
         self._worker_started = False
+        self.ready = False
+        self.config = config
+        self._text_request_id = None
+
+    def _send_command(self, command):
+        if not self.active or self._stop_deadline is not None:
+            raise RuntimeError("The live model is not running")
+        try:
+            self._process.stdin.write(json.dumps(command, ensure_ascii=False) + "\n")
+            self._process.stdin.flush()
+        except (OSError, ValueError):
+            raise RuntimeError("The live model connection is closed") from None
+
+    def translate_text(self, text, *, source_lang, target_lang):
+        from ModuleFolders.Media.inference_queue import TextTranslationRequest
+        if not self.ready or self._text_request_id is not None:
+            raise RuntimeError("The live model is not ready or a text request is pending")
+        request = TextTranslationRequest(uuid.uuid4().hex, text, source_lang, target_lang)
+        request.validate()
+        self._send_command({"type": "mutual_translate", **asdict(request)})
+        self._text_request_id = request.request_id
+        return request.request_id
+
+    def cancel_text(self, request_id):
+        if request_id != self._text_request_id:
+            return
+        try:
+            self._send_command({"type": "mutual_cancel", "request_id": request_id})
+        except RuntimeError:
+            pass
+        self._text_request_id = None
 
     def stop(self) -> None:
+        self.ready = False
+        self._text_request_id = None
         if self.active and self._stop_deadline is None:
             self._process.stdin.close()
             self._stop_deadline = time.monotonic() + 5
@@ -142,6 +178,13 @@ class LiveSession:
                 break
             events.append(event)
             self._worker_started = True
+            if event.get("type") == "ready" and self._stop_deadline is None:
+                self.ready = True
+            elif event.get("type") in {"mutual_result", "mutual_error"}:
+                if event.get("request_id") == self._text_request_id:
+                    self._text_request_id = None
+            elif event.get("type") == "error":
+                self.ready = False
         if not self._worker_started and self._stop_deadline is None and time.monotonic() >= self._startup_deadline:
             events.append({"type": "error", "message": "ModelWorkerStartupTimeout"})
             self.stop()
@@ -154,6 +197,9 @@ class LiveSession:
             if not self._process.stdin.closed:
                 self._process.stdin.close()
             self._process = None
+            self.ready = False
+            self.config = None
+            self._text_request_id = None
             self._stop_deadline = None
             events.append({"type": "stopped", "exit_code": code, "requested": stopping})
         return events
@@ -167,9 +213,12 @@ class LiveSession:
                 terminate_worker(self._process, force=True)
                 self._process.wait(timeout=3)
             self._process = None
+        self.ready = False
+        self.config = None
+        self._text_request_id = None
 
 
-def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
+def _capture_and_translate(config: LiveConfig, emit, stop, *, pending=None) -> None:
     emit({"type": "status", "message": "importing_runtime"})
     import numpy as np
     import soundcard as sc
@@ -271,7 +320,9 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
     loopback = capture_device(sc, config.speaker)
     channels = loopback.channels
 
-    pending = queue.Queue(maxsize=4)
+    from ModuleFolders.Media.inference_queue import LiveInferenceQueue, TextTranslationRequest, translate_private
+    if pending is None:
+        pending = LiveInferenceQueue()
     failures = queue.Queue()
     started = time.monotonic()
     dropped = 0
@@ -280,11 +331,15 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
         try:
             while not stop.is_set():
                 try:
-                    segment, queued, endpoint_wait_ms = pending.get(timeout=0.1)
+                    item = pending.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if stop.is_set():
                     break
+                if isinstance(item, TextTranslationRequest):
+                    translate_private(item, translator, emit)
+                    continue
+                segment, queued, endpoint_wait_ms = item
                 began = time.monotonic()
                 emit({"type": "status", "message": "recognizing",
                       "audio_duration_ms": segment.end_ms - segment.start_ms,
@@ -335,17 +390,9 @@ def _capture_and_translate(config: LiveConfig, emit, stop) -> None:
                     emit({"type": "segment", "start_ms": segment.start_ms, "end_ms": segment.end_ms,
                           "audio_duration_ms": segment.end_ms - segment.start_ms,
                           "endpoint_wait_ms": endpoint_wait_ms, "queue_depth": pending.qsize()})
-                    try:
-                        pending.put_nowait((segment, time.monotonic(), endpoint_wait_ms))
-                    except queue.Full:
-                        try:
-                            pending.get_nowait()
-                        except queue.Empty:
-                            pass
-                        else:
-                            dropped += 1
-                            emit({"type": "backlog", "dropped_segments": dropped})
-                        pending.put_nowait((segment, time.monotonic(), endpoint_wait_ms))
+                    if pending.put_audio((segment, time.monotonic(), endpoint_wait_ms)):
+                        dropped += 1
+                        emit({"type": "backlog", "dropped_segments": dropped})
                 if time.monotonic() - last_telemetry >= 1:
                     emit({"type": "capture", "audio_position_ms": audio_position_ms,
                           "capture_ms": round(capture_ms / frame_count, 2),

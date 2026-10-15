@@ -49,6 +49,7 @@ class DesktopApp:
         self._fit_after = None
         self.closed = False
         self.state = "idle"
+        self.mutual_window = None
         self.source_text = ""
         self.translation_text = ""
         self.root = tk.Tk()
@@ -256,6 +257,7 @@ class DesktopApp:
         self.record_status = tk.StringVar(value=self.t("recording_off"))
         ttk.Label(memory, textvariable=self.record_status, wraplength=280).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(memory, text=self.t("show_history"), command=self.show_history).grid(row=6, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Button(memory, text=self.t("mutual_title"), command=self.show_mutual_window).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.history_dialog = None
         self.history_text = None
         buttons = ttk.Frame(frame)
@@ -1020,6 +1022,16 @@ class DesktopApp:
             self.source_label.pack_forget()
         self.refresh_caption_history()
 
+    def show_mutual_window(self) -> None:
+        if self.closing:
+            return
+        if self.mutual_window is None:
+            from ModuleFolders.Media.mutual_window import MutualTranslationWindow
+            self.mutual_window = MutualTranslationWindow(self)
+        else:
+            self.mutual_window.window.deiconify()
+            self.mutual_window.window.lift()
+
     def show_overlay(self) -> None:
         self.overlay.deiconify()
         self._sync_layers()
@@ -1089,6 +1101,10 @@ class DesktopApp:
 
     def handle_event(self, event: dict) -> None:
         kind = event.get("type")
+        if kind in {"mutual_started", "mutual_result", "mutual_error"}:
+            if self.mutual_window is not None:
+                self.mutual_window.accept(event)
+            return
         if self.managed:
             from ModuleFolders.Media.diagnostics import emit_diagnostic
             emit_diagnostic(event)
@@ -1219,6 +1235,8 @@ class DesktopApp:
             pass
         for event in self.session.poll():
             self.handle_event(event)
+        if self.mutual_window is not None:
+            self.mutual_window.refresh()
         if self.closing and not self.session.active:
             self.destroy()
             return
@@ -1233,12 +1251,16 @@ class DesktopApp:
         if self.closing:
             return
         self.closing = True
+        if self.mutual_window is not None:
+            self.mutual_window.close()
         self.stop()
         if not self.session.active:
             self.destroy()
 
     def destroy(self) -> None:
         self.closed = True
+        if self.mutual_window is not None:
+            self.mutual_window.close()
         self.session.close()
         self.history.end_recording()
         if self._fit_after is not None:

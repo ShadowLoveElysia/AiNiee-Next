@@ -99,7 +99,7 @@ def run_managed_desktop(arguments=(), *, interpreter=None) -> int:
             termios.tcflush(sys.stdin, termios.TCIFLUSH)
 
 
-def start_core_watchdog(on_core_exit) -> None:
+def start_core_watchdog(on_core_exit, *, on_data=None) -> None:
     import threading
 
     def watch():
@@ -120,14 +120,17 @@ def start_core_watchdog(on_core_exit) -> None:
                     break
                 if available.value:
                     # A blocking CRT read can deadlock native DLL imports on Windows.
-                    os.read(sys.stdin.fileno(), available.value)
+                    data = os.read(sys.stdin.fileno(), min(available.value, 4096))
+                    if on_data is not None:
+                        on_data(data)
                 time.sleep(.1)
             on_core_exit()
             return
         try:
             # Raw OS reads avoid holding BufferedReader's lock during shutdown.
-            while os.read(sys.stdin.fileno(), 1):
-                pass
+            while data := os.read(sys.stdin.fileno(), 4096):
+                if on_data is not None:
+                    on_data(data)
         except (OSError, ValueError):
             pass
         on_core_exit()
