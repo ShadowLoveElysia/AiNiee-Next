@@ -5,6 +5,10 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "live":
     from ModuleFolders.Media.supervisor import run_managed_desktop
     raise SystemExit(run_managed_desktop(sys.argv[2:]))
 
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "video":
+    from ModuleFolders.Media.video_tui import main as video_main
+    raise SystemExit(video_main(sys.argv[2:]))
+
 # Silence TF and other C++ logs that break TUI
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['GLOG_minloglevel'] = '3'
@@ -925,6 +929,7 @@ class CLIMenu:
             "start_skills_server": self.start_skills_server,
             "manga_runtime_manager": self.manga_runtime_menu_handler.show,
             "start_live_translation": self.start_live_translation,
+            "start_video_translation": self.start_video_translation,
         }
 
     def _log_main_menu_action(self, label: str):
@@ -935,6 +940,8 @@ class CLIMenu:
         table = Table(show_header=False, box=None)
         menus = ["start_live_translation", "start_translation", "start_manga_translation", "start_polishing", "start_all_in_one", "export_only", "editor", "settings", "api_settings", "glossary", "plugin_settings", "task_queue", "automation", "profiles", "qa", "update", "update_web", "start_web_server", "start_mcp_server", "start_skills_server", "manga_runtime_manager", "acknowledgements"]
         colors = ["bold cyan", "green", "cyan", "green", "bold green", "magenta", "bold cyan", "blue", "blue", "yellow", "cyan", "bold blue", "bold yellow", "cyan", "yellow", "dim", "bold magenta", "magenta", "bold magenta", "bold cyan", "cyan", "bold yellow"]
+        menus.insert(1, "start_video_translation")
+        colors.insert(1, "bold cyan")
         actions = self._main_menu_actions()
 
         for i, (menu_key, color) in enumerate(zip(menus, colors), 1):
@@ -956,6 +963,7 @@ class CLIMenu:
         groups = [
             ("main_menu_group_tasks", "green", [
                 ("start_live_translation", "bold cyan"),
+                ("start_video_translation", "bold cyan"),
                 ("start_translation", "green"),
                 ("start_manga_translation", "cyan"),
                 ("start_polishing", "green"),
@@ -2521,6 +2529,10 @@ class CLIMenu:
             self.live_mode_active = False
         console.print(i18n.get("media_tui_unlocked"))
 
+    def start_video_translation(self):
+        from ModuleFolders.Media.video_tui import VideoTranslationTUI
+        VideoTranslationTUI(self).show()
+
     def start_mcp_server(self):
         self.mcp_runtime_bridge.start_mcp_server()
 
@@ -2534,6 +2546,9 @@ class CLIMenu:
         self.task_queue_menu_handler.show()
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "video":
+        from ModuleFolders.Media.video_tui import main as video_main
+        return video_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "live":
         from ModuleFolders.Media.supervisor import run_managed_desktop
         return run_managed_desktop(sys.argv[2:])

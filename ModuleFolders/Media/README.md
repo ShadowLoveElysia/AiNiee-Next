@@ -1,5 +1,78 @@
 # Media translation backends
 
+## Video file translation
+
+Use **Video translation** in the TUI main menu (including the Tasks group), or
+run `python ainiee_cli.py video` / `python -m ModuleFolders.Media.video_tui`.
+This terminal workflow requires no Tk window. It selects a video, output folder,
+languages, local/cloud ASR, local recognition model, translation LLM and glossary
+source. It asks for a subtitle mode on first use, and has its own submenu for
+changing the saved subtitle mode and opening registered media settings. The
+terminal shows stages, progress and elapsed time; Ctrl+C cancels the worker,
+and a second Ctrl+C forces cleanup. It waits for actual completion and prints
+the finished paths before returning to the menu.
+
+Alternatively, open **Video translation** in the media controller, or run
+`python -m ModuleFolders.Media --video` (`python ainiee_cli.py live --video`
+through the TUI launcher). Choose the ASR, translation model and languages
+in the controller, then choose a video and output folder in the file
+window. Stop live capture before starting a file job.
+
+Each start explicitly asks for local or cloud ASR, initially selecting local.
+Local mode uses the controller's recognition model (including its loopback vLLM
+option). Cloud mode accepts an HTTPS OpenAI-compatible API base URL, model and
+API key, and uploads each speech segment to `/audio/transcriptions` only after
+that selection. Cloud API URL, model and key are saved in `Resource/media_overlay.json`
+and registered under **Settings → Media settings**. The key is masked in the
+settings table and entered with a password prompt. The ASR dialog restores these
+values on subsequent starts but still defaults to local mode. These settings do
+not alter the live recognizer. Cloud errors omit response bodies;
+redirects are rejected. Translation and temporary-term extraction still use the
+selected local LLM.
+
+The first job asks for **switchable subtitles** or **burned-in subtitles**.
+This preference is saved as `video_subtitle_mode` in `Resource/media_overlay.json`
+and can be changed with **Subtitle output**. Dismissing the choice cancels the
+start; there is no implicit default.
+
+The pipeline extracts the first audio stream to 16 kHz mono PCM with FFmpeg,
+applies FFT noise reduction (`afftdn`), segments speech with Silero VAD,
+recognizes every segment into a source SRT, translates each cue with the
+selected local LLM, and invokes FFmpeg to create the finished video. Recognition
+and translation run serially in an isolated media-runtime worker; no live
+backlog policy drops segments. Cue times are VAD segment times, not word alignment.
+The original audio, rather than the recognition-only denoised audio, goes into
+the finished video. The selected vLLM ASR service remains available when configured.
+
+**Glossary source** defaults to automatic temporary extraction for each new
+video. After ASR, the selected LLM reads the complete transcript in bounded
+batches, extracts names and specialist terms, and establishes one validated
+mapping before subtitle translation begins. Temporary terms remain in worker
+memory and are not saved to preferences or long-term glossaries. Malformed
+extraction is retried once; repeated failure stops with the source SRT preserved.
+The existing live glossary is never inherited. To use a saved glossary instead,
+explicitly choose **Choose a manual glossary for this video** and a non-empty
+profile in the video window. Manual mode uses only that profile. Opening a new
+file resets the choice to automatic extraction; the source selection is not
+persisted. At most 100 mappings are retained, with at most 16 matching terms
+injected into each cue's translation prompt.
+
+- Switchable mode produces MKV with a selectable translated SRT track and copies
+  the first video stream and all audio streams without re-encoding.
+- Burned-in mode produces H.264/AAC MP4 with translated subtitles rendered into
+  the image. It re-encodes video and audio.
+- Both retain source and translated UTF-8 SRT files. Each job creates a unique
+  output folder and preserves the input. Failures or cancellation retain completed
+  SRT files; the final video appears only after successful muxing/encoding.
+
+Install FFmpeg and ffprobe on `PATH`, place their executables in
+`Resource/MediaRuntime/ffmpeg/bin/`, or set `AINIEE_FFMPEG` and `AINIEE_FFPROBE`
+to executable paths. Burned-in subtitles require FFmpeg with libass and libx264,
+plus an installed font covering the target language. No FFmpeg binary is bundled
+or downloaded automatically by this feature. Input files must contain both video
+and audio. The file window reports the current stage, recognition/translation
+progress, final paths and cancellation state.
+
 ## Application audio capture
 
 On x64 Windows build 20348 or later, enable **Capture one application's audio**
@@ -457,6 +530,9 @@ The model list also offers Index-Translate-2B and HY-MT2-1.8B in Q4_K_M / Q6_K.
 These use a local, loopback-only llama.cpp server with streamed text, a random
 session API key, owned process lifetime and model-resident inference. Downloads
 include only the selected GGUF, not every quantization tier in the repository.
+The owned translation and GGUF ASR servers explicitly use `--cache-ram 0`.
+This disables b11552's default 8192 MiB host prompt-state archive; the active
+model context and its bounded prefix reuse remain available.
 
 Compute choices are `auto`, `cuda:0`, `vulkan` and `cpu`. Auto uses CUDA when
 Torch can use the NVIDIA GPU; AMD/Intel GGUF translation uses Vulkan, with CPU
@@ -608,21 +684,26 @@ away or minimized while the subtitle window stays visible.
 
 Model and appearance preferences are saved to `Resource/media_overlay.json`
 as they are edited and when closing the controller. Recording is off by default;
-completed captions remain in memory for the current session and can be scrolled
-directly in the overlay when unlocked with opacity at least 10%. Locking the panel
+recent captions can be scrolled directly in the overlay when unlocked with
+opacity at least 10%. Locking the panel
 or lowering opacity below 10% returns to the latest captions and disables scrolling.
-Recent translations also opens a separate scrollable view. There is no visible
-history-count setting; restarting clears the previous session. Dynamic translation
-context is off by default (0).
+Recent translations opens a separate view with 100-caption pages read on demand
+from disk, with Older, Newer and Latest controls. There is no visible
+history-count setting; the complete caption history is appended to a temporary
+JSONL file and only the latest 32 captions are kept in memory for the live
+overlay. The offset index is also on disk, so paging does not scan or load the
+whole session. Restarting or closing the controller removes the temporary files.
+Stopping capture preserves them for review until then. Dynamic
+translation context is off by default (0).
 Users may enable up to 3 previous source/translation pairs within a
-1600-character budget. In-memory caption history and recording remain independent
+1600-character budget. Caption history and recording remain independent
 of the context sent to the translation model.
 
 When Record ASR and translations is enabled, events received from then onward
 are written to a new UTF-8 JSONL file in the selected recording directory, including
 ASR source text and final translated text. Intermediate generated text and audio
 are not recorded. Disabling recording or stopping closes the file; earlier files
-remain available. Enabling recording does not retroactively save in-memory history.
+remain available. Enabling recording does not retroactively save session history.
 Both recording and translation-context settings are available in the TUI and desktop.
 The model directory is selected through the controller or
 `AINIEE_MEDIA_MODEL_ROOT`; an existing `G:\AiNiee-Models` is detected on Windows.
@@ -647,8 +728,8 @@ Dependencies are optional: Torch/torchaudio with matching CUDA builds,
 Transformers 5.6.0, accelerate, FunASR, sentencepiece, Silero VAD, ONNX Runtime,
 SoundCard and NumPy, plus Python's Tk support. The desktop entry reports missing
 dependencies in the control window. Desktop labels and status messages use
-the existing AppI18N loader and all seven project locales. The Web/Tauri interface, offline-video
-workflow are not included in this desktop integration.
+the existing AppI18N loader and all seven project locales. The file-video workflow
+is described above; Web/Tauri media controls are not included in this desktop integration.
 
 The simultaneous-translation candidate pipeline is:
 
@@ -701,13 +782,15 @@ latency from the segment end; no token-first latency is currently measured.
 
 ## Offline extension
 
-Offline processing supplies its own `AudioSegment` sequence and model
+The video-file path above supplies its own `AudioSegment` sequence and model
+factories, with separate recognition and translation passes so source SRT is
+available before translation starts. Other offline clients can supply model
 instances to `CascadeProcessor`; it must preserve all segments rather than
 reuse the live queue's drop policy. Future batch inference, speaker metadata,
 word alignment and multi-cue splitting belong in richer adapters/contracts;
-the current recognizer returns one final transcript per segment. File decoding,
-resume, subtitle export and AiNiee provider integration are not implemented
-by this prototype.
+the current recognizer returns one final transcript per segment. Resuming a file
+job and routing its translations through batch AiNiee providers are not yet
+implemented.
 
 The experiment's `--audio` mode is a serial, lossless recording replay using
 the same live endpoint settings. It is not the future offline-video product.

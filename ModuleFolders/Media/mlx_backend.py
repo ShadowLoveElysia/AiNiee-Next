@@ -34,12 +34,18 @@ class MlxTextTranslator:
         self.on_partial = on_partial
 
     def translate(self, text, *, source_lang, target_lang, context):
-        from mlx_lm import stream_generate
-        from mlx_lm.sample_utils import make_sampler
-
         prompt = translation_prompt(text, family=self.family, source_lang=source_lang,
                                     target_lang=target_lang, context=context, glossary=getattr(self, "glossary", ()),
                                     max_characters=getattr(self, "max_characters", 0))
+        return self.generate(prompt)
+
+    def generate(self, prompt, *, max_new_tokens=None):
+        from mlx_lm import stream_generate
+        from mlx_lm.sample_utils import make_sampler
+
+        token_limit = self.max_new_tokens if max_new_tokens is None else max_new_tokens
+        if token_limit <= 0:
+            raise ValueError("Output budget must be positive")
         tokens = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}], tokenize=True,
             add_generation_prompt=True, enable_thinking=False,
@@ -48,7 +54,7 @@ class MlxTextTranslator:
         self.last_metrics = {}
         started = time.perf_counter()
         for response in stream_generate(self.model, self.tokenizer, prompt=tokens,
-                                        max_tokens=self.max_new_tokens, sampler=make_sampler(temp=0)):
+                                        max_tokens=token_limit, sampler=make_sampler(temp=0)):
             if response.finish_reason == "length":
                 raise RuntimeError("Translation reached its token limit; shorten the audio segment")
             if response.text:

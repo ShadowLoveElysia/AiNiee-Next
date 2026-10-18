@@ -9,11 +9,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="AiNiee live translation with a separate subtitle window")
     parser.add_argument("--model-root", help="Directory containing SenseVoiceSmall and translation model folders")
     parser.add_argument("--start", action="store_true", help="Start capture after opening the controller")
+    parser.add_argument("--video", action="store_true", help="Open file video translation in the media controller")
     parser.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         from ModuleFolders.Media.desktop import DesktopApp
         app = DesktopApp(model_root=args.model_root, auto_start=args.start, managed=args.managed)
+        if args.video:
+            app.root.after_idle(app.show_video_window)
         app.run()
     except Exception as exc:
         if args.managed:

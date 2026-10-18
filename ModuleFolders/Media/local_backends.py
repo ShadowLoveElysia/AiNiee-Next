@@ -112,13 +112,20 @@ class LocalTextTranslator:
         self, text: str, *, source_lang: str, target_lang: str,
         context: Sequence[TranslationContext],
     ) -> str:
-        import torch
-
         prompt = translation_prompt(
             text, family=self.family, source_lang=source_lang,
             target_lang=target_lang, context=context,
             glossary=getattr(self, "glossary", ()), max_characters=getattr(self, "max_characters", 0),
         )
+        return self.generate(prompt)
+
+    def generate(self, prompt: str, *, max_new_tokens: int | None = None) -> str:
+        """Run a bounded instruction, shared by translation and file terminology extraction."""
+        import torch
+
+        token_limit = self.max_new_tokens if max_new_tokens is None else max_new_tokens
+        if token_limit <= 0:
+            raise ValueError("Output budget must be positive")
         inputs = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}], tokenize=True,
             add_generation_prompt=True, enable_thinking=False,
@@ -141,11 +148,11 @@ class LocalTextTranslator:
 
                 streamer = PartialStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
             output = self.model.generate(
-                **inputs, max_new_tokens=self.max_new_tokens,
+                **inputs, max_new_tokens=token_limit,
                 do_sample=False, use_cache=True, streamer=streamer,
             )
         tokens = output[0, inputs["input_ids"].shape[-1]:]
-        if len(tokens) >= self.max_new_tokens:
+        if len(tokens) >= token_limit:
             raise RuntimeError("Translation reached its token limit; shorten the audio segment")
         text = self.tokenizer.decode(tokens, skip_special_tokens=True).strip()
         if "</think>" in text:

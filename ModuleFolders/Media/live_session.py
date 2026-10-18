@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 import queue
 import threading
@@ -13,6 +13,10 @@ import sys
 import json
 import os
 import signal
+
+
+MAX_EVENT_QUEUE = 512
+_DROPPABLE_EVENTS = {"status", "partial", "segment", "capture", "backlog"}
 
 
 def terminate_worker(process, *, force: bool = False) -> None:
@@ -50,7 +54,7 @@ class LiveConfig:
         from ModuleFolders.Media.model_catalog import get_model
         return Path(self.model_root) / get_model(self.family).directory
 
-    def validate(self) -> None:
+    def validate(self, *, require_recognition: bool = True) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
         from ModuleFolders.Media.glossary import validate_entries
@@ -73,10 +77,10 @@ class LiveConfig:
         root = Path(self.model_root).expanduser()
         from ModuleFolders.Media.asr_catalog import recognition_files_present, get_recognizer
         model = get_recognizer(self.recognizer)
-        if model.backend == 'vllm':
+        if require_recognition and model.backend == 'vllm':
             from ModuleFolders.Media.vllm_asr import service_url
             service_url(self.asr_endpoint)
-        elif not recognition_files_present(root, self.recognizer):
+        elif require_recognition and not recognition_files_present(root, self.recognizer):
             raise ValueError(f"Recognition model files are missing: {root / get_recognizer(self.recognizer).directory}")
         if not model_files_present(root, self.family):
             raise ValueError(f"Translation model files are missing or incomplete: {self.translation_dir}")
@@ -85,15 +89,21 @@ class LiveConfig:
 class LiveSession:
     """The GUI owns this controller; model and capture imports stay in a child."""
 
+    worker_module = "ModuleFolders.Media.worker"
+    worker_creationflags = 0
+
     def __init__(self) -> None:
         self._process = None
-        self._events = queue.Queue()
+        self._events = queue.Queue(maxsize=MAX_EVENT_QUEUE)
         self._stop_deadline = None
         self._startup_deadline = None
         self._worker_started = False
         self.ready = False
         self.config = None
         self._text_request_id = None
+        self._reader_done = threading.Event()
+        self._reader_stop = threading.Event()
+        self._reader = None
 
     @property
     def active(self) -> bool:
@@ -103,15 +113,16 @@ class LiveSession:
         if self.active:
             raise RuntimeError("A live session is already active")
         config.validate()
-        config = LiveConfig(**{**asdict(config), "model_root": str(Path(config.model_root).expanduser().resolve())})
+        config = replace(config, model_root=str(Path(config.model_root).expanduser().resolve()))
         from ModuleFolders.Media.runtime import subprocess_environment
-        self._events = queue.Queue()
+        self._events = queue.Queue(maxsize=MAX_EVENT_QUEUE)
         process = subprocess.Popen(
-            [interpreter or sys.executable, "-u", "-m", "ModuleFolders.Media.worker"],
+            [interpreter or sys.executable, "-u", "-m", self.worker_module],
             cwd=Path(__file__).resolve().parents[2], env=subprocess_environment(),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace",
             start_new_session=os.name != "nt",
+            creationflags=self.worker_creationflags,
         )
         try:
             process.stdin.write(json.dumps(asdict(config)) + "\n")
@@ -122,18 +133,39 @@ class LiveSession:
             raise
         self._process = process
         events = self._events
+        self._reader_done = threading.Event()
+        reader_done = self._reader_done
+        self._reader_stop = threading.Event()
+        reader_stop = self._reader_stop
         def receive():
             try:
                 for line in process.stdout:
+                    if reader_stop.is_set():
+                        break
                     try:
                         event = json.loads(line)
                     except ValueError:
                         continue
                     if isinstance(event, dict) and "type" in event:
-                        events.put(event)
+                        if event["type"] in _DROPPABLE_EVENTS:
+                            try:
+                                events.put_nowait(event)
+                            except queue.Full:
+                                pass
+                        else:
+                            # Backpressure preserves final captions and control
+                            # events without an unbounded GUI backlog.
+                            while not reader_stop.is_set():
+                                try:
+                                    events.put(event, timeout=0.1)
+                                    break
+                                except queue.Full:
+                                    continue
             finally:
                 process.stdout.close()
-        threading.Thread(target=receive, name="media-events", daemon=True).start()
+                reader_done.set()
+        self._reader = threading.Thread(target=receive, name="media-events", daemon=True)
+        self._reader.start()
         self._stop_deadline = None
         self._startup_deadline = time.monotonic() + 60
         self._worker_started = False
@@ -201,6 +233,8 @@ class LiveSession:
             if self._process.poll() is None:
                 terminate_worker(self._process)
         if self._process.poll() is not None:
+            if not self._reader_done.is_set() or not self._events.empty():
+                return events
             code = self._process.returncode
             stopping = self._stop_deadline is not None
             if not self._process.stdin.closed:
@@ -214,6 +248,7 @@ class LiveSession:
         return events
 
     def close(self) -> None:
+        self._reader_stop.set()
         if self.active:
             self.stop()
             try:
@@ -222,6 +257,14 @@ class LiveSession:
                 terminate_worker(self._process, force=True)
                 self._process.wait(timeout=3)
             self._process = None
+        if self._reader is not None:
+            self._reader.join(timeout=1)
+            self._reader = None
+        while True:
+            try:
+                self._events.get_nowait()
+            except queue.Empty:
+                break
         self.ready = False
         self.config = None
         self._text_request_id = None

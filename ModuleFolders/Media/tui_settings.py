@@ -17,6 +17,9 @@ FIELDS = [
     ("package_source", "package_source"),
     ('recognizer', 'recognizer'), ('recognition_device', 'recognition_device'),
     ('asr_endpoint', 'asr_endpoint'),
+    ('cloud_asr_endpoint', 'video_asr_endpoint'),
+    ('cloud_asr_model', 'video_asr_model'),
+    ('cloud_asr_api_key', 'video_asr_api_key'),
 ]
 
 
@@ -49,6 +52,10 @@ def show_media_settings(host) -> None:
             console.print(tr("media_model_speed_note"), markup=False)
             selected = IntPrompt.ask(tr("media_translator"), choices=[str(i) for i in range(1, len(TRANSLATION_MODELS)+1)])
             value = TRANSLATION_MODELS[selected-1].key
+        elif key == "cloud_asr_api_key":
+            value = Prompt.ask(tr("media_" + label) + " " + tr("media_video_asr_key_keep"), password=True)
+            if not value:
+                continue
         elif isinstance(DEFAULTS.get(key), bool):
             value = Confirm.ask(tr("media_" + label), default=data[key])
         elif key in RANGES:

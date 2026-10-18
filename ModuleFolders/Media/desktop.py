@@ -18,6 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from ModuleFolders.Media.preferences import default_model_root
 
 
+MAX_HISTORY_DIALOG_CAPTIONS = 100
+
+
 class DesktopApp:
     def __init__(self, *, model_root: str | None = None, auto_start: bool = False, managed: bool = False) -> None:
         import tkinter as tk
@@ -50,6 +53,7 @@ class DesktopApp:
         self.closed = False
         self.state = "idle"
         self.mutual_window = None
+        self.video_window = None
         self.source_text = ""
         self.translation_text = ""
         self.root = tk.Tk()
@@ -303,6 +307,9 @@ class DesktopApp:
         ttk.Button(buttons, text=self.t("show_window"), command=self.show_overlay).pack(side="left", ipady=6)
         ttk.Button(buttons, text=self.t("hide_window"), command=self.hide_overlay).pack(side="left", padx=8, ipady=6)
         ttk.Label(frame, textvariable=self.status, wraplength=620).grid(row=8, column=0, columnspan=3, sticky="w", pady=8)
+        video_actions = ttk.Frame(frame)
+        video_actions.grid(row=12, column=0, columnspan=3, sticky="ew", pady=8)
+        ttk.Button(video_actions, text=self.t("video_title"), command=self.show_video_window).pack(side="left", ipady=5)
 
         self.background = tk.Toplevel(self.root)
         self.background.title(self.t("subtitle_title") + " Background")
@@ -494,6 +501,9 @@ class DesktopApp:
 
     def prepare_runtime(self, action: str, *, confirmed: bool = False, model_key: str | None = None,
                         asr_key: str | None = None, download_scope: str = 'all') -> None:
+        if self.video_active:
+            self.environment_status.set(self.t("stop_before_setup"))
+            return
         from ModuleFolders.Media.desktop_setup import prepare_runtime
         prepare_runtime(self, action, confirmed=confirmed, model_key=model_key, asr_key=asr_key, download_scope=download_scope)
 
@@ -504,7 +514,7 @@ class DesktopApp:
 
     def select_recognizer(self, event=None):
         from ModuleFolders.Media.asr_catalog import get_recognizer
-        if self.session.active or self.setup_busy:
+        if self.session.active or self.video_active or self.setup_busy:
             self.recognizer_choice.set(get_recognizer(self.recognizer.get()).name)
             self.environment_status.set(self.t('stop_before_setup'))
             return
@@ -519,7 +529,7 @@ class DesktopApp:
         self.compute_changed()
 
     def compute_changed(self, event=None):
-        if self.session.active or self.setup_busy:
+        if self.session.active or self.video_active or self.setup_busy:
             self.environment_status.set(self.t("stop_before_setup"))
             return
         self.runtime_ready = False
@@ -563,20 +573,66 @@ class DesktopApp:
         self.history_text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.history_text.pack(fill="both", expand=True)
+        controls = ttk.Frame(frame)
+        controls.pack(fill="x", pady=(8, 0))
+        self._history_page_start = None
+        self._history_render_key = None
+        self.history_older = ttk.Button(controls, text=self.t("history_older"), command=lambda: self.move_history_page(-1))
+        self.history_older.pack(side="left")
+        self.history_newer = ttk.Button(controls, text=self.t("history_newer"), command=lambda: self.move_history_page(1))
+        self.history_newer.pack(side="left", padx=8)
+        ttk.Button(controls, text=self.t("history_latest"), command=lambda: self.move_history_page(0)).pack(side="left")
+        self.history_page_status = ttk.Label(controls)
+        self.history_page_status.pack(side="right")
         self.render_history()
         self.root.after_idle(self._keep_controls_accessible)
+
+    def move_history_page(self, direction):
+        start = getattr(self, "_history_page_start", None)
+        if start is None:
+            start = max(0, self.history.count - MAX_HISTORY_DIALOG_CAPTIONS)
+        if direction < 0:
+            self._history_page_start = max(0, start - MAX_HISTORY_DIALOG_CAPTIONS)
+        elif direction > 0 and start + 2 * MAX_HISTORY_DIALOG_CAPTIONS < self.history.count:
+            self._history_page_start = start + MAX_HISTORY_DIALOG_CAPTIONS
+        else:
+            self._history_page_start = None
+        self.render_history()
 
     def render_history(self):
         if not hasattr(self, "history_text") or self.history_text is None or not self.history_text.winfo_exists():
             return
-        chunks = []
-        for caption in self.history.captions:
-            if self.show_source.get():
-                chunks.append(self.t("history_source") + "\n" + (caption.get("source_text") or ""))
-            chunks.append(self.t("history_translation") + "\n" + (caption.get("translated_text") or "") + "\n")
+        total = self.history.count
+        start = getattr(self, "_history_page_start", None)
+        if start is None or start >= total:
+            start = max(0, total - MAX_HISTORY_DIALOG_CAPTIONS)
+        end = min(total, start + MAX_HISTORY_DIALOG_CAPTIONS)
+        if hasattr(self, "history_page_status"):
+            self.history_page_status.configure(text=self.t("history_page", start=start + 1 if total else 0, end=end, total=total))
+            self.history_older.configure(state="normal" if start else "disabled")
+            self.history_newer.configure(state="normal" if end < total else "disabled")
+        render_key = (self.history.generation, start, end, self.show_source.get())
+        if getattr(self, "_history_render_key", None) == render_key:
+            return
+        try:
+            captions = self.history.read_page(start, MAX_HISTORY_DIALOG_CAPTIONS)
+        except OSError:
+            self.record_status.set(self.t("history_error"))
+            captions = list(self.history.captions)
+        else:
+            self._history_render_key = render_key
         self.history_text.configure(state="normal")
         self.history_text.delete("1.0", "end")
-        self.history_text.insert("1.0", "\n".join(chunks) or self.t("history_empty"))
+        has_history = False
+        for caption in captions:
+            has_history = True
+            if self.show_source.get():
+                self.history_text.insert("end", self.t("history_source") + "\n")
+                self.history_text.insert("end", (caption.get("source_text") or "") + "\n")
+            self.history_text.insert("end", self.t("history_translation") + "\n")
+            self.history_text.insert("end", (caption.get("translated_text") or "") + "\n\n")
+        if not has_history:
+            self.history_text.insert("end", self.t("history_empty"))
         self.history_text.configure(state="disabled")
 
     def refresh_caption_history(self):
@@ -635,7 +691,7 @@ class DesktopApp:
 
     def select_model(self, event=None) -> None:
         from ModuleFolders.Media.model_catalog import get_model
-        if self.session.active or self.setup_busy:
+        if self.session.active or self.video_active or self.setup_busy:
             self.update_model_details()
             self.environment_status.set(self.t("stop_before_setup"))
             return
@@ -747,13 +803,13 @@ class DesktopApp:
         else:
             self.catalog_details.set(self.t('catalog_llm_hint') + '\n' + describe_model(key, self.i18n.get))
             installed = model_files_present(self.model_root.get(), key)
-        blocked = self.session.active or self.setup_busy or self.closing
+        blocked = self.session.active or self.video_active or self.setup_busy or self.closing
         self.catalog_use_button.configure(state="disabled" if blocked or not installed else "normal")
         self.catalog_download_button.configure(state="disabled" if blocked else "normal")
 
     def use_catalog_model(self) -> None:
         from ModuleFolders.Media.model_catalog import get_model
-        if self.session.active or self.setup_busy:
+        if self.session.active or self.video_active or self.setup_busy:
             self.environment_status.set(self.t("stop_before_setup"))
             return
         selection = self.model_list.selection()
@@ -806,7 +862,7 @@ class DesktopApp:
         self._checked_compute = report.get("compute") if self.runtime_ready else None
         if event.get("action") in {"install", "configure"} and self.runtime_ready:
             self.refresh_devices()
-        if not self.session.active:
+        if not self.session.active and not self.video_active:
             self.start_button.configure(state="normal" if self.runtime_ready else "disabled")
         self.environment_status.set(event["message"])
         self.update_model_details()
@@ -1109,7 +1165,7 @@ class DesktopApp:
         self.glossary_choice.set(self.glossary_profile.get() or self.t("glossary_off"))
 
     def select_glossary(self, event=None):
-        if self.session.active:
+        if self.session.active or self.video_active:
             self.refresh_glossary_choices()
             self.status.set(self.t("stop_before_setup"))
             return
@@ -1118,6 +1174,9 @@ class DesktopApp:
         self.save_settings()
 
     def show_glossary_editor(self):
+        if self.video_active:
+            self.status.set(self.t("stop_before_setup"))
+            return
         from ModuleFolders.Media.glossary_window import open_glossary_editor
         open_glossary_editor(self)
 
@@ -1127,9 +1186,24 @@ class DesktopApp:
         self.overlay.lift()
         self._keep_controls_accessible()
 
+    @property
+    def video_active(self):
+        window = getattr(self, "video_window", None)
+        return window is not None and window.active
+
+    def show_video_window(self):
+        if self.video_window is not None:
+            self.video_window.window.lift()
+            return
+        if self.session.active or self.video_active or self.setup_busy:
+            self.status.set(self.t("stop_before_setup"))
+            return
+        from ModuleFolders.Media.video_window import VideoTranslationWindow
+        self.video_window = VideoTranslationWindow(self)
+
     def start(self) -> None:
         from tkinter import messagebox
-        if self.session.active or self.setup_busy or not self.runtime_ready:
+        if self.session.active or self.video_active or self.setup_busy or not self.runtime_ready:
             return
         if self._checked_runtime_signature != self.runtime_signature():
             self.runtime_ready = False
@@ -1162,6 +1236,7 @@ class DesktopApp:
             return
         self.source_text = self.translation_text = ""
         self.history.clear()
+        self._history_page_start = None
         self.caption_viewport.set_history([])
         self.caption_viewport.show_latest()
         self.render_history()
@@ -1206,8 +1281,11 @@ class DesktopApp:
         if self.state == "stopping" and kind not in {"stopped", "error"}:
             return
         if kind in {"transcript", "caption"}:
+            from ModuleFolders.Media.session_history import HistoryStorageError
             try:
                 self.history.accept(event)
+            except HistoryStorageError:
+                self.record_status.set(self.t("history_error"))
             except OSError as exc:
                 self.history.end_recording()
                 self.recording.set(False)
@@ -1350,9 +1428,11 @@ class DesktopApp:
             pass
         for event in self.session.poll():
             self.handle_event(event)
+        if self.video_window is not None:
+            self.video_window.poll()
         if self.mutual_window is not None:
             self.mutual_window.refresh()
-        if self.closing and not self.session.active:
+        if self.closing and not self.session.active and not self.video_active:
             self.destroy()
             return
         if not self.closing:
@@ -1368,16 +1448,20 @@ class DesktopApp:
         self.closing = True
         if self.mutual_window is not None:
             self.mutual_window.close()
+        if self.video_window is not None:
+            self.video_window.close()
         self.stop()
-        if not self.session.active:
+        if not self.session.active and not self.video_active:
             self.destroy()
 
     def destroy(self) -> None:
         self.closed = True
+        if self.video_window is not None:
+            self.video_window.shutdown()
         if self.mutual_window is not None:
             self.mutual_window.close()
         self.session.close()
-        self.history.end_recording()
+        self.history.close()
         if self._fit_after is not None:
             self.root.after_cancel(self._fit_after)
         if hasattr(self, "_poll_after"):
@@ -1398,3 +1482,6 @@ class DesktopApp:
             self.root.mainloop()
         finally:
             self.session.close()
+            self.history.close()
+            if self.video_window is not None:
+                self.video_window.shutdown()

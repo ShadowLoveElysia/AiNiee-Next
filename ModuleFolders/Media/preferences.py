@@ -21,6 +21,8 @@ DEFAULTS = {
     "context_segments": 0, "recording": False,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
     "glossary_profiles": {}, "glossary_profile": "", "chat_character_limit": 0,
+    "video_subtitle_mode": "",
+    "cloud_asr_endpoint": "", "cloud_asr_model": "", "cloud_asr_api_key": "",
 }
 RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
           "width": (360, 2400), "height": (120, 1000),
@@ -32,6 +34,7 @@ from ModuleFolders.Media.asr_catalog import RECOGNITION_MODELS
 CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source": ("auto", "ja", "en", "ko", "zh", "yue"),
            "target": ("zh", "en", "ja", "ko"), "device": device_choices(), "package_source": ("nju", "official"),
            "recognizer": tuple(model.key for model in RECOGNITION_MODELS),
+           "video_subtitle_mode": ("", "soft", "hard"),
            "recognition_device": ("auto", "cpu", "mps", "metal") if sys.platform == 'darwin' else ("auto", "cpu", "cuda:0", "vulkan")}
 
 
@@ -51,6 +54,8 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
     except (OSError, ValueError):
         pass
     data.pop("history_segments", None)
+    if data.get("video_subtitle_mode") not in CHOICES["video_subtitle_mode"]:
+        data["video_subtitle_mode"] = ""
     from ModuleFolders.Media.glossary import validate_profiles
     try:
         data["glossary_profiles"] = validate_profiles(data.get("glossary_profiles", {}))
@@ -91,7 +96,18 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
 
 
 def validate_preference(key: str, value):
-    if key in RANGES:
+    if key.startswith("cloud_asr_"):
+        if not isinstance(value, str) or any(char in value for char in "\r\n"):
+            raise ValueError("Invalid cloud ASR setting")
+        value = value.strip()
+        if key == "cloud_asr_endpoint" and value:
+            from ModuleFolders.Media.cloud_asr import validate_cloud_settings
+            validate_cloud_settings(value, "model", "placeholder")
+        elif key == "cloud_asr_model" and len(value) > 256:
+            raise ValueError("Cloud ASR model name is too long")
+        elif key == "cloud_asr_api_key" and len(value) > 8192:
+            raise ValueError("Cloud ASR API key is too long")
+    elif key in RANGES:
         value = int(value)
         low, high = RANGES[key]
         if not low <= value <= high:

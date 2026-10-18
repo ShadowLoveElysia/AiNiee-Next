@@ -2,6 +2,10 @@
 
 import math
 import tkinter as tk
+from collections import deque
+
+
+MAX_RENDERED_CAPTIONS = 32
 
 
 class CaptionViewport(tk.Canvas):
@@ -21,7 +25,10 @@ class CaptionViewport(tk.Canvas):
         self.bind("<Destroy>", self._cancel_layout)
 
     def set_history(self, captions):
-        self._captions = list(captions)
+        # Keep the Tk canvas bounded even if another caller supplies an
+        # unbounded session history. Each caption expands to many text items
+        # when an outline is enabled.
+        self._captions = list(deque(captions, maxlen=MAX_RENDERED_CAPTIONS))
         self._schedule_layout()
 
     def set_appearance(self, *, background, translation_font, source_font,
