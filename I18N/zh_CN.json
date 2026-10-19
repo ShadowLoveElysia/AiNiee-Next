@@ -180,6 +180,8 @@
     "media_runtime_path": "同传运行环境：{path}",
     "media_history_context": "上下文、历史与记录",
     "media_context_segments": "翻译上下文（0 为关闭，最多 3 条）",
+    "media_cache_ram": "提示缓存上限（MiB）",
+    "media_cache_ram_hint": "0 关闭缓存；默认 3.0G。缓存越大越可能复用上下文并降低延迟，但会占用更多内存；达到上限后自动淘汰旧缓存。设备上限：{maximum}。",
     "media_history_segments": "可见历史（2–3 条）",
     "media_recording": "记录 ASR 与译文",
     "media_record_directory": "记录保存目录",

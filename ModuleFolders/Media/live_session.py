@@ -42,6 +42,7 @@ class LiveConfig:
     target_segment_ms: int = 3000
     max_segment_ms: int = 8000
     context_segments: int = 0
+    cache_ram_mib: int = 3072
     recognizer: str = "sensevoice"
     asr_endpoint: str = 'http://127.0.0.1:8001/v1'
     application_pid: int = 0
@@ -74,6 +75,8 @@ class LiveConfig:
             raise ValueError("Invalid endpoint duration")
         if self.context_segments not in {0, 1, 2, 3}:
             raise ValueError("Context must contain 0 to 3 segments (0 disables context)")
+        from ModuleFolders.Media.preferences import validate_preference
+        validate_preference("cache_ram_mib", self.cache_ram_mib)
         root = Path(self.model_root).expanduser()
         from ModuleFolders.Media.asr_catalog import recognition_files_present, get_recognizer
         model = get_recognizer(self.recognizer)
@@ -310,7 +313,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop, *, pending=None) -> N
         cuda_execution_check(torch)
     if checkpoint.backend == "gguf":
         from ModuleFolders.Media.gguf_backend import GgufTranslator
-        translator = GgufTranslator(config.translation_dir / checkpoint.filename, family=config.family, device=device)
+        translator = GgufTranslator(config.translation_dir / checkpoint.filename, family=config.family, device=device,
+                                     cache_ram_mib=config.cache_ram_mib)
     elif device == "mlx":
         from ModuleFolders.Media.mlx_backend import MlxTextTranslator
         translator = MlxTextTranslator(config.translation_dir, family=config.family)
@@ -329,7 +333,8 @@ def _capture_and_translate(config: LiveConfig, emit, stop, *, pending=None) -> N
     elif recognition_model.backend == 'gguf':
         from ModuleFolders.Media.gguf_asr import GgufSpeechRecognizer
         recognizer = GgufSpeechRecognizer(Path(config.model_root) / recognition_model.directory,
-                                         recognizer=config.recognizer, device=asr_device)
+                                         recognizer=config.recognizer, device=asr_device,
+                                         cache_ram_mib=config.cache_ram_mib)
     elif recognition_model.backend == 'vllm':
         from ModuleFolders.Media.vllm_asr import VllmSpeechRecognizer
         recognizer = VllmSpeechRecognizer(model=recognition_model.repo, endpoint=config.asr_endpoint)

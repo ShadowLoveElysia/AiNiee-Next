@@ -180,6 +180,8 @@
     "media_runtime_path": "Entorno de traducción: {path}",
     "media_history_context": "Contexto, historial y grabación",
     "media_context_segments": "Contexto de traducción (0 = desactivado, máximo 3)",
+    "media_cache_ram": "Límite de caché de prompts (MiB)",
+    "media_cache_ram_hint": "0 desactiva la caché; el valor predeterminado es 3.0G. Una caché mayor puede reutilizar más contexto y reducir la latencia, pero usa más RAM; al alcanzar el límite se expulsan las entradas antiguas. Límite del dispositivo: {maximum}.",
     "media_history_segments": "Historial visible (2–3)",
     "media_recording": "Guardar ASR y traducciones",
     "media_record_directory": "Carpeta de registros",

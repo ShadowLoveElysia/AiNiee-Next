@@ -180,6 +180,8 @@
     "media_runtime_path": "口譯執行環境：{path}",
     "media_history_context": "上下文、歷史與記錄",
     "media_context_segments": "翻譯上下文（0 為關閉，最多 3 筆）",
+    "media_cache_ram": "提示快取上限（MiB）",
+    "media_cache_ram_hint": "0 關閉快取；預設為 3.0G。快取越大越可能重用上下文並降低延遲，但會使用更多記憶體；達到上限後自動淘汰舊快取。裝置上限：{maximum}。",
     "media_history_segments": "可見歷史（2–3 筆）",
     "media_recording": "記錄 ASR 與譯文",
     "media_record_directory": "記錄儲存目錄",

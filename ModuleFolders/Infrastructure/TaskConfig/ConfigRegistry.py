@@ -608,7 +608,7 @@ for _media_key, _media_label in _media_fields:
     _media_type = ConfigType.STRING
     if isinstance(_media_default, bool):
         _media_type = ConfigType.BOOL
-    elif _media_key in _media_ranges:
+    elif _media_key in _media_ranges or _media_key == "cache_ram_mib":
         _media_type = ConfigType.INT
     elif _media_key in _media_choices:
         _media_type = ConfigType.CHOICE

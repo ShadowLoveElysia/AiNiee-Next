@@ -121,6 +121,7 @@ class VideoTranslationTUI:
             family=TRANSLATION_MODELS[index].key, source_lang=source_lang, target_lang=target_lang,
             device=data["device"], asr_device=data["recognition_device"], asr_endpoint=data["asr_endpoint"],
             context_segments=data["context_segments"], input_path=source,
+            cache_ram_mib=data["cache_ram_mib"],
             output_directory=str(Path(output).expanduser().resolve()), subtitle_mode=mode, **asr, **glossary,
         )
         config.validate()

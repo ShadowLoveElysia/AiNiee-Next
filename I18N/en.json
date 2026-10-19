@@ -180,6 +180,8 @@
     "media_runtime_path": "Media runtime: {path}",
     "media_history_context": "Context, history and recording",
     "media_context_segments": "Translation context (0 = off, up to 3)",
+    "media_cache_ram": "Prompt cache limit (MiB)",
+    "media_cache_ram_hint": "0 disables the cache; default is 3.0G. Larger caches may reuse more context and reduce latency, but use more RAM; old entries are evicted at the limit. Device ceiling: {maximum}.",
     "media_history_segments": "Visible history (2–3 entries)",
     "media_recording": "Record ASR and translations",
     "media_record_directory": "Recording directory",

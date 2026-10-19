@@ -180,6 +180,8 @@
     "media_runtime_path": "同時通訳の実行環境：{path}",
     "media_history_context": "文脈・履歴・記録",
     "media_context_segments": "翻訳文脈（0で無効、最大3件）",
+    "media_cache_ram": "プロンプトキャッシュ上限（MiB）",
+    "media_cache_ram_hint": "0で無効。既定値は3.0G。大きいほど文脈を再利用して遅延を下げられる場合がありますが、メモリ使用量が増えます。上限に達すると古いキャッシュを自動削除します。端末上限：{maximum}。",
     "media_history_segments": "表示履歴（2～3件）",
     "media_recording": "音声認識と訳文を保存",
     "media_record_directory": "保存フォルダー",

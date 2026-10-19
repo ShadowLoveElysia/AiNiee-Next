@@ -19,6 +19,7 @@ DEFAULTS = {
     "recognizer": "sensevoice", "recognition_device": "auto",
     "asr_endpoint": "http://127.0.0.1:8001/v1",
     "context_segments": 0, "recording": False,
+    "cache_ram_mib": 3072,
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
     "glossary_profiles": {}, "glossary_profile": "", "chat_character_limit": 0,
     "video_subtitle_mode": "",
@@ -38,6 +39,25 @@ CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source":
            "recognition_device": ("auto", "cpu", "mps", "metal") if sys.platform == 'darwin' else ("auto", "cpu", "cuda:0", "vulkan")}
 
 
+def max_cache_ram_mib() -> int:
+    """Return half of physical RAM as the device-specific cache ceiling."""
+    try:
+        import psutil
+        total = int(psutil.virtual_memory().total)
+    except (ImportError, OSError, AttributeError, TypeError, ValueError):
+        try:
+            total = int(os.sysconf("SC_PHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))
+        except (AttributeError, OSError, TypeError, ValueError):
+            total = 8 * 1024 ** 3
+    return max(1, total // 2 // (1024 ** 2))
+
+
+def format_cache_ram_mib(value: int) -> str:
+    """Format the cache budget compactly for settings tables and status text."""
+    value = int(value)
+    return "Off" if value == 0 else f"{value / 1024:.1f}G"
+
+
 def default_model_root() -> str:
     if os.environ.get("AINIEE_MEDIA_MODEL_ROOT"):
         return os.environ["AINIEE_MEDIA_MODEL_ROOT"]
@@ -47,6 +67,7 @@ def default_model_root() -> str:
 
 def read_preferences(path=SETTINGS_PATH) -> dict:
     data = {**DEFAULTS, "model_root": default_model_root()}
+    cache_default = min(DEFAULTS["cache_ram_mib"], max_cache_ram_mib())
     try:
         saved = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(saved, dict):
@@ -67,6 +88,10 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
         data["chat_character_limit"] = validate_preference("chat_character_limit", data.get("chat_character_limit", 0))
     except (ValueError, TypeError):
         data["chat_character_limit"] = 0
+    try:
+        data["cache_ram_mib"] = validate_preference("cache_ram_mib", data.get("cache_ram_mib", DEFAULTS["cache_ram_mib"]))
+    except (ValueError, TypeError):
+        data["cache_ram_mib"] = cache_default
     if data.get("package_source") not in CHOICES["package_source"]:
         data["package_source"] = DEFAULTS["package_source"]
     for key in ('recognizer', 'recognition_device'):
@@ -107,6 +132,12 @@ def validate_preference(key: str, value):
             raise ValueError("Cloud ASR model name is too long")
         elif key == "cloud_asr_api_key" and len(value) > 8192:
             raise ValueError("Cloud ASR API key is too long")
+    elif key == "cache_ram_mib":
+        if isinstance(value, bool):
+            raise ValueError("integer")
+        value = int(value)
+        if not 0 <= value <= max_cache_ram_mib():
+            raise ValueError(f"0–{max_cache_ram_mib()} MiB")
     elif key in RANGES:
         value = int(value)
         low, high = RANGES[key]

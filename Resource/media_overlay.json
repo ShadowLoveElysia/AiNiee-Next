@@ -23,6 +23,7 @@
   "recognition_device": "auto",
   "asr_endpoint": "http://127.0.0.1:8001/v1",
   "context_segments": 0,
+  "cache_ram_mib": 3072,
   "recording": false,
   "record_directory": "D:\\AiNiee-Next-main\\AiNiee-Next\\Resource\\MediaRecords",
   "glossary_profiles": {},

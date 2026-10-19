@@ -44,6 +44,9 @@ def format_config_value(key: str, value, config: dict, i18n=None) -> str:
     """根据配置类型格式化显示值"""
     if key == "media_cloud_asr_api_key":
         return "********" if value else ""
+    if key == "media_cache_ram_mib":
+        from ModuleFolders.Media.preferences import format_cache_ram_mib
+        return format_cache_ram_mib(value)
     item = get_config_item(key)
     if not item:
         return str(value) if value else ""

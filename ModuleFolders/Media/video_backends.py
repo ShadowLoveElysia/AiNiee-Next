@@ -49,7 +49,8 @@ def load_recognizer(config, device):
         return SenseVoiceRecognizer(root, device=device)
     if model.backend == "gguf":
         from ModuleFolders.Media.gguf_asr import GgufSpeechRecognizer
-        return GgufSpeechRecognizer(root, recognizer=config.recognizer, device=device)
+        return GgufSpeechRecognizer(root, recognizer=config.recognizer, device=device,
+                                    cache_ram_mib=config.cache_ram_mib)
     if model.backend == "vllm":
         from ModuleFolders.Media.vllm_asr import VllmSpeechRecognizer
         return VllmSpeechRecognizer(model=model.repo, endpoint=config.asr_endpoint)
@@ -62,7 +63,7 @@ def load_translator(config, device):
     if model.backend == "gguf":
         from ModuleFolders.Media.gguf_backend import GgufTranslator
         translator = GgufTranslator(config.translation_dir / model.filename, family=config.family, device=device,
-                                     context_size=4096)
+                                     context_size=4096, cache_ram_mib=config.cache_ram_mib)
     elif device == "mlx":
         from ModuleFolders.Media.mlx_backend import MlxTextTranslator
         translator = MlxTextTranslator(config.translation_dir, family=config.family)

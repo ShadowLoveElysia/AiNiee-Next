@@ -97,6 +97,7 @@ class DesktopApp:
         self.overlay_width = tk.IntVar(value=900)
         self.overlay_height = tk.IntVar(value=240)
         self.context_segments = tk.IntVar(value=0)
+        self.cache_ram_mib = tk.IntVar(value=3072)
         self.glossary_profile = tk.StringVar()
         self.glossary_choice = tk.StringVar()
         self.glossary_profiles = {}
@@ -280,21 +281,32 @@ class DesktopApp:
         ttk.Label(memory, text=self.t("context_segments")).grid(row=0, column=0, sticky="w")
         self.context_spin = ttk.Spinbox(memory, from_=0, to=3, width=4, textvariable=self.context_segments)
         self.context_spin.grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Label(memory, text=self.t("cache_ram")).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        from ModuleFolders.Media.preferences import max_cache_ram_mib
+        self.cache_ram_spin = ttk.Spinbox(memory, from_=0, to=max_cache_ram_mib(), increment=256,
+                                          width=8, textvariable=self.cache_ram_mib)
+        self.cache_ram_spin.grid(row=1, column=1, sticky="w", padx=8, pady=(8, 0))
+        self.cache_ram_display = tk.StringVar(value="3.0G")
+        ttk.Label(memory, textvariable=self.cache_ram_display).grid(row=1, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        self.cache_ram_mib.trace_add("write", lambda *_: self._refresh_cache_ram_display())
+        self._refresh_cache_ram_display()
+        ttk.Label(memory, text=self.t("cache_ram_hint", maximum=f"{max_cache_ram_mib() / 1024:.1f}G"),
+                  wraplength=280).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Checkbutton(memory, text=self.t("recording"), variable=self.recording,
-                        command=self.toggle_recording).grid(row=2, column=0, columnspan=2, sticky="w")
-        ttk.Label(memory, text=self.t("record_directory")).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Entry(memory, textvariable=self.record_directory, width=16).grid(row=4, column=0, sticky="ew")
-        ttk.Button(memory, text=self.t("browse"), command=self.browse_record_directory).grid(row=4, column=1, padx=(8, 0), sticky="e")
+                        command=self.toggle_recording).grid(row=3, column=0, columnspan=2, sticky="w")
+        ttk.Label(memory, text=self.t("record_directory")).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Entry(memory, textvariable=self.record_directory, width=16).grid(row=5, column=0, sticky="ew")
+        ttk.Button(memory, text=self.t("browse"), command=self.browse_record_directory).grid(row=5, column=1, padx=(8, 0), sticky="e")
         self.record_status = tk.StringVar(value=self.t("recording_off"))
-        ttk.Label(memory, textvariable=self.record_status, wraplength=280).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(memory, text=self.t("show_history"), command=self.show_history).grid(row=6, column=0, columnspan=2, sticky="w", pady=8)
-        ttk.Button(memory, text=self.t("mutual_title"), command=self.show_mutual_window).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        ttk.Label(memory, text=self.t("glossary_title")).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Label(memory, textvariable=self.record_status, wraplength=280).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(memory, text=self.t("show_history"), command=self.show_history).grid(row=7, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Button(memory, text=self.t("mutual_title"), command=self.show_mutual_window).grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(memory, text=self.t("glossary_title")).grid(row=9, column=0, columnspan=2, sticky="w")
         self.glossary_selector = ttk.Combobox(memory, textvariable=self.glossary_choice, state="readonly", width=16)
-        self.glossary_selector.grid(row=9, column=0, sticky="ew")
+        self.glossary_selector.grid(row=10, column=0, sticky="ew")
         self.glossary_selector.bind("<<ComboboxSelected>>", self.select_glossary)
         self.glossary_edit_button = ttk.Button(memory, text=self.t("glossary_edit"), command=self.show_glossary_editor)
-        self.glossary_edit_button.grid(row=9, column=1, padx=8)
+        self.glossary_edit_button.grid(row=10, column=1, padx=8)
         self.refresh_glossary_choices()
         self.history_dialog = None
         self.history_text = None
@@ -423,6 +435,11 @@ class DesktopApp:
             self.overlay_width.set(max(360, min(2400, int(data.get("width", 900)))))
             self.overlay_height.set(max(120, min(1000, int(data.get("height", 240)))))
             self.context_segments.set(max(0, min(3, int(data.get("context_segments", 0)))))
+            from ModuleFolders.Media.preferences import DEFAULTS, max_cache_ram_mib, validate_preference
+            try:
+                self.cache_ram_mib.set(validate_preference("cache_ram_mib", data.get("cache_ram_mib", DEFAULTS["cache_ram_mib"])))
+            except (ValueError, TypeError):
+                self.cache_ram_mib.set(min(DEFAULTS["cache_ram_mib"], max_cache_ram_mib()))
             self.recording.set(bool(data.get("recording", False)))
             if isinstance(data.get("record_directory"), str) and data["record_directory"].strip():
                 self.record_directory.set(data["record_directory"])
@@ -439,6 +456,14 @@ class DesktopApp:
                     variable.set(data[key])
             self.asr_endpoint.set(data.get('asr_endpoint', 'http://127.0.0.1:8001/v1'))
         except (OSError, ValueError, TypeError):
+            pass
+        self._refresh_cache_ram_display()
+
+    def _refresh_cache_ram_display(self):
+        try:
+            from ModuleFolders.Media.preferences import format_cache_ram_mib
+            self.cache_ram_display.set(format_cache_ram_mib(self.cache_ram_mib.get()))
+        except (AttributeError, self.tk.TclError, TypeError, ValueError):
             pass
 
     @staticmethod
@@ -458,6 +483,7 @@ class DesktopApp:
             ("background_color", self.background_color),
             ("stroke_width", self.stroke_width), ("stroke_color", self.stroke_color),
             ("context_segments", self.context_segments),
+            ("cache_ram_mib", self.cache_ram_mib),
             ("recording", self.recording), ("record_directory", self.record_directory),
             ("glossary_profile", self.glossary_profile), ("chat_character_limit", self.chat_character_limit),
         ]}
@@ -1227,6 +1253,7 @@ class DesktopApp:
                 recognizer=self.recognizer.get() if hasattr(self, 'recognizer') else 'sensevoice',
                 asr_endpoint=self.asr_endpoint.get() if hasattr(self, 'asr_endpoint') else 'http://127.0.0.1:8001/v1',
                 context_segments=self.context_segments.get(),
+                cache_ram_mib=self.cache_ram_mib.get(),
                 **self.application_capture_config(),
                 glossary=tuple(self.glossary_profiles.get(self.glossary_profile.get(), [])),
             )
@@ -1248,6 +1275,7 @@ class DesktopApp:
         for widget in (self.application_toggle, self.application_selector, self.application_refresh, self.devices):
             widget.configure(state="disabled")
         self.context_spin.configure(state="disabled")
+        self.cache_ram_spin.configure(state="disabled")
         self.compute_selector.configure(state="disabled")
         if hasattr(self, 'recognizer_selector'):
             self.recognizer_selector.configure(state='disabled')
@@ -1338,6 +1366,7 @@ class DesktopApp:
             self.history.end_recording()
             self.record_status.set(self.t("recording_wait" if self.recording.get() else "recording_off"))
             self.context_spin.configure(state="normal")
+            self.cache_ram_spin.configure(state="normal")
             self.compute_selector.configure(state="readonly")
             if hasattr(self, 'recognizer_selector'):
                 self.recognizer_selector.configure(state='readonly')

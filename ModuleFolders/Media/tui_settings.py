@@ -13,6 +13,7 @@ FIELDS = [
     ("stroke_color", "stroke_color"), ("show_source", "bilingual"), ("topmost", "topmost"),
     ("locked", "lock_position"), ("width", "width"), ("height", "height"),
     ("context_segments", "context_segments"),
+    ("cache_ram_mib", "cache_ram"),
     ("recording", "recording"), ("record_directory", "record_directory"),
     ("package_source", "package_source"),
     ('recognizer', 'recognizer'), ('recognition_device', 'recognition_device'),
@@ -58,6 +59,10 @@ def show_media_settings(host) -> None:
                 continue
         elif isinstance(DEFAULTS.get(key), bool):
             value = Confirm.ask(tr("media_" + label), default=data[key])
+        elif key == "cache_ram_mib":
+            from ModuleFolders.Media.preferences import format_cache_ram_mib, max_cache_ram_mib
+            console.print(tr("media_cache_ram_hint").format(maximum=format_cache_ram_mib(max_cache_ram_mib())), markup=False)
+            value = IntPrompt.ask(tr("media_" + label), default=data[key])
         elif key in RANGES:
             value = IntPrompt.ask(tr("media_" + label), default=data[key])
         else:

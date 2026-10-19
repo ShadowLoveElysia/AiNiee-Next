@@ -18,7 +18,8 @@ from ModuleFolders.Media.local_backends import translation_prompt
 
 class GgufTranslator:
     def __init__(self, model_path, *, family, device="cuda:0", max_new_tokens=256, on_partial=None,
-                 cpu_threads=4, model_name=None, projector=None, context_size=2048):
+                 cpu_threads=4, model_name=None, projector=None, context_size=2048,
+                 cache_ram_mib=3072):
         from ModuleFolders.Media.gguf_runtime import find_server
         from ModuleFolders.Media.model_catalog import get_model
         from ModuleFolders.Media.runtime import subprocess_environment
@@ -31,6 +32,8 @@ class GgufTranslator:
             raise ValueError("CPU threads must be positive")
         if not isinstance(context_size, int) or context_size < 2048:
             raise ValueError("Context size must be at least 2048 tokens")
+        if isinstance(cache_ram_mib, bool) or not isinstance(cache_ram_mib, int) or cache_ram_mib < 0:
+            raise ValueError("Cache RAM must be a non-negative integer")
         backend = {"cuda:0": "cuda", "vulkan": "vulkan", "cpu": "cpu", "metal": "metal"}.get(device)
         if backend == "cuda":
             import torch
@@ -68,7 +71,7 @@ class GgufTranslator:
         args = [str(server), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
                 "--api-key", self._key, "-ngl", "0" if backend == "cpu" else "99",
                 "-c", str(context_size), "--parallel", "1", "--threads", str(cpu_threads), "--jinja",
-                "--cache-ram", "0",
+                "--cache-ram", str(cache_ram_mib),
                 "--chat-template-kwargs", '{"enable_thinking":false}']
         if projector is not None:
             projector = Path(projector).resolve()

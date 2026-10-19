@@ -530,9 +530,14 @@ The model list also offers Index-Translate-2B and HY-MT2-1.8B in Q4_K_M / Q6_K.
 These use a local, loopback-only llama.cpp server with streamed text, a random
 session API key, owned process lifetime and model-resident inference. Downloads
 include only the selected GGUF, not every quantization tier in the repository.
-The owned translation and GGUF ASR servers explicitly use `--cache-ram 0`.
-This disables b11552's default 8192 MiB host prompt-state archive; the active
-model context and its bounded prefix reuse remain available.
+The owned translation and GGUF ASR servers use the shared **prompt cache limit**
+from the live media settings. It defaults to 3072 MiB (3.0G); `0` disables the
+cache. The device ceiling is half of physical RAM, so a 32G machine permits up
+to 16G and a 64G machine up to 32G. A larger limit may reuse more prompt state
+and reduce latency, but uses more host RAM. When the b11552 cache reaches its
+limit, old prompt states are evicted by llama.cpp; the current request is kept,
+but the eviction/update work can add occasional tail latency. No separate
+Python-side cache cleaner is used.
 
 Compute choices are `auto`, `cuda:0`, `vulkan` and `cpu`. Auto uses CUDA when
 Torch can use the NVIDIA GPU; AMD/Intel GGUF translation uses Vulkan, with CPU

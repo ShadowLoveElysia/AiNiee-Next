@@ -254,6 +254,7 @@ class VideoTranslationWindow:
                 asr_device="auto" if asr_device == "vllm-service" else asr_device,
                 recognizer=app.recognizer.get(), asr_endpoint=app.asr_endpoint.get(),
                 context_segments=app.context_segments.get(),
+                cache_ram_mib=app.cache_ram_mib.get(),
                 glossary=glossary, glossary_mode=glossary_mode,
                 input_path=str(Path(self.input_path.get()).expanduser().resolve()),
                 output_directory=str(Path(self.output_directory.get()).expanduser().resolve()),

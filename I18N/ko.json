@@ -180,6 +180,8 @@
     "media_runtime_path": "통역 실행 환경: {path}",
     "media_history_context": "문맥, 기록 및 저장",
     "media_context_segments": "번역 문맥 (0은 끄기, 최대 3개)",
+    "media_cache_ram": "프롬프트 캐시 한도(MiB)",
+    "media_cache_ram_hint": "0은 캐시를 끕니다. 기본값은 3.0G입니다. 캐시가 클수록 문맥 재사용으로 지연이 줄 수 있지만 메모리를 더 사용하며, 한도에 도달하면 오래된 항목을 자동 제거합니다. 장치 한도: {maximum}.",
     "media_history_segments": "표시 기록 (2–3개)",
     "media_recording": "ASR 및 번역 저장",
     "media_record_directory": "저장 폴더",
