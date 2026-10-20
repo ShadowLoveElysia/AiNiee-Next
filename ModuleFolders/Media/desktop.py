@@ -278,16 +278,19 @@ class DesktopApp:
         memory = ttk.LabelFrame(lower_settings, text=self.t("history_context"), padding=12)
         memory.grid(row=0, column=1, sticky="new")
         memory.columnconfigure(1, weight=1)
-        ttk.Label(memory, text=self.t("context_segments")).grid(row=0, column=0, sticky="w")
-        self.context_spin = ttk.Spinbox(memory, from_=0, to=3, width=4, textvariable=self.context_segments)
+        numeric_settings = ttk.Frame(memory)
+        numeric_settings.grid(row=0, column=0, rowspan=2, columnspan=2, sticky="ew")
+        numeric_settings.columnconfigure(0, weight=1)
+        ttk.Label(numeric_settings, text=self.t("context_segments"), wraplength=120).grid(row=0, column=0, sticky="w")
+        self.context_spin = ttk.Spinbox(numeric_settings, from_=0, to=3, width=10, textvariable=self.context_segments)
         self.context_spin.grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Label(memory, text=self.t("cache_ram")).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(numeric_settings, text=self.t("cache_ram"), wraplength=120).grid(row=1, column=0, sticky="w", pady=(8, 0))
         from ModuleFolders.Media.preferences import max_cache_ram_mib
-        self.cache_ram_spin = ttk.Spinbox(memory, from_=0, to=max_cache_ram_mib(), increment=256,
-                                          width=8, textvariable=self.cache_ram_mib)
+        self.cache_ram_spin = ttk.Spinbox(numeric_settings, from_=0, to=max_cache_ram_mib(), increment=256,
+                                          width=10, textvariable=self.cache_ram_mib)
         self.cache_ram_spin.grid(row=1, column=1, sticky="w", padx=8, pady=(8, 0))
         self.cache_ram_display = tk.StringVar(value="3.0G")
-        ttk.Label(memory, textvariable=self.cache_ram_display).grid(row=1, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        ttk.Label(numeric_settings, textvariable=self.cache_ram_display).grid(row=1, column=2, sticky="w", pady=(8, 0))
         self.cache_ram_mib.trace_add("write", lambda *_: self._refresh_cache_ram_display())
         self._refresh_cache_ram_display()
         ttk.Label(memory, text=self.t("cache_ram_hint", maximum=f"{max_cache_ram_mib() / 1024:.1f}G"),
