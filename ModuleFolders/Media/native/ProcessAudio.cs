@@ -145,9 +145,13 @@ static class ProcessAudio
         bool started = false;
         try
         {
+            stage = "validate_arguments";
             if (arguments.Length != 2 || IntPtr.Size != 8) throw new ArgumentException();
+            stage = "open_target_process";
             target = Process.GetProcessById(int.Parse(arguments[0]));
+            stage = "validate_target_identity";
             if (target.StartTime.ToUniversalTime().Ticks.ToString() != arguments[1]) throw new InvalidOperationException();
+            stage = "build_activation_parameters";
             blob = Marshal.AllocCoTaskMem(12);
             Marshal.WriteInt32(blob, 0, 1);
             Marshal.WriteInt32(blob, 4, target.Id);

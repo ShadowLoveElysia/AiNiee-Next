@@ -116,6 +116,9 @@ class LiveSession:
         if self.active:
             raise RuntimeError("A live session is already active")
         config.validate()
+        if config.application_pid:
+            from ModuleFolders.Media.windows_audio import preflight_application
+            preflight_application(config.application_pid, config.application_started)
         config = replace(config, model_root=str(Path(config.model_root).expanduser().resolve()))
         from ModuleFolders.Media.runtime import subprocess_environment
         self._events = queue.Queue(maxsize=MAX_EVENT_QUEUE)

@@ -94,6 +94,14 @@ C# compiler, without installing a compiler or audio-routing driver. Source is
 PCM travels through a bounded memory pipe as 16 kHz mono float samples. No audio
 file is created. Packaged distributions must include the native source file.
 
+If application capture cannot start, the controller now checks the selected PID
+and creation time and prepares the native helper before loading the translation
+models. Check that `C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe`
+exists and that `Resource/MediaRuntime` is writable. Native failures include the
+capture stage and decoded HRESULT (for example, access denied or an invalidated
+audio device). Refresh the application list after restarting the target program;
+the captured identity is intentionally not reused after a process restart.
+
 ## Streamer glossaries and chat length
 
 Use **Streamer glossary → Edit** to name a glossary and add source language,

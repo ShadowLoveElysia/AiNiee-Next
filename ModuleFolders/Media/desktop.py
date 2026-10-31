@@ -1001,8 +1001,8 @@ class DesktopApp:
             try:
                 from ModuleFolders.Media.windows_audio import applications
                 self.application_results.put((True, applications()))
-            except Exception:
-                self.application_results.put((False, None))
+            except Exception as exc:
+                self.application_results.put((False, str(exc)))
         threading.Thread(target=discover, name="media-application-list", daemon=True).start()
 
     def application_capture_config(self):
@@ -1396,7 +1396,8 @@ class DesktopApp:
                     self.application_choice.set("")
                 self.status.set(self.t("application_list_ready", count=len(applications)))
             else:
-                self.status.set(self.t("application_list_error"))
+                detail = f" ({result})" if result else ""
+                self.status.set(self.t("application_list_error") + detail)
             if not self.session.active:
                 self.application_audio_changed()
         except queue.Empty:

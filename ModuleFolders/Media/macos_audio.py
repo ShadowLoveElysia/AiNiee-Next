@@ -121,6 +121,8 @@ class NativeRecorder:
         self.errors = deque(maxlen=4)
         self.failure = None
         self.closed = threading.Event()
+        self.diagnostics_done = threading.Event()
+        self.process_exit_code = None
         self.pending = bytearray()
 
     def _launch(self):
@@ -133,6 +135,15 @@ class NativeRecorder:
     def initialization_timeout_message(self):
         return "macOS system audio initialization timed out. Respond to the recording permission prompt and restart capture."
 
+    def format_diagnostic(self, payload):
+        stage = payload.get("stage", "capture")
+        status = payload.get("status", 0)
+        return f"{stage}: {status}"
+
+    def wait_for_diagnostics(self, timeout=1.0):
+        if self.process is not None:
+            self.diagnostics_done.wait(timeout)
+
     def __enter__(self):
         self.process = self._launch()
         process = self.process
@@ -141,14 +152,20 @@ class NativeRecorder:
         def diagnostics():
             try:
                 for line in process.stderr:
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8", errors="replace")
+                    line = line.strip()
+                    if not line:
+                        continue
                     try:
                         payload = json.loads(line)
                         if isinstance(payload, dict):
-                            self.errors.append(f"{payload.get('stage', 'capture')}: {payload.get('status', 0)}")
+                            self.errors.append(self.format_diagnostic(payload))
                     except ValueError:
-                        continue
+                        self.errors.append("native: " + line[:240])
             finally:
                 process.stderr.close()
+                self.diagnostics_done.set()
 
         def receive():
             try:
@@ -195,6 +212,7 @@ class NativeRecorder:
             except queue.Empty:
                 raise RuntimeError(self.initialization_timeout_message()) from None
             if not report:
+                self.wait_for_diagnostics()
                 raise RuntimeError(self.error_message())
             self.backend = report.get("backend", "native")
             return self
@@ -203,6 +221,9 @@ class NativeRecorder:
             raise
 
     def error_message(self):
+        self.wait_for_diagnostics()
+        if self.process is not None and self.process.poll() is not None:
+            self.process_exit_code = self.process.returncode
         detail = '; '.join(self.errors) or str(self.failure or "No PCM received")
         return ("macOS system audio capture failed (" + detail + "). Allow AiNiee Audio Capture / Terminal "
                 "in System Settings > Privacy & Security > Screen & System Audio Recording, then restart. "
@@ -242,17 +263,23 @@ class NativeRecorder:
     def close(self):
         self.closed.set()
         if self.process is not None:
-            if not self.process.stdin.closed:
-                self.process.stdin.close()
+            process = self.process
             try:
-                self.process.wait(timeout=4)
+                if process.stdin is not None and not process.stdin.closed:
+                    process.stdin.close()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=4)
             except subprocess.TimeoutExpired:
-                self.process.terminate()
+                process.terminate()
                 try:
-                    self.process.wait(timeout=2)
+                    process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=2)
+                    process.kill()
+                    process.wait(timeout=2)
+            self.process_exit_code = process.returncode
+            self.diagnostics_done.wait(1)
             self.process = None
 
     def __exit__(self, *args):
