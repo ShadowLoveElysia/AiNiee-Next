@@ -1,4 +1,7 @@
-import langcodes
+try:
+    import langcodes
+except ModuleNotFoundError:
+    langcodes = None
 
 from ModuleFolders.Infrastructure.Cache.CacheProject import CacheProject
 
@@ -78,7 +81,7 @@ def get_language_display_names(source_lang, target_lang):
     conv_source_lang = map_language_name_to_code(source_lang)
     # 处理源语言
     try:
-        langcodes_lang = langcodes.Language.get(conv_source_lang)
+        langcodes_lang = langcodes.Language.get(conv_source_lang) if langcodes else None
         if langcodes_lang:
             en_source_lang = langcodes_lang.display_name()
             source_language = langcodes_lang.display_name('zh-Hans')

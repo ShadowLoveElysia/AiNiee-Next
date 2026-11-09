@@ -4,6 +4,8 @@ from pathlib import Path
 
 
 def compute_devices(config):
+    if config.translation_mode == "cloud" and config.asr_mode == "cloud":
+        return "cloud", "cloud"
     import torch
     from ModuleFolders.Media.compute import detect_adapters, select_compute, selected_cuda_adapters
     from ModuleFolders.Media.model_catalog import get_model
@@ -11,11 +13,11 @@ def compute_devices(config):
     from ModuleFolders.Media.qwen_asr import recognition_device
 
     torch.set_num_threads(4)
-    checkpoint = get_model(config.family)
+    checkpoint = get_model(config.family) if config.translation_mode == "local" else None
     adapters = selected_cuda_adapters(torch, detect_adapters())
     compute = select_compute(
-        config.device, gguf=checkpoint.backend == "gguf", cuda_available=torch.cuda.is_available(),
-        adapters=adapters, mlx_compatible=checkpoint.family == "index",
+        config.device, gguf=checkpoint.backend == "gguf" if checkpoint else False, cuda_available=torch.cuda.is_available(),
+        adapters=adapters, mlx_compatible=checkpoint.family == "index" if checkpoint else False,
         mps_available=torch.backends.mps.is_available(),
     )
     backend = get_recognizer(config.recognizer).backend
@@ -30,10 +32,10 @@ def compute_devices(config):
     else:
         asr_device = (compute["asr_device"] if config.asr_device == "auto" else
                       recognition_device(config.asr_device, config.recognizer, torch))
-    if "cuda:0" in (compute["translation_device"], asr_device):
+    if "cuda:0" in (compute["translation_device"], asr_device) and (checkpoint or asr_device == "cuda:0"):
         from ModuleFolders.Media.runtime import cuda_execution_check
         cuda_execution_check(torch)
-    return compute["translation_device"], asr_device
+    return (compute["translation_device"] if checkpoint else "cloud"), asr_device
 
 
 def load_recognizer(config, device):
@@ -58,6 +60,9 @@ def load_recognizer(config, device):
 
 
 def load_translator(config, device):
+    if config.translation_mode == "cloud":
+        from ModuleFolders.Service.TaskExecutor.MediaBatchTranslator import MediaBatchTranslator
+        return MediaBatchTranslator(config)
     from ModuleFolders.Media.model_catalog import get_model
     model = get_model(config.family)
     if model.backend == "gguf":

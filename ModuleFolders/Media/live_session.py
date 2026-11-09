@@ -16,7 +16,7 @@ import signal
 
 
 MAX_EVENT_QUEUE = 512
-_DROPPABLE_EVENTS = {"status", "partial", "segment", "capture", "backlog"}
+_DROPPABLE_EVENTS = {"status", "partial", "segment", "capture", "backlog", "video_log"}
 
 
 def terminate_worker(process, *, force: bool = False) -> None:
@@ -55,7 +55,7 @@ class LiveConfig:
         from ModuleFolders.Media.model_catalog import get_model
         return Path(self.model_root) / get_model(self.family).directory
 
-    def validate(self, *, require_recognition: bool = True) -> None:
+    def validate(self, *, require_recognition: bool = True, require_translation: bool = True) -> None:
         from ModuleFolders.Media.model_catalog import get_model, model_files_present
         get_model(self.family)
         from ModuleFolders.Media.glossary import validate_entries
@@ -85,7 +85,7 @@ class LiveConfig:
             service_url(self.asr_endpoint)
         elif require_recognition and not recognition_files_present(root, self.recognizer):
             raise ValueError(f"Recognition model files are missing: {root / get_recognizer(self.recognizer).directory}")
-        if not model_files_present(root, self.family):
+        if require_translation and not model_files_present(root, self.family):
             raise ValueError(f"Translation model files are missing or incomplete: {self.translation_dir}")
 
 
@@ -107,6 +107,7 @@ class LiveSession:
         self._reader_done = threading.Event()
         self._reader_stop = threading.Event()
         self._reader = None
+        self._stderr_reader = None
 
     @property
     def active(self) -> bool:
@@ -125,7 +126,8 @@ class LiveSession:
         process = subprocess.Popen(
             [interpreter or sys.executable, "-u", "-m", self.worker_module],
             cwd=Path(__file__).resolve().parents[2], env=subprocess_environment(),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if getattr(self, "capture_worker_stderr", False) else subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace",
             start_new_session=os.name != "nt",
             creationflags=self.worker_creationflags,
@@ -172,6 +174,26 @@ class LiveSession:
                 reader_done.set()
         self._reader = threading.Thread(target=receive, name="media-events", daemon=True)
         self._reader.start()
+        if getattr(self, "capture_worker_stderr", False):
+            def receive_stderr():
+                try:
+                    try:
+                        stderr_lines = iter(process.stderr)
+                    except TypeError:
+                        return
+                    for line in stderr_lines:
+                        message = line.strip()
+                        if not message or reader_stop.is_set():
+                            continue
+                        try:
+                            events.put_nowait({"type": "video_log", "message": message})
+                        except queue.Full:
+                            pass
+                finally:
+                    process.stderr.close()
+
+            self._stderr_reader = threading.Thread(target=receive_stderr, name="media-worker-logs", daemon=True)
+            self._stderr_reader.start()
         self._stop_deadline = None
         self._startup_deadline = time.monotonic() + 60
         self._worker_started = False
@@ -266,6 +288,9 @@ class LiveSession:
         if self._reader is not None:
             self._reader.join(timeout=1)
             self._reader = None
+        if self._stderr_reader is not None:
+            self._stderr_reader.join(timeout=1)
+            self._stderr_reader = None
         while True:
             try:
                 self._events.get_nowait()

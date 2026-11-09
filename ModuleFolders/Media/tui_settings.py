@@ -21,6 +21,9 @@ FIELDS = [
     ('cloud_asr_endpoint', 'video_asr_endpoint'),
     ('cloud_asr_model', 'video_asr_model'),
     ('cloud_asr_api_key', 'video_asr_api_key'),
+    ('video_recognizer', 'video_recognizer'), ('video_translation_family', 'video_translation_family'),
+    ('video_asr_mode', 'video_asr_mode'), ('video_translation_mode', 'video_translation_mode'),
+    ('video_encoder', 'video_encoder'),
 ]
 
 

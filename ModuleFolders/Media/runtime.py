@@ -29,7 +29,8 @@ _probe_cache = {}
 _probe_cache_lock = threading.Lock()
 PACKAGES = ("torch", "torchaudio", "transformers", "accelerate", "funasr", "sentencepiece",
             "silero_vad", "soundcard", "numpy", "soundfile", "librosa",
-            "huggingface_hub", "safetensors")
+            "huggingface_hub", "safetensors", "rapidjson", "langcodes", "language_data",
+            "openai", "google.genai", "anthropic", "cohere", "boto3")
 MODELS = {
     "sensevoice": ("iic/SenseVoiceSmall", "7bf452403abd7353a300cd760f7adae7701c92c1"),
     "index": ("IndexTeam/Index-Translate-2B", "3473f22736a89e12ece274e2130be2d5898dbda3"),
@@ -413,7 +414,8 @@ def install(device: str, *, translation_device: str = "", recognizer='sensevoice
     transformers = "transformers==5.7.0" if sys.platform == "darwin" else "transformers==5.6.0"
     extensions = [*torch_packages, transformers, "accelerate", "funasr>=1.2,<2", "sentencepiece",
                   "silero-vad==6.2.3", "soundcard", "numpy", "soundfile", "librosa",
-                  "huggingface-hub", "safetensors", *apple_packages]
+                  "huggingface-hub", "safetensors", "python-rapidjson", "langcodes", "language-data",
+                  "openai>=1.59.3", "google-genai", "anthropic", "cohere", "boto3", *apple_packages]
     if uv:
         subprocess.run([sys.executable, '-u', '-m', 'ModuleFolders.Media.package_download', '--python', python,
                         '--index-url', indexes['pypi'], '--extra-index-url', torch_index, *extensions], check=True)

@@ -5,7 +5,10 @@ import traceback
 import queue
 import contextvars
 
-import rapidjson as json
+try:
+    import rapidjson as json
+except ModuleNotFoundError:  # MediaRuntime may be upgrading its optional novel stack.
+    import json
 from rich import print as rich_print
 from rich.console import RenderableType
 from ModuleFolders.Base.EventManager import EventManager

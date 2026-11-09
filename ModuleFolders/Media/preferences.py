@@ -23,6 +23,9 @@ DEFAULTS = {
     "record_directory": str(PROJECT_ROOT / "Resource/MediaRecords"),
     "glossary_profiles": {}, "glossary_profile": "", "chat_character_limit": 0,
     "video_subtitle_mode": "",
+    "video_recognizer": "sensevoice", "video_translation_family": "index",
+    "video_asr_mode": "local", "video_translation_mode": "local",
+    "video_encoder": "auto",
     "cloud_asr_endpoint": "", "cloud_asr_model": "", "cloud_asr_api_key": "",
 }
 RANGES = {"opacity": (0, 100), "font_size": (16, 48), "stroke_width": (0, 6),
@@ -36,6 +39,10 @@ CHOICES = {"family": tuple(model.key for model in TRANSLATION_MODELS), "source":
            "target": ("zh", "en", "ja", "ko"), "device": device_choices(), "package_source": ("nju", "official"),
            "recognizer": tuple(model.key for model in RECOGNITION_MODELS),
            "video_subtitle_mode": ("", "soft", "hard"),
+           "video_recognizer": tuple(model.key for model in RECOGNITION_MODELS),
+           "video_translation_family": tuple(model.key for model in TRANSLATION_MODELS),
+           "video_asr_mode": ("local", "cloud"), "video_translation_mode": ("local", "cloud"),
+           "video_encoder": ("auto", "libx264", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox"),
            "recognition_device": ("auto", "cpu", "mps", "metal") if sys.platform == 'darwin' else ("auto", "cpu", "cuda:0", "vulkan")}
 
 
@@ -94,9 +101,11 @@ def read_preferences(path=SETTINGS_PATH) -> dict:
         data["cache_ram_mib"] = cache_default
     if data.get("package_source") not in CHOICES["package_source"]:
         data["package_source"] = DEFAULTS["package_source"]
-    for key in ('recognizer', 'recognition_device'):
+    for key in ('recognizer', 'recognition_device', 'video_recognizer', 'video_asr_mode', 'video_translation_mode', 'video_encoder'):
         if data.get(key) not in CHOICES[key]:
             data[key] = DEFAULTS[key]
+    if data.get("video_translation_family") not in CHOICES["video_translation_family"]:
+        data["video_translation_family"] = DEFAULTS["video_translation_family"]
     try:
         from ModuleFolders.Media.gguf_asr import asr_device_choices
         if data['recognition_device'] not in asr_device_choices(data['recognizer']):

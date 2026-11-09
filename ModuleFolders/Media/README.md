@@ -30,6 +30,16 @@ not alter the live recognizer. Cloud errors omit response bodies;
 redirects are rejected. Translation and temporary-term extraction still use the
 selected local LLM.
 
+Video translation also asks whether subtitle translation should use the local
+media model or the active novel-translation API profile. Cloud translation
+reuses the novel pipeline's effective Profile, PromptBuilder, provider request
+dispatcher, retry/backoff policy, response extraction and response checks. It
+does not send one request per subtitle: recognized cues are grouped by the
+profile's line limit, sent with stable numbered entries, validated, retried once
+on malformed numbering, and then mapped back to their original timestamps. A
+cloud translation job therefore requires the active novel translation API to be
+configured, while cloud ASR and cloud translation remain independent choices.
+
 The first job asks for **switchable subtitles** or **burned-in subtitles**.
 This preference is saved as `video_subtitle_mode` in `Resource/media_overlay.json`
 and can be changed with **Subtitle output**. Dismissing the choice cancels the
@@ -37,8 +47,9 @@ start; there is no implicit default.
 
 The pipeline extracts the first audio stream to 16 kHz mono PCM with FFmpeg,
 applies FFT noise reduction (`afftdn`), segments speech with Silero VAD,
-recognizes every segment into a source SRT, translates each cue with the
-selected local LLM, and invokes FFmpeg to create the finished video. Recognition
+recognizes every segment into a source SRT, translates the cues with the selected
+local model or active cloud API in validated batches, and invokes FFmpeg to create
+the finished video. Recognition
 and translation run serially in an isolated media-runtime worker; no live
 backlog policy drops segments. Cue times are VAD segment times, not word alignment.
 The original audio, rather than the recognition-only denoised audio, goes into
@@ -65,13 +76,19 @@ injected into each cue's translation prompt.
   output folder and preserves the input. Failures or cancellation retain completed
   SRT files; the final video appears only after successful muxing/encoding.
 
-Install FFmpeg and ffprobe on `PATH`, place their executables in
-`Resource/MediaRuntime/ffmpeg/bin/`, or set `AINIEE_FFMPEG` and `AINIEE_FFPROBE`
-to executable paths. Burned-in subtitles require FFmpeg with libass and libx264,
-plus an installed font covering the target language. No FFmpeg binary is bundled
-or downloaded automatically by this feature. Input files must contain both video
-and audio. The file window reports the current stage, recognition/translation
-progress, final paths and cancellation state.
+On Windows, if FFmpeg and ffprobe are not found on `PATH`, in
+`Resource/MediaRuntime/ffmpeg/bin/`, or through `AINIEE_FFMPEG` and
+`AINIEE_FFPROBE`, the video entry first downloads from the project's China
+GitHub proxy (`gh-proxy.com`) and falls back to the official Gyan archive if
+that mirror fails. The university mirrors configured for Python/PyTorch do not
+publish a Windows FFmpeg archive, so they are not suitable for this asset.
+It extracts only `ffmpeg.exe` and `ffprobe.exe` into the project media runtime.
+The archive is size-limited and extracted with path checks; it does not modify
+the system PATH. On Linux and macOS, install FFmpeg and ffprobe yourself or set
+the two executable paths. Burned-in subtitles require FFmpeg with libass and
+libx264, plus an installed font covering the target language. Input files must
+contain both video and audio. The file window reports the current stage,
+recognition/translation progress, final paths and cancellation state.
 
 ## Application audio capture
 

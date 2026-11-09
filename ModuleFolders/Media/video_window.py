@@ -1,12 +1,13 @@
 """Native file-translation controls sharing the desktop model selection."""
 
 from pathlib import Path
+from dataclasses import replace
 
 from ModuleFolders.Media.preferences import read_preferences, save_preferences
 from ModuleFolders.Media.video_pipeline import VideoConfig, VideoSession, VIDEO_EXTENSIONS, find_tool, validate_video_input
 
 
-def choose_asr(parent, t, local_model, *, settings_path=None):
+def choose_asr(parent, t, local_model, *, settings_path=None, local_recognizer=None):
     import tkinter as tk
     from tkinter import ttk
 
@@ -43,7 +44,7 @@ def choose_asr(parent, t, local_model, *, settings_path=None):
     def accept():
         mode = selected.get()
         if mode == "local":
-            result.append({"asr_mode": "local"})
+            result.append({"asr_mode": "local", **({"recognizer": local_recognizer} if local_recognizer else {})})
         else:
             from ModuleFolders.Media.cloud_asr import validate_cloud_settings
             endpoint, model, api_key = (variables[key].get().strip() for key in variables)
@@ -68,6 +69,33 @@ def choose_asr(parent, t, local_model, *, settings_path=None):
     actions.grid(row=7, column=0, columnspan=2, sticky="e", pady=(12, 0))
     ttk.Button(actions, text=t("video_cancel"), command=dialog.destroy).pack(side="left", padx=8)
     ttk.Button(actions, text=t("video_confirm"), command=accept).pack(side="left")
+    dialog.bind("<Escape>", lambda _: dialog.destroy())
+    dialog.grab_set()
+    dialog.wait_window()
+    return result[0] if result else None
+
+
+def choose_translation(parent, t, *, settings_path=None):
+    import tkinter as tk
+    from tkinter import ttk
+
+    dialog = tk.Toplevel(parent)
+    dialog.title(t("video_translation_title"))
+    dialog.transient(parent)
+    frame = ttk.Frame(dialog, padding=20)
+    frame.pack(fill="both", expand=True)
+    selected = tk.StringVar(value="local")
+    ttk.Label(frame, text=t("video_translation_hint"), wraplength=520).pack(anchor="w", pady=(0, 12))
+    ttk.Radiobutton(frame, text=t("video_translation_local"), variable=selected, value="local").pack(anchor="w", pady=6)
+    ttk.Radiobutton(frame, text=t("video_translation_cloud"), variable=selected, value="cloud").pack(anchor="w", pady=6)
+    result = []
+    def accept():
+        result.append({"translation_mode": selected.get()})
+        dialog.destroy()
+    actions = ttk.Frame(frame)
+    actions.pack(fill="x", pady=(14, 0))
+    ttk.Button(actions, text=t("video_cancel"), command=dialog.destroy).pack(side="left")
+    ttk.Button(actions, text=t("video_confirm"), command=accept).pack(side="right")
     dialog.bind("<Escape>", lambda _: dialog.destroy())
     dialog.grab_set()
     dialog.wait_window()
@@ -232,18 +260,33 @@ class VideoTranslationWindow:
                 if not self.mode:
                     return
             validate_video_input(self.input_path.get(), self.mode)
-            find_tool("ffmpeg")
-            find_tool("ffprobe")
+            # Prepare FFmpeg before opening ASR/translation dialogs.
+            from ModuleFolders.Media.video_pipeline import tool_progress
+            def tool_update(stage, completed, total):
+                suffix = f" {completed / total:.0%}" if total else ""
+                self.status.set(self.t("video_ffmpeg_preparing", stage=stage) + suffix)
+                try:
+                    self.window.update_idletasks()
+                except Exception:
+                    pass
+            with tool_progress(tool_update):
+                find_tool("ffmpeg")
+                find_tool("ffprobe")
             glossary_mode, glossary = self.selected_glossary()
             from ModuleFolders.Media.asr_catalog import get_recognizer
-            asr = choose_asr(self.window, self.t, get_recognizer(app.recognizer.get()).name,
-                             settings_path=app.settings_path)
+            video_preferences = read_preferences(app.settings_path)
+            video_recognizer = video_preferences.get("video_recognizer", app.recognizer.get())
+            asr = choose_asr(self.window, self.t, get_recognizer(video_recognizer).name,
+                             settings_path=app.settings_path, local_recognizer=video_recognizer)
             if asr is None:
                 return
             current_runtime = app._checked_runtime_signature == app.runtime_signature()
             if asr["asr_mode"] == "local" and (not app.runtime_ready or not current_runtime):
                 self.status.set(self.t("video_check_runtime"))
                 app.prepare_runtime("check")
+                return
+            translation = choose_translation(self.window, self.t, settings_path=app.settings_path)
+            if translation is None:
                 return
             compute = (app._checked_compute or {}) if current_runtime else {}
             asr_device = compute.get("asr_device", app.recognition_device.get())
@@ -252,16 +295,25 @@ class VideoTranslationWindow:
                 source_lang=app.source.get(), target_lang=app.target.get(),
                 device=compute.get("translation_device", app.device.get()),
                 asr_device="auto" if asr_device == "vllm-service" else asr_device,
-                recognizer=app.recognizer.get(), asr_endpoint=app.asr_endpoint.get(),
+                recognizer=asr.get("recognizer", app.recognizer.get()), asr_endpoint=app.asr_endpoint.get(),
                 context_segments=app.context_segments.get(),
                 cache_ram_mib=app.cache_ram_mib.get(),
+                video_encoder=read_preferences(app.settings_path).get("video_encoder", "auto"),
+                asr_interpreter=(app.runtime_interpreter if asr.get("asr_mode") == "local" and translation.get("translation_mode") == "cloud" else ""),
                 glossary=glossary, glossary_mode=glossary_mode,
                 input_path=str(Path(self.input_path.get()).expanduser().resolve()),
                 output_directory=str(Path(self.output_directory.get()).expanduser().resolve()),
                 subtitle_mode=self.mode,
-                **asr,
+                **asr, **translation,
             )
-            self.session.start(config, interpreter=app.runtime_interpreter)
+            if config.asr_mode == "local" and config.translation_mode == "cloud":
+                config = replace(config, asr_interpreter=app.runtime_interpreter)
+                interpreter = __import__("sys").executable
+            else:
+                interpreter = app.runtime_interpreter if (
+                    config.asr_mode == "local" or config.translation_mode == "local"
+                ) else __import__("sys").executable
+            self.session.start(config, interpreter=interpreter)
         except Exception as exc:
             messagebox.showerror(self.t("video_title"), str(exc), parent=self.window)
             return
@@ -314,6 +366,8 @@ class VideoTranslationWindow:
                 self.status.set(self.t("video_stage_" + event["stage"]) + suffix)
             elif kind == "video_output":
                 self.output_path = event["directory"]
+            elif kind == "video_log":
+                self.status.set(str(event.get("message", "")))
             elif kind in {"video_complete", "video_error", "video_cancelled", "error"}:
                 self.terminal_event = True
                 if kind == "video_complete":

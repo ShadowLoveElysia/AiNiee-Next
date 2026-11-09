@@ -318,8 +318,10 @@ class OpenaiRequester(Base):
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
 
-            # 从工厂获取客户端
-            client = LLMClientFactory().get_openai_client(platform_config)
+            # The HTTPX path does not need the optional OpenAI SDK. Creating the
+            # client eagerly made cloud video translation fail in the isolated
+            # media runtime even when SDK mode was disabled.
+            client = LLMClientFactory().get_openai_client(platform_config) if use_sdk else None
 
             # 针对ds模型的特殊处理
             if model_name and 'deepseek' in model_name.lower():

@@ -4,7 +4,10 @@ import threading
 import urllib
 import copy
 
-import rapidjson as json
+try:
+    import rapidjson as json
+except ModuleNotFoundError:
+    import json
 
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config

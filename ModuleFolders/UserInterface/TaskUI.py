@@ -483,11 +483,12 @@ class TaskUI:
             self.stats_text = Text.from_markup(stats_markup, style="cyan")
 
             is_start = data.get('is_start') if isinstance(data, dict) else False
+            progress_action = d.get("progress_action") or self._get_i18n('label_processing')
             if is_start:
                 self._progress_paused = False
                 self._progress_pause_started_at = None
-                self.progress.reset(self.task_id, total=total, completed=completed, action=self._get_i18n('label_processing'))
+                self.progress.reset(self.task_id, total=total, completed=completed, action=progress_action)
             else:
-                self.progress.update(self.task_id, total=total, completed=completed, action=self._get_i18n('label_processing'))
+                self.progress.update(self.task_id, total=total, completed=completed, action=progress_action)
 
             self.refresh_layout()

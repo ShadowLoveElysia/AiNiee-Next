@@ -2,7 +2,10 @@ import copy
 import os
 import threading
 
-import rapidjson as json
+try:
+    import rapidjson as json
+except ModuleNotFoundError:
+    import json
 
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.default_config import DEFAULT_CONFIG
