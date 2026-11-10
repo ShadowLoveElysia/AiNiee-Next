@@ -280,6 +280,7 @@ class VideoTranslationWindow:
                              settings_path=app.settings_path, local_recognizer=video_recognizer)
             if asr is None:
                 return
+            asr = {**asr, "recognizer": asr.get("recognizer", video_recognizer)}
             current_runtime = app._checked_runtime_signature == app.runtime_signature()
             if asr["asr_mode"] == "local" and (not app.runtime_ready or not current_runtime):
                 self.status.set(self.t("video_check_runtime"))
@@ -295,7 +296,7 @@ class VideoTranslationWindow:
                 source_lang=app.source.get(), target_lang=app.target.get(),
                 device=compute.get("translation_device", app.device.get()),
                 asr_device="auto" if asr_device == "vllm-service" else asr_device,
-                recognizer=asr.get("recognizer", app.recognizer.get()), asr_endpoint=app.asr_endpoint.get(),
+                asr_endpoint=app.asr_endpoint.get(),
                 context_segments=app.context_segments.get(),
                 cache_ram_mib=app.cache_ram_mib.get(),
                 video_encoder=read_preferences(app.settings_path).get("video_encoder", "auto"),

@@ -11,7 +11,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.request
 import wave
 import zipfile
 from contextlib import contextmanager
@@ -122,36 +121,42 @@ class SubtitleCue:
 
 _ASR_SPECIAL_TOKEN_RE = re.compile(r"<\|[^|]*\|>|</?asr_text>", re.IGNORECASE)
 _SENTENCE_END_RE = re.compile(r"[.!?。！？…]+[」』）》）】〉》\"'”’]*$")
-_TRAILING_SUBTITLE_PUNCTUATION = frozenset(
-    " \\t.,!?;:，。！？；：、…~～"
-)
+_TRAILING_SUBTITLE_PUNCTUATION = frozenset(" \t.,!?;:，。！？；：、…~～")
+_SUBTITLE_CLOSING_MARKS = frozenset("」』）》）】〉》)]}\"'”’")
+
+
+def _join_plain_text(left, right):
+    if not right:
+        return left
+    if not left:
+        return left + right
+    if left[-1].isascii() and right[0].isascii() and left[-1].isalnum() and right[0].isalnum():
+        return left + " " + right
+    return left + right
 
 
 def normalize_subtitle_text(text, *, strip_terminal_punctuation=True):
     """Flatten model line breaks and remove sentence-final subtitle clutter."""
-    value = _ASR_SPECIAL_TOKEN_RE.sub(" ", str(text or ""))
-    value = " ".join(value.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").split())
+    raw = _ASR_SPECIAL_TOKEN_RE.sub(" ", str(text or ""))
+    value = ""
+    for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        value = _join_plain_text(value, " ".join(line.split()))
     if strip_terminal_punctuation:
+        closing = ""
+        while value and value[-1] in _SUBTITLE_CLOSING_MARKS:
+            closing = value[-1] + closing
+            value = value[:-1].rstrip()
         while value and value[-1] in _TRAILING_SUBTITLE_PUNCTUATION:
             value = value[:-1].rstrip()
-    return value
-    value = ""
-    for line in (line for line in cleaned if line):
-        value = _join_plain_text(value, line)
+        if not value:
+            closing = ""
+        value += closing
     return value
 
 
 def _has_sentence_ending(text):
     value = normalize_subtitle_text(text, strip_terminal_punctuation=False)
     return bool(_SENTENCE_END_RE.search(value) or re.search(r"[.!?。！？…]+\s", value))
-
-
-def _join_plain_text(left, right):
-    if not left:
-        return right
-    if left[-1].isascii() and right[0].isascii() and left[-1].isalnum() and right[0].isalnum():
-        return left + " " + right
-    return left + right
 
 
 def _join_subtitle_text(left, right):
@@ -199,7 +204,7 @@ def merge_subtitle_cues(cues, *, max_gap_ms=900, max_duration_ms=12000, max_char
 
 def _prepare_video_cues(cues):
     """Apply the same cue cleanup before terminology and translation stages."""
-    return merge_subtitle_cues(cues)
+    return merge_subtitle_cues(cues, max_gap_ms=900, max_duration_ms=12000, max_chars=180)
 
 
 def validate_video_input(path, mode):
@@ -210,14 +215,6 @@ def validate_video_input(path, mode):
         raise ValueError("Select a supported video file")
 
 
-FFMPEG_DOWNLOAD_URLS = {
-    # Keep the project default on a China-accessible GitHub proxy. The official
-    # Gyan archive remains a fallback because proxy availability can vary.
-    "win32": (
-        "https://gh-proxy.com/https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-        "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
-    ),
-}
 _TOOL_PROGRESS = None
 
 
@@ -275,56 +272,21 @@ def _safe_extract_ffmpeg_zip(archive: Path, destination: Path) -> None:
     _report_tool_progress("extracting", 1, 1)
 
 
-def _download_ffmpeg_windows() -> None:
-    root = PROJECT_ROOT / "Resource/MediaRuntime/ffmpeg/bin"
-    archive = PROJECT_ROOT / "tmp/ffmpeg-release-essentials.zip"
-    archive.parent.mkdir(parents=True, exist_ok=True)
-    urls = FFMPEG_DOWNLOAD_URLS["win32"]
-    failures = []
-    for index, url in enumerate(urls, 1):
-        source_name = "China mirror" if index == 1 else "official fallback"
-        _report_tool_progress(f"connecting ({source_name})", 0, 0)
-        request = urllib.request.Request(url, headers={"User-Agent": "AiNiee-Next media runtime"})
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response, archive.open("wb") as output:
-                total = int(response.headers.get("Content-Length", "0") or 0) or int(getattr(response, "length", 0) or 0)
-                if total > 250 * 1024 * 1024:
-                    raise RuntimeError("FFmpeg download is unexpectedly large")
-                downloaded = 0
-                while True:
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    downloaded += len(block)
-                    if downloaded > 250 * 1024 * 1024:
-                        raise RuntimeError("FFmpeg download is unexpectedly large")
-                    output.write(block)
-                    _report_tool_progress(f"downloading ({source_name})", downloaded, total)
-            _safe_extract_ffmpeg_zip(archive, root)
-            return
-        except Exception as exc:
-            failures.append(f"{source_name}: {exc}")
-            archive.unlink(missing_ok=True)
-            _report_tool_progress(f"failed ({source_name})", 0, 0)
-    detail = " | ".join(failures)
-    raise RuntimeError(f"Automatic FFmpeg download failed ({detail}). Set AINIEE_FFMPEG and AINIEE_FFPROBE to local executables.") from None
-
-
 def ensure_tools() -> tuple[str, str]:
     ffmpeg = _configured_tool("ffmpeg")
     ffprobe = _configured_tool("ffprobe")
+    if os.environ.get("AINIEE_FFMPEG") or os.environ.get("AINIEE_FFPROBE"):
+        if not ffmpeg or not ffprobe:
+            missing = "ffmpeg" if not ffmpeg else "ffprobe"
+            raise FileNotFoundError(f"Configured {missing} executable was not found")
+        return ffmpeg, ffprobe
+    if os.name == "nt":
+        from ModuleFolders.Media.ffmpeg_runtime import ensure_windows_ffmpeg
+        return ensure_windows_ffmpeg(ffmpeg, ffprobe, root=PROJECT_ROOT,
+                                     progress=_report_tool_progress, extract=_safe_extract_ffmpeg_zip)
     if ffmpeg and ffprobe:
         return ffmpeg, ffprobe
-    if os.environ.get("AINIEE_FFMPEG") or os.environ.get("AINIEE_FFPROBE"):
-        missing = "ffmpeg" if not ffmpeg else "ffprobe"
-        raise FileNotFoundError(f"Configured {missing} executable was not found")
-    if os.name != "nt":
-        raise FileNotFoundError("FFmpeg is not installed. Automatic download is currently supported on Windows; install ffmpeg and ffprobe or set AINIEE_FFMPEG/AINIEE_FFPROBE.")
-    _download_ffmpeg_windows()
-    ffmpeg, ffprobe = _configured_tool("ffmpeg"), _configured_tool("ffprobe")
-    if not ffmpeg or not ffprobe:
-        raise FileNotFoundError("FFmpeg download completed without both ffmpeg.exe and ffprobe.exe")
-    return ffmpeg, ffprobe
+    raise FileNotFoundError("FFmpeg is not installed. Automatic download is currently supported on Windows; install ffmpeg and ffprobe or set AINIEE_FFMPEG/AINIEE_FFPROBE.")
 
 
 def find_tool(name):
@@ -572,7 +534,9 @@ def choose_video_encoder(available, requested="auto", system=None):
     """Choose the fastest advertised H.264 encoder with a deterministic fallback."""
     available = set(available or ())
     if requested != "auto":
-        return requested if requested in available or requested == "libx264" else "libx264"
+        if requested not in available:
+            raise RuntimeError(f"Requested video encoder {requested} is unavailable in this FFmpeg build")
+        return requested
     system = (system or os.uname().sysname if hasattr(os, "uname") else os.name).lower()
     preferred = ["h264_nvenc", "h264_qsv", "h264_amf"]
     if system == "darwin":
@@ -680,7 +644,6 @@ def run_video(config, emit, stop, *, recognizer_factory=None, translator_factory
                     detector_factory = SileroSpeechDetector
                 detector = detector_factory()
                 cues = recognize_wav(cleaned, recognizer, detector, config, stop, progress)
-            cues = _prepare_video_cues(cues)
             write_srt(source_srt, cues)
         finally:
             if recognizer is not None and hasattr(recognizer, "close"):
@@ -713,23 +676,33 @@ def run_video(config, emit, stop, *, recognizer_factory=None, translator_factory
         progress("muxing" if config.subtitle_mode == "soft" else "burning")
         suffix = ".mkv" if config.subtitle_mode == "soft" else ".mp4"
         pending = work / ("video" + suffix)
-        encoder = choose_video_encoder(available_encoders, config.video_encoder)
-        emit({"type": "video_log", "message": f"FFmpeg：硬字幕编码器 {encoder}" if config.subtitle_mode == "hard" else "FFmpeg：封装软字幕，不重编码"})
+        encoder = choose_video_encoder(available_encoders, config.video_encoder) if config.subtitle_mode == "hard" else "copy"
+        actual_encoder = encoder
+        if config.subtitle_mode == "hard":
+            emit({"type": "video_log", "message": f"FFmpeg：硬字幕使用 {encoder}；subtitles/libass 滤镜在 CPU 上运行，CPU 占用不会归零"})
+        else:
+            emit({"type": "video_log", "message": "FFmpeg：封装软字幕，不重编码"})
         mux = mux_arguments(ffmpeg, source, work / "translated.srt", pending,
                             config.subtitle_mode, config.target_lang)
         if config.subtitle_mode == "hard":
             mux = mux_arguments_with_encoder(ffmpeg, source, work / "translated.srt", pending, encoder)
         try:
             run_stage_tool(mux, cwd=work)
-        except RuntimeError:
+        except RuntimeError as exc:
             if config.subtitle_mode != "hard" or encoder == "libx264":
                 raise
+            if config.video_encoder != "auto":
+                raise RuntimeError(f"指定的视频编码器 {encoder} 失败，未自动回退；请检查 NVENC 驱动/权限：{exc}") from None
+            emit({"type": "video_log", "message": f"FFmpeg：{encoder} 失败，自动回退 libx264；原因：{str(exc)[-500:]}"})
             pending.unlink(missing_ok=True)
             run_stage_tool(mux_arguments_with_encoder(ffmpeg, source, work / "translated.srt", pending, "libx264"), cwd=work)
+            actual_encoder = "libx264"
+            emit({"type": "video_log", "message": "FFmpeg：实际使用 libx264 完成硬字幕编码"})
         _check_cancel(stop)
         destination = job / (source.stem + f".{config.target_lang}" + suffix)
         pending.rename(destination)
     result = {"video": str(destination), "source_srt": str(source_srt), "translated_srt": str(translated_srt),
-              "directory": str(job), "subtitle_mode": config.subtitle_mode, "cue_count": len(cues)}
+              "directory": str(job), "subtitle_mode": config.subtitle_mode, "cue_count": len(cues),
+              "video_encoder": actual_encoder if config.subtitle_mode == "hard" else "copy"}
     emit({"type": "video_complete", **result})
     return result

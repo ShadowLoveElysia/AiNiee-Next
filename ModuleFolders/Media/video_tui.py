@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 from rich.prompt import IntPrompt, Prompt
 from rich.table import Table
 from rich.text import Text
@@ -22,6 +23,14 @@ class VideoTranslationTUI:
 
     def t(self, key, **values):
         return self.host.i18n.get("media_" + key).format(**values)
+
+    @staticmethod
+    def format_video_log(message):
+        """Render worker diagnostics without inheriting novel-task dim styling."""
+        text = escape(str(message or ""))
+        if str(message).startswith(("ASR", "术语表", "FFmpeg", "云端翻译批次")):
+            return f"[cyan]{text}[/cyan]"
+        return text
 
     def select(self, title, options, *, default=None, styles=None):
         table = Table(title=Text(title, style="bold cyan"), show_header=False, box=None)
@@ -158,6 +167,9 @@ class VideoTranslationTUI:
         asr = self.choose_asr(data)
         if asr is None:
             return None
+        asr = {**asr, "recognizer": asr.get(
+            "recognizer", data.get("video_recognizer", data.get("recognizer", "sensevoice"))
+        )}
         translation = self.choose_translation(data)
         if translation is None:
             return None
@@ -252,10 +264,12 @@ class VideoTranslationTUI:
                                 directory = event["directory"]
                                 task_ui.log(f"[dim]Output folder: {directory}[/dim]")
                             elif kind == "video_log":
-                                task_ui.log(f"[dim]{event.get('message', '')}[/dim]")
+                                task_ui.log(self.format_video_log(event.get("message", "")))
                             elif kind == "video_complete":
                                 outcome = event
                                 task_ui.update_status(None, {"status": "normal"})
+                                if event.get("video_encoder"):
+                                    task_ui.log(f"[cyan]实际视频编码器：{event['video_encoder']}[/cyan]")
                                 task_ui.log(f"[bold green]{self.t('video_done', video=event['video'], srt=event['translated_srt'])}[/bold green]")
                             elif kind in {"video_error", "error"}:
                                 error = event["message"]

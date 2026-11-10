@@ -1,5 +1,8 @@
 """Run media subtitle batches through the novel translation task core."""
 
+from contextlib import contextmanager
+
+from ModuleFolders.Base.Base import Base
 from ModuleFolders.Base.PluginManager import PluginManager
 from ModuleFolders.Infrastructure.Cache.CacheFile import CacheFile
 from ModuleFolders.Infrastructure.Cache.CacheItem import CacheItem
@@ -15,6 +18,18 @@ LANGUAGE_NAMES = {
     "auto": "auto", "ja": "japanese", "en": "english", "ko": "korean",
     "zh": "chinese_simplified", "zh-Hant": "chinese_traditional", "yue": "chinese_traditional",
 }
+
+
+@contextmanager
+def _quiet_task_output():
+    """Keep the shared task engine from duplicating its novel TUI logs."""
+    logger = Base.get_logger()
+    previous = logger.disabled
+    logger.disabled = True
+    try:
+        yield
+    finally:
+        logger.disabled = previous
 
 
 class MediaBatchTranslator:
@@ -87,6 +102,10 @@ class MediaBatchTranslator:
             if stop.is_set():
                 from ModuleFolders.Media.video_pipeline import VideoCancelled
                 raise VideoCancelled()
+            progress(
+                "translating", completed, len(cues),
+                detail=f"云端翻译批次 {batch_index}/{len(chunks)}：处理 {len(chunk)} 条字幕，正在等待 API 返回",
+            )
             task = TranslatorTask(self.config, self.plugin_manager, self.request_limiter,
                                   cues[completed].language if cues[completed].language != "auto" else "un")
             task.task_id = f"video-{batch_index:04d}"
@@ -95,8 +114,9 @@ class MediaBatchTranslator:
             task.set_items(chunk)
             task.set_previous_items(previous_chunk)
             task.set_source_context_items(context_chunk)
-            task.prepare(self.config.target_platform)
-            result = task.unit_translation_task()
+            with _quiet_task_output():
+                task.prepare(self.config.target_platform)
+                result = task.unit_translation_task()
             if not result or not result.get("check_result"):
                 raise RuntimeError(f"Novel translation task rejected subtitle batch {batch_index}")
             self.request_count += 1

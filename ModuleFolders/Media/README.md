@@ -76,19 +76,36 @@ injected into each cue's translation prompt.
   output folder and preserves the input. Failures or cancellation retain completed
   SRT files; the final video appears only after successful muxing/encoding.
 
-On Windows, if FFmpeg and ffprobe are not found on `PATH`, in
-`Resource/MediaRuntime/ffmpeg/bin/`, or through `AINIEE_FFMPEG` and
-`AINIEE_FFPROBE`, the video entry first downloads from the project's China
-GitHub proxy (`gh-proxy.com`) and falls back to the official Gyan archive if
-that mirror fails. The university mirrors configured for Python/PyTorch do not
-publish a Windows FFmpeg archive, so they are not suitable for this asset.
-It extracts only `ffmpeg.exe` and `ffprobe.exe` into the project media runtime.
-The archive is size-limited and extracted with path checks; it does not modify
-the system PATH. On Linux and macOS, install FFmpeg and ffprobe yourself or set
-the two executable paths. Burned-in subtitles require FFmpeg with libass and
-libx264, plus an installed font covering the target language. Input files must
-contain both video and audio. The file window reports the current stage,
-recognition/translation progress, final paths and cancellation state.
+On Windows, the video entry reuses working FFmpeg/ffprobe tools. When tools are
+missing, or the project-managed build requires a newer NVIDIA NVENC API than the
+installed driver supports, it selects a pinned Gyan Windows x64 build:
+
+| NVIDIA Windows driver | FFmpeg build | NVENC API |
+|---|---|---|
+| 610.00 or later | 9.0.2 | 13.1 |
+| 570.00–609.99 | 8.0.1 | 13.0 |
+| 551.76–569.99 | 7.0.2 | 12.2 |
+| 531.61–551.75 | 6.1.1 | 12.1 |
+| 471.41–531.60 | 5.1.2 | 11.1 |
+
+These requirements apply to the exact pinned archives, not every build bearing
+the same FFmpeg version. Downloads prefer the China GitHub proxy (`gh-proxy.com`),
+then the same Gyan release asset on GitHub. Both sources use the same pinned size
+and SHA-256. Download progress, range resume and hash verification reuse the
+media runtime downloader. The installer checks libass/H.264 support and tries a
+one-frame NVENC encode when a compatible NVIDIA driver is detected. A driver
+older than 471.41 has no supported NVENC build in this table; CPU encoding
+remains available. Without a detectable NVIDIA driver, missing tools use 9.0.2.
+
+Only `ffmpeg.exe` and `ffprobe.exe` are installed under
+`Resource/MediaRuntime/ffmpeg/builds/gyan-<version>/bin/`; existing binaries and
+the system PATH remain intact. Explicit `AINIEE_FFMPEG`/`AINIEE_FFPROBE` paths
+and system-installed tools are preserved. On Linux and macOS, install FFmpeg and
+ffprobe yourself or set those executable paths. Burned-in subtitles require
+libass and an installed font covering the target language. NVENC handles video
+encoding; the `subtitles`/libass filter still runs on the CPU. Input files must
+contain video and audio. Each export reports the selected encoder and any CPU
+fallback in its diagnostics.
 
 ## Application audio capture
 

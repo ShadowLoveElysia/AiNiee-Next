@@ -9,23 +9,37 @@ import subprocess
 import sys
 
 
-def detect_nvidia_devices() -> list[dict]:
+def detect_nvidia_devices(*, include_driver: bool = False) -> list[dict]:
     executable = shutil.which("nvidia-smi")
     if executable is None:
         return []
     try:
-        result = subprocess.run([executable, "--query-gpu=name,compute_cap", "--format=csv,noheader,nounits"],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                timeout=15, stdin=subprocess.DEVNULL)
+        queries = ("name,compute_cap,driver_version", "name,driver_version") if include_driver else ("name,compute_cap",)
+        for fields in queries:
+            result = subprocess.run([executable, "--query-gpu=" + fields, "--format=csv,noheader,nounits"],
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    timeout=15, stdin=subprocess.DEVNULL)
+            if not result.returncode:
+                break
         if result.returncode:
             return []
         devices = []
         for line in result.stdout.splitlines():
-            name, capability = line.rsplit(',', 1)
-            parts = tuple(int(part) for part in capability.strip().split('.'))
-            if len(parts) != 2:
+            capability = ""
+            if fields == "name,driver_version":
+                name, driver = line.rsplit(',', 1)
+            elif include_driver:
+                name, capability, driver = line.rsplit(',', 2)
+            else:
+                name, capability = line.rsplit(',', 1)
+            device = {"name": name.strip(), "vendor": "nvidia"}
+            if re.fullmatch(r"\s*\d+\.\d+\s*", capability):
+                device["compute_capability"] = [int(part) for part in capability.strip().split('.')]
+            elif not include_driver:
                 return []
-            devices.append({"name": name.strip(), "vendor": "nvidia", "compute_capability": list(parts)})
+            if include_driver:
+                device["driver_version"] = driver.strip()
+            devices.append(device)
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None:
             indices = [int(value) for value in visible.split(',') if value.strip().isdigit()]
