@@ -295,7 +295,7 @@ class BatchMergeTests(unittest.TestCase):
             with patch('ModuleFolders.Domain.FileOutputer.BatchEbookMerger.subprocess.run', side_effect=run):
                 results = merge_batch_ebooks(records, root, 'fallback',
                                             {'ebook_series_enabled': True, 'ebook_name_template': 'X N'},
-                                            ROOT / '批量电子书整合.py')
+                                            ROOT / 'Tools' / 'Ebook' / '批量电子书整合.py')
             self.assertEqual(results[0].name, 'Book 1-2,4 (2).epub')
             self.assertEqual(old.read_bytes(), b'old-collection')
             self.assertTrue(all(path.exists() for path, _ in records))
@@ -307,7 +307,7 @@ class BatchMergeTests(unittest.TestCase):
             for path in (first, second, stale):
                 make_epub(path)
             def run(command, **kwargs):
-                self.assertEqual(Path(command[1]), ROOT / '批量电子书整合.py')
+                self.assertEqual(Path(command[1]), ROOT / 'Tools' / 'Ebook' / '批量电子书整合.py')
                 self.assertIn('--auto-merge', command)
                 inputs = Path(command[command.index('-p') + 1])
                 self.assertEqual({p.name for p in inputs.iterdir()}, {'Book 1.epub', 'Book 2.epub'})
@@ -317,7 +317,7 @@ class BatchMergeTests(unittest.TestCase):
             with patch('ModuleFolders.Domain.FileOutputer.BatchEbookMerger.subprocess.run', side_effect=run):
                 result = merge_batch_ebooks([(first, EbookIdentity('Book', '1')), (second, EbookIdentity('Book', '2'))],
                                            root, 'fallback', {'ebook_series_enabled': True, 'ebook_name_template': 'X N'},
-                                           ROOT / '批量电子书整合.py', 'en')
+                                           ROOT / 'Tools' / 'Ebook' / '批量电子书整合.py', 'en')
             self.assertEqual(result[0].name, 'Book 1-2.epub')
             self.assertTrue(stale.exists())
 
@@ -332,7 +332,7 @@ class BatchMergeTests(unittest.TestCase):
             with patch('ModuleFolders.Domain.FileOutputer.BatchEbookMerger.subprocess.run',
                        return_value=subprocess.CompletedProcess([], 0, '', '')):
                 with self.assertRaisesRegex(RuntimeError, 'did not produce'):
-                    merge_batch_ebooks(records, root, 'collection', {}, ROOT / '批量电子书整合.py')
+                    merge_batch_ebooks(records, root, 'collection', {}, ROOT / 'Tools' / 'Ebook' / '批量电子书整合.py')
 
     @unittest.skipUnless(os.environ.get('AINIEE_TEST_REAL_EBOOK_MERGE') == '1', 'opt-in standalone merger integration')
     def test_real_standalone_script_collection(self):
@@ -344,7 +344,7 @@ class BatchMergeTests(unittest.TestCase):
                 make_epub(source, f'Chapter {index}')
                 records.append((source, EbookIdentity('无职转生', str(index))))
             settings = {'ebook_series_enabled': True, 'ebook_name_template': 'X 第N卷'}
-            result = merge_batch_ebooks(records, root, 'collection', settings, ROOT / '批量电子书整合.py', 'en')
+            result = merge_batch_ebooks(records, root, 'collection', settings, ROOT / 'Tools' / 'Ebook' / '批量电子书整合.py', 'en')
             self.assertEqual(result[0].name, '无职转生 第1-2卷.epub')
             with zipfile.ZipFile(result[0]) as archive:
                 opf_name = next(name for name in archive.namelist() if name.endswith('.opf'))

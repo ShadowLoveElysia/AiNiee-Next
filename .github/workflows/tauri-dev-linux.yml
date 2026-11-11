@@ -9,7 +9,7 @@ on:
     paths:
       - "Tools/WebServer/**"
       - "Tools/TauriShell/**"
-      - "LaunchGUI.sh"
+      - "Tools/TauriShell/LaunchGUI.sh"
       - ".github/workflows/tauri-dev-linux.yml"
 
 permissions:
@@ -85,7 +85,7 @@ jobs:
       - name: Upload launcher scripts to dev pre-release
         working-directory: ${{ github.workspace }}
         run: >-
-          gh release upload dev-build LaunchGUI.bat LaunchGUI.sh
+          gh release upload dev-build Tools/TauriShell/LaunchGUI.bat Tools/TauriShell/LaunchGUI.sh
           --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,4 +101,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate launcher script syntax on Arch Linux
-        run: bash -n LaunchGUI.sh
+        run: bash -n Tools/TauriShell/LaunchGUI.sh

@@ -91,7 +91,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "依賴問題可嘗試：\n1. 執行：uv sync\n2. 或單獨安裝缺少的套件：uv add <套件名稱>\n3. 如果使用 pip，可透過：uv pip install -r requirements.txt\n4. 確認正在使用正確的 Python 版本",
+      "answer": "依賴問題可嘗試：\n1. 執行：uv sync\n2. 或單獨安裝缺少的套件：uv add <套件名稱>\n3. 如果使用 pip，可透過：uv pip install -r Tools/Bootstrap/requirements.txt\n4. 確認正在使用正確的 Python 版本",
       "category": "環境問題",
       "hit_count": 0
     },

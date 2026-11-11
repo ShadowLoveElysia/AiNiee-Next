@@ -1,6 +1,6 @@
 #!/bin/bash
 task_root="$(cd "$(dirname "$0")" && pwd)"
-bash "$task_root/Launch.sh" "$@"
+bash "$task_root/Linux launch.sh" "$@"
 task_status=$?
 if [ -t 0 ]; then
     read -r -p "Press Enter to close..." _

@@ -178,9 +178,9 @@ def cuda_execution_check(torch, *, stage=None) -> dict:
     capability = torch.cuda.get_device_capability(0)
     version = torch.version.cuda or ""
     if capability[0] >= 10 and (not version or tuple(map(int, version.split('.')[:2])) < (12, 8)):
-        raise RuntimeError("Blackwell GPU requires a CUDA 12.8+ PyTorch build; rerun prepare_media.bat to replace cu126")
+        raise RuntimeError("Blackwell GPU requires a CUDA 12.8+ PyTorch build; rerun Windows media prepare.bat to replace cu126")
     if capability[0] < 7 and version and tuple(map(int, version.split('.')[:2])) >= (12, 8):
-        raise RuntimeError("Maxwell/Pascal GPU requires the cu126 build; rerun prepare_media.bat to replace cu128")
+        raise RuntimeError("Maxwell/Pascal GPU requires the cu126 build; rerun Windows media prepare.bat to replace cu128")
     import re
     if stage:
         stage('CUDA compiled architectures')
@@ -196,7 +196,7 @@ def cuda_execution_check(torch, *, stage=None) -> dict:
                 match[1] == "compute" and compiled <= capability):
             compatible = True
     if arches and not compatible:
-        raise RuntimeError(f"PyTorch build does not include compatible kernels for sm_{capability[0]}{capability[1]}; rerun prepare_media.bat with the GPU-appropriate build")
+        raise RuntimeError(f"PyTorch build does not include compatible kernels for sm_{capability[0]}{capability[1]}; rerun Windows media prepare.bat with the GPU-appropriate build")
     try:
         # Device discovery alone succeeds even when this wheel lacks GPU kernels.
         if stage:
@@ -211,7 +211,7 @@ def cuda_execution_check(torch, *, stage=None) -> dict:
         if result != 4096:
             raise RuntimeError("Unexpected CUDA result")
     except Exception as exc:
-        raise RuntimeError("CUDA execution check failed: " + str(exc)[:500] + "; update the NVIDIA driver and rerun prepare_media.bat") from None
+        raise RuntimeError("CUDA execution check failed: " + str(exc)[:500] + "; update the NVIDIA driver and rerun Windows media prepare.bat") from None
     return {"capability": list(capability), "cuda_version": version, "compiled_arches": arches}
 
 

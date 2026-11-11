@@ -16,7 +16,7 @@ if /I "%BACKEND%"=="cuda" (
 if /I "%BACKEND%"=="metal" goto backend_ok
 
 echo [ERROR] Unsupported backend: %BACKEND%
-echo Usage: prepare_comic.bat [cpu^|gpu^|cuda^|metal]
+echo Usage: Windows comic prepare.bat [cpu^|gpu^|cuda^|metal]
 popd
 pause
 exit /b 1

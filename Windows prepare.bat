@@ -59,7 +59,7 @@ if errorlevel 1 goto :failed
 uv run --no-sync python -c "import tkinter" >nul 2>&1
 if errorlevel 1 echo [INFO] Live translation needs Python 3.12 with Tk.
 echo Done!
-echo Environment is ready. You can now use Launch.bat to start AiNiee CLI.
+echo Environment is ready. You can now use Windows launch.bat to start AiNiee CLI.
 popd
 pause
 exit /b 0

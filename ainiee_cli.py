@@ -36,6 +36,8 @@ from ModuleFolders.UserInterface.UIHelpers import open_temporary_text
 warnings.filterwarnings('ignore')
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+EBOOK_SCRIPT = os.path.join(PROJECT_ROOT, "Tools", "Ebook", "批量电子书整合.py")
+XLSX_SCRIPT = os.path.join(PROJECT_ROOT, "Tools", "Converters", "xlsx_converter.py")
 sys.path.insert(0, PROJECT_ROOT)
 
 from ModuleFolders.Base.Base import Base, TUIHandler
@@ -660,7 +662,7 @@ class CLIMenu:
         from ModuleFolders.Domain.FileOutputer.BatchEbookMerger import merge_batch_ebooks
 
         log = getattr(getattr(self, "ui", None), "log", console.print)
-        conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
+        conv_script = EBOOK_SCRIPT
         if not os.path.isfile(conv_script):
             log(f"[dim]{i18n.get('msg_batch_merge_script_missing')}[/dim]")
             return False
@@ -1817,7 +1819,7 @@ class CLIMenu:
 
                         self.ui.log(i18n.get("msg_epub_conv_start").format(original_ext))
                         os.makedirs(temp_conv_dir, exist_ok=True)
-                        conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
+                        conv_script = EBOOK_SCRIPT
                         cmd = f'uv run "{conv_script}" -p "{current_target_path}" -f 1 -m novel -op "{temp_conv_dir}" -o "{base_name}" --AiNiee'
                         try:
                             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -1852,7 +1854,7 @@ class CLIMenu:
                     else:
                         self.ui.log(i18n.get("msg_xlsx_conv_start").format(original_ext))
                         os.makedirs(temp_conv_dir, exist_ok=True)
-                        conv_script = os.path.join(PROJECT_ROOT, "xlsx_converter.py")
+                        conv_script = XLSX_SCRIPT
 
                         # 调用XLSX转换器：XLSX -> CSV
                         cmd = f'uv run "{conv_script}" -i "{current_target_path}" -o "{temp_conv_dir}" -m to_csv --ainiee'
@@ -2188,7 +2190,7 @@ class CLIMenu:
 
                     # First, restore CSV back to XLSX
                     self.ui.log("[cyan]Restoring XLSX format...[/cyan]")
-                    conv_script = os.path.join(PROJECT_ROOT, "xlsx_converter.py")
+                    conv_script = XLSX_SCRIPT
 
                     # Call XLSX converter: CSV -> XLSX
                     cmd = f'uv run "{conv_script}" -i "{temp_xlsx_dir}" -o "{opath}" -m to_xlsx --ainiee'
@@ -2238,7 +2240,7 @@ class CLIMenu:
                          # Wait, target_path was swapped to the temp epub. 
                          # We need to map back to original ext.
                          # Simplified: Just run the restore command
-                         conv_script = os.path.join(PROJECT_ROOT, "批量电子书整合.py")
+                         conv_script = EBOOK_SCRIPT
                          cmd = f'uv run "{conv_script}" -p "{target_path}" -f 1 -m novel -op "{temp_conv_dir}" -o "{base_name} --AiNiee"'
                          # Actually the restore logic in original code was complex mapping.
                          # For now, let's skip complex restoration to keep it safe or just log.

@@ -91,7 +91,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "의존성 문제 해결:\n1. 실행: uv sync\n2. 개별 패키지 설치: uv add <패키지명>\n3. uv를 통해 pip를 사용하는 경우: uv pip install -r requirements.txt\n4. 올바른 Python 버전을 사용하는지 확인합니다",
+      "answer": "의존성 문제 해결:\n1. 실행: uv sync\n2. 개별 패키지 설치: uv add <패키지명>\n3. uv를 통해 pip를 사용하는 경우: uv pip install -r Tools/Bootstrap/requirements.txt\n4. 올바른 Python 버전을 사용하는지 확인합니다",
       "category": "환경 문제",
       "hit_count": 0
     },

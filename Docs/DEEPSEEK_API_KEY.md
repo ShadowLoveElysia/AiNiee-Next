@@ -13,7 +13,7 @@ https://platform.deepseek.com/
 打开 DeepSeek 开放平台后，按页面显示的方式登录或注册。国内站通常可以使用手机号验证码或微信扫码登录；海外站可能以邮箱注册/登录为主。具体入口以 DeepSeek 当前页面显示为准。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/1.png" alt="图 1：DeepSeek 开放平台登录页" width="78%">
+  <img src="Images/DeepSeekAPI/1.png" alt="图 1：DeepSeek 开放平台登录页" width="78%">
   <br>
   <sub>图 1：进入 DeepSeek 开放平台，按页面提示完成登录或注册。</sub>
 </p>
@@ -25,7 +25,7 @@ https://platform.deepseek.com/
 DeepSeek API 是按量计费服务，通常需要完成账号认证后再创建和使用 API Key。认证过程以 DeepSeek 页面实际要求为准。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/2.png" alt="图 2：DeepSeek 个人信息与实名认证入口" width="92%">
+  <img src="Images/DeepSeekAPI/2.png" alt="图 2：DeepSeek 个人信息与实名认证入口" width="92%">
   <br>
   <sub>图 2：在个人信息页查看实名认证状态，未认证时按提示完成认证。</sub>
 </p>
@@ -37,7 +37,7 @@ DeepSeek API 是按量计费服务，通常需要完成账号认证后再创建�
 注意：这里充值的是 API 服务余额，用于第三方工具调用 DeepSeek API。DeepSeek 网页版或 App 的免费对话是否需要充值，以 DeepSeek 当前页面说明为准。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/3.png" alt="图 3：DeepSeek 充值页面" width="92%">
+  <img src="Images/DeepSeekAPI/3.png" alt="图 3：DeepSeek 充值页面" width="92%">
   <br>
   <sub>图 3：进入充值页，少量使用建议先充 10 元测试。</sub>
 </p>
@@ -49,7 +49,7 @@ DeepSeek API 是按量计费服务，通常需要完成账号认证后再创建�
 点击 **创建 API key** 开始创建新的密钥。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/4.png" alt="图 4：DeepSeek API keys 页面与创建按钮" width="92%">
+  <img src="Images/DeepSeekAPI/4.png" alt="图 4：DeepSeek API keys 页面与创建按钮" width="92%">
   <br>
   <sub>图 4：进入 API keys 页面，点击创建 API key。</sub>
 </p>
@@ -61,7 +61,7 @@ DeepSeek API 是按量计费服务，通常需要完成账号认证后再创建�
 填写后点击 **创建**。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/5.png" alt="图 5：填写 API Key 名称" width="92%">
+  <img src="Images/DeepSeekAPI/5.png" alt="图 5：填写 API Key 名称" width="92%">
   <br>
   <sub>图 5：填写一个方便自己识别的名称，然后创建。</sub>
 </p>
@@ -73,7 +73,7 @@ DeepSeek API 是按量计费服务，通常需要完成账号认证后再创建�
 这个 Key 一定要保存好。关闭弹窗后，DeepSeek 通常不会再完整显示这串 Key；如果你忘记保存，只能删除旧 Key 后重新创建。
 
 <p align="center">
-  <img src="../README_IMG/DeepSeekAPI/6.png" alt="图 6：复制并保存新创建的 API Key" width="92%">
+  <img src="Images/DeepSeekAPI/6.png" alt="图 6：复制并保存新创建的 API Key" width="92%">
   <br>
   <sub>图 6：创建成功后立即复制完整 API Key，并保存到安全位置。</sub>
 </p>

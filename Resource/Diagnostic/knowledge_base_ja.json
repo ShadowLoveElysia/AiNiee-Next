@@ -91,7 +91,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "依存関係の問題への対処:\n1. 実行: uv sync\n2. 個別にインストールする場合: uv add <パッケージ名>\n3. pipをuv経由で使う場合: uv pip install -r requirements.txt\n4. 正しいPythonバージョンを使用しているか確認してください",
+      "answer": "依存関係の問題への対処:\n1. 実行: uv sync\n2. 個別にインストールする場合: uv add <パッケージ名>\n3. pipをuv経由で使う場合: uv pip install -r Tools/Bootstrap/requirements.txt\n4. 正しいPythonバージョンを使用しているか確認してください",
       "category": "環境",
       "hit_count": 0
     },

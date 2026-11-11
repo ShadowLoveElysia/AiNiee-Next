@@ -25,7 +25,7 @@ AiNiee-Next 有多个入口。它们不是互相替代的关系，而是面向�
 
 ### 新手优先用 CLI/TUI
 
-CLI/TUI 就是启动 `Launch.bat` 或 `uv run ainiee_cli.py` 后看到的菜单界面。它看起来像控制台，但实际操作并不复杂。
+CLI/TUI 就是启动 `Windows launch.bat` 或 `uv run ainiee_cli.py` 后看到的菜单界面。它看起来像控制台，但实际操作并不复杂。
 
 新手建议优先使用 CLI/TUI，原因很简单：
 

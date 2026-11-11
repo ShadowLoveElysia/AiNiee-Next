@@ -1,11 +1,11 @@
 # AiNiee-Next Text Quick Start Guide
 
-> **This guide covers traditional API mode (API only).** If you are a complete beginner or short on time, try [External Agent Mode](../README_EN.md#agent-mode). Copy the connection prompt into WorkBuddy, Qwen Office, Doubao Desktop, or another standard MCP-capable Agent client or framework, then give it your file. You can use the platform's **free** quota where available; allowances depend on the platform and your account.
+> **This guide covers traditional API mode (API only).** If you are a complete beginner or short on time, try [External Agent Mode](README_EN.md#agent-mode). Copy the connection prompt into WorkBuddy, Qwen Office, Doubao Desktop, or another standard MCP-capable Agent client or framework, then give it your file. You can use the platform's **free** quota where available; allowances depend on the platform and your account.
 
 First complete the environment setup and launch steps below. After choosing your interface language, select **1. Smart assistant (Agent)** and copy the **entire prompt** from the temporary text file into your Agent. Once MCP is connected, upload the file or provide its full path and target language. You can skip the API configuration steps in this guide.
 
 <p align="center">
-  <img src="../README_IMG/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
+  <img src="Images/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
   <br>
   <sub>Choose option 1 for an external Agent, or option 2 to follow this traditional API tutorial.</sub>
 </p>
@@ -28,7 +28,7 @@ If you do not have a DeepSeek API Key yet, read [DeepSeek API Key Guide](DEEPSEE
 
 AiNiee-Next provides both CLI/TUI and WebUI operation modes. This guide starts with CLI/TUI, not because WebUI is unavailable or unimportant, but because CLI/TUI is easier for the first run.
 
-CLI/TUI is the menu interface you see after launching `Launch.bat` or running `uv run ainiee_cli.py`. It looks like a black console window, but you do not need to write code. You choose numbered menu items, and the program walks you through the setup in a linear order: language, API, project settings, prompts, then translation.
+CLI/TUI is the menu interface you see after launching `Windows launch.bat` or running `uv run ainiee_cli.py`. It looks like a black console window, but you do not need to write code. You choose numbered menu items, and the program walks you through the setup in a linear order: language, API, project settings, prompts, then translation.
 
 WebUI is useful after you already understand the basic workflow. It is good for checking progress, managing queues, switching profiles, and monitoring a task from another device on the same local network. However, if you open WebUI before setting up API keys, models, input/output paths, and prompts, it can feel unclear where to begin.
 
@@ -44,7 +44,7 @@ In short: CLI/TUI is best for learning the workflow; WebUI is best for monitorin
 
 [Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)
 
-This link directly downloads a complete source snapshot of the default branch's latest commit. Extract the ZIP, open the folder containing `prepare.bat` and `Launch.bat`, and continue to step 2. Extract the archive before running these scripts.
+This link directly downloads a complete source snapshot of the default branch's latest commit. Extract the ZIP, open the folder containing `Windows prepare.bat` and `Windows launch.bat`, and continue to step 2. Extract the archive before running these scripts.
 
 You can also clone the project with Git for easier updates. If needed, install [Git for Windows](https://git-scm.com/download/win), then open a terminal in the folder where you want to keep the project and run:
 
@@ -55,15 +55,15 @@ cd AiNiee-Next
 
 On Windows, the files you usually need first are:
 
-- `prepare.bat`: prepares the runtime environment.
-- `Launch.bat`: starts AiNiee-Next.
+- `Windows prepare.bat`: prepares the runtime environment.
+- `Windows launch.bat`: starts AiNiee-Next.
 
 ## 2. Prepare the Runtime Environment
 
 On Windows, double-click:
 
 ```text
-prepare.bat
+"Windows prepare.bat"
 ```
 
 The script checks `uv`, creates the virtual environment, and installs dependencies.
@@ -71,7 +71,7 @@ The script checks `uv`, creates the virtual environment, and installs dependenci
 When you see a message similar to:
 
 ```text
-Environment is ready. You can now use Launch.bat to start AiNiee CLI.
+Environment is ready. You can now use Windows launch.bat to start AiNiee CLI.
 ```
 
 the environment is ready. Press any key to close the preparation window.
@@ -79,10 +79,10 @@ the environment is ready. Press any key to close the preparation window.
 On Linux or macOS:
 
 ```bash
-bash prepare.sh
+bash "Linux prepare.sh"
 ```
 
-On macOS, you can also double-click `Prepare.command` in Finder. Setup detects the platform and architecture, finds or installs uv, prepares Python 3.12, and syncs dependencies. Unix environments live under `tmp/environments/<platform>-<architecture>`; Windows keeps `.venv-win`.
+On macOS, you can also double-click `Mac prepare.command` in Finder. Setup detects the platform and architecture, finds or installs uv, prepares Python 3.12, and syncs dependencies. Unix environments live under `tmp/environments/<platform>-<architecture>`; Windows keeps `.venv-win`.
 
 Live translation needs Tk. Missing Tk produces installation instructions; on Mac, install Python 3.12 with Tk from python.org and rerun setup. Inference libraries/models, virtual audio drivers and OS permissions are configured separately.
 
@@ -91,16 +91,16 @@ Live translation needs Tk. Missing Tk produces installation instructions; on Mac
 On Windows, double-click:
 
 ```text
-Launch.bat
+"Windows launch.bat"
 ```
 
 On Linux or macOS:
 
 ```bash
-bash Launch.sh
+bash "Linux launch.sh"
 ```
 
-On macOS, double-click `Launch.command` for the main program, or `LaunchLive.command` for the live translation controller.
+On macOS, double-click `Mac launch.command` for the main program, or `Mac live launch.command` for the live translation controller.
 
 If the program says that the Web build package is missing, you can enter `0` to skip it for now. This only skips the WebUI package. It does not block CLI/TUI translation, API setup, or project setup. You can install or build the WebUI package later when you need the browser control panel.
 

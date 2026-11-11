@@ -676,8 +676,8 @@ class UpdateManager(Base):
         if sys.platform == "win32":
             return
 
-        executable_extensions = {'.sh', '.py', '.pl', '.rb', '.bash'}
-        executable_names = {'Launch.sh', 'ainiee_cli.py'}
+        executable_extensions = {'.sh', '.command', '.py', '.pl', '.rb', '.bash'}
+        executable_names = {'Linux launch.sh', 'ainiee_cli.py'}
 
         for root, dirs, files in os.walk(directory):
             for filename in files:
@@ -717,15 +717,18 @@ class UpdateManager(Base):
             else: shutil.copy2(s, d)
 
     def _restart_script(self):
-        executable, script_path = sys.executable, os.path.join(self.project_root, "ainiee_cli.py")
+        executable = sys.executable
+        script_path = os.path.join(self.project_root, "ainiee_cli.py")
+        options = {"cwd": self.project_root}
         if sys.platform == "win32":
-            launch_bat = os.path.join(self.project_root, "Launch.bat")
-            if os.path.exists(launch_bat): subprocess.Popen(["cmd.exe", "/c", launch_bat], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else: subprocess.Popen([executable, script_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            options["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+            launch_path = os.path.join(self.project_root, "Windows launch.bat")
+            command = f'cmd.exe /d /s /c ""{launch_path}""' if os.path.exists(launch_path) else [executable, script_path]
         else:
-            launch_sh = os.path.join(self.project_root, "Launch.sh")
-            if os.path.exists(launch_sh): subprocess.Popen(["bash", launch_sh])
-            else: subprocess.Popen([executable, script_path])
+            launch_name = "Mac launch.command" if sys.platform == "darwin" else "Linux launch.sh"
+            launch_path = os.path.join(self.project_root, launch_name)
+            command = ["bash", launch_path] if os.path.exists(launch_path) else [executable, script_path]
+        subprocess.Popen(command, **options)
         sys.exit(0)
 
     def setup_web_server(self, manual=False):

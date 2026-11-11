@@ -7,7 +7,7 @@ source "$task_root/Tools/Bootstrap/unix_environment.sh"
 trap 'task_status=$?; if [ "$task_status" -ne 0 ]; then echo "[ERROR] Media setup failed. Copy the complete error above for diagnosis." >&2; fi' EXIT
 detect_environment
 if [ "$task_system" != "Darwin" ] || [ "$task_arch" != "arm64" ]; then
-    echo "[ERROR] This installer currently requires native Apple Silicon macOS. Windows: prepare_media.bat."
+    echo "[ERROR] This installer currently requires native Apple Silicon macOS. Windows: Windows media prepare.bat."
     exit 1
 fi
 task_device="${1:-auto}"
@@ -34,7 +34,7 @@ case "$task_device" in
     *) echo "[ERROR] Device must be auto, cpu, mlx, metal or mps."; exit 1 ;;
 esac
 if ! find_uv; then
-    echo "[ERROR] uv was not found. Run bash prepare.sh or Prepare.command first."
+    echo "[ERROR] uv was not found. Run bash \"Linux prepare.sh\" or Mac prepare.command first."
     exit 1
 fi
 "$task_uv" --version

@@ -41,10 +41,12 @@ Output:
 
 - `Tools/TauriShell/src-tauri/target/release/ainiee-tauri-shell.exe`
 
-## Quick launch scripts (project root)
+## Archived GUI launch scripts
 
-- Windows: run `LaunchGUI.bat`
-- macOS/Linux: run `./LaunchGUI.sh`
+The GUI is kept separately for future changes. Run these scripts from the project root:
+
+- Windows: run `Tools\TauriShell\LaunchGUI.bat`
+- macOS/Linux: run `./Tools/TauriShell/LaunchGUI.sh`
 - Default mode: runs prebuilt GUI binary directly (no Node.js required)
 - Dev mode fallback: set `AINIEE_GUI_DEV=1` to use `tauri dev`
 - Linux headless mode: the script exits with a clear message and disables GUI startup

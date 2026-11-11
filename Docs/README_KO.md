@@ -8,7 +8,7 @@
 
 <br/>
 
-[简体中文](../README.md) | [English](../README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next**는 [AiNiee](https://github.com/NEKOparapa/AiNiee)의 핵심 번역 기능을 바탕으로 개발한 명령줄 버전입니다. **uv**로 Python 환경을 관리하며 장시간 실행, 일괄 작업, 서버 배포, 자동화 사용을 위한 여러 개선 사항을 포함합니다.
 
@@ -53,13 +53,13 @@ cd AiNiee-Next
 Windows:
 
 ```batch
-prepare.bat 더블 클릭
+"Windows prepare.bat" 더블 클릭
 ```
 
 Linux / macOS:
 
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. 실행**
@@ -67,13 +67,13 @@ chmod +x prepare.sh && ./prepare.sh
 Windows:
 
 ```batch
-Launch.bat 더블 클릭
+"Windows launch.bat" 더블 클릭
 ```
 
 Linux / macOS:
 
 ```bash
-./Launch.sh
+./"Linux launch.sh"
 ```
 
 ### 방법 2: 수동 실행

@@ -16,4 +16,4 @@ if [ -z "$task_python" ]; then
 fi
 "$task_python" -u -m ModuleFolders.Media.vllm_service install --source "${1:-nju}"
 "$task_python" -u -m ModuleFolders.Media.vllm_service download --recognizer "${2:-qwen-vllm-0.6b}" --model-root "${3:-tmp/models}"
-echo "Setup complete. Start the service using LaunchQwenVllm.sh; select the matching vLLM recognizer in the controller."
+echo "Setup complete. Start the service using Linux qwen vllm launch.sh; select the matching vLLM recognizer in the controller."

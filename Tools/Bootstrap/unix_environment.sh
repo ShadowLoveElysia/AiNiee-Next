@@ -13,7 +13,7 @@ detect_environment() {
             fi
             ;;
         Linux) ;;
-        *) echo "[ERROR] Unsupported system: $task_system. Windows users should run prepare.bat."; return 1 ;;
+        *) echo "[ERROR] Unsupported system: $task_system. Windows users should run Windows prepare.bat."; return 1 ;;
     esac
     export UV_PROJECT_ENVIRONMENT="$task_root/tmp/environments/$(printf '%s' "$task_system" | tr '[:upper:]' '[:lower:]')-$task_arch"
 }
@@ -79,9 +79,9 @@ select_python() {
 tk_help() {
     if [ "$task_system" = "Darwin" ]; then
         echo "Install Python 3.12 with Tk from https://www.python.org/downloads/macos/ ."
-        echo "Homebrew users need python@3.12 and python-tk@3.12. Rerun Prepare.command afterward."
+        echo "Homebrew users need python@3.12 and python-tk@3.12. Rerun Mac prepare.command afterward."
     else
-        echo "Install your distribution's Tk support for Python 3.12, then rerun bash prepare.sh."
+        echo "Install your distribution's Tk support for Python 3.12, then rerun bash \"Linux prepare.sh\"."
         echo "A graphical session (DISPLAY or WAYLAND_DISPLAY) is also required for the controller."
     fi
 }

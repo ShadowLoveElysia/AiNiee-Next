@@ -8,7 +8,7 @@
 
 <br/>
 
-[簡体中文](../README.md) | [English](../README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+[簡体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next** は、[AiNiee](https://github.com/NEKOparapa/AiNiee) の中核となる翻訳処理をもとに開発したコマンドライン版です。Python 環境は **uv** で管理し、長時間実行、バッチ処理、サーバー運用、自動化に向けた改善を加えています。
 
@@ -51,13 +51,13 @@ cd AiNiee-Next
 Windows：
 
 ```batch
-prepare.bat をダブルクリック
+"Windows prepare.bat" をダブルクリック
 ```
 
 Linux / macOS：
 
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. 起動**
@@ -65,13 +65,13 @@ chmod +x prepare.sh && ./prepare.sh
 Windows：
 
 ```batch
-Launch.bat をダブルクリック
+"Windows launch.bat" をダブルクリック
 ```
 
 Linux / macOS：
 
 ```bash
-./Launch.sh
+./"Linux launch.sh"
 ```
 
 ### 方法 2：手動起動

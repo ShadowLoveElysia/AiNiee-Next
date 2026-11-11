@@ -8,7 +8,7 @@
 
 <br/>
 
-[簡體中文](../README.md) | [English](../README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+[簡體中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next** 是以 [AiNiee](https://github.com/NEKOparapa/AiNiee) 核心翻譯邏輯為基礎開發的命令列版本。專案使用 **uv** 管理 Python 環境，並針對長時間執行、批次任務、伺服器部署與自動化使用做了許多改進。
 
@@ -51,13 +51,13 @@ cd AiNiee-Next
 Windows：
 
 ```batch
-雙擊 prepare.bat
+雙擊 Windows prepare.bat
 ```
 
 Linux / macOS：
 
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. 啟動**
@@ -65,13 +65,13 @@ chmod +x prepare.sh && ./prepare.sh
 Windows：
 
 ```batch
-雙擊 Launch.bat
+雙擊 Windows launch.bat
 ```
 
 Linux / macOS：
 
 ```bash
-./Launch.sh
+./"Linux launch.sh"
 ```
 
 ### 方式二：手動啟動

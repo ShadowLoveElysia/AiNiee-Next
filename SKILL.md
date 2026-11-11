@@ -45,12 +45,12 @@ description: 在用户要求翻译小说、文档、字幕或其他文件内容�
 - 用户同意使用 AiNiee-Next MCP 后，先阅读根目录 `Agents.md`、本规则文件和 `Tools/MCPServer/MCP_CLIENT_GUIDE.md`；若需要启动或接入服务，再阅读 `Tools/MCPServer/README.md`。本规则文件只是使用说明，不是待挂载的 Skill 服务。
 - MCP 接入按以下优先级执行：当前会话已经挂载的原生 MCP 工具 → 配置或重载 stdio MCP → 仅支持 URL 时挂载 `streamable-http`（或 `sse`）MCP（默认 `http://127.0.0.1:8765/mcp`）→ 原生 MCP 确实无法挂载或重载、且当前客户端只能使用本地 HTTP 时，才使用已鉴权的 HTTP 备用入口。HTTP 备用入口不是原生 MCP 的等价替代，不能因为 URL 更方便就跳过原生 MCP。
 - Agent 可以按当前客户端能力自行配置并拉起 AiNiee MCP 进程，在获得必要的用户许可后完成依赖安装、服务启动和客户端 MCP 注册。不要要求用户代为执行这些步骤。该安装只针对当前 Agent 自己的技能目录和 MCP 客户端，不要替其他 Agent 框架或客户端安装、修改配置。
-- 先检查当前会话是否已有 AiNiee MCP 工具并完成 initialize/工具发现；如果已经连接，直接继续，跳过 `Launch.bat`。
+- 先检查当前会话是否已有 AiNiee MCP 工具并完成 initialize/工具发现；如果已经连接，直接继续，跳过 `Windows launch.bat`。
 - 外部 Agent 开始新任务前，先在当前对话简短询问：“是否批准我通过 AiNiee MCP，将【文件】处理为【目标语言/输出】，执行【术语分析、翻译等本次阶段】？相关内容会由当前外部 Agent/平台处理。”等待用户明确同意后才继续；已有明确的本次授权无需重复询问，超过 500 行 TXT 的 MCP 选择可与此合并。拒绝或尚未回答时，不上传、读取原文或启动任务。
 - 用户批准后调用 `agent_register(user_confirmed_external_processing=true)`，再调用 `agent_request_external_mode`；已有 task_id 时传入并绑定该 ID。EPUB 等新结构化任务通过 MCP 调用 `POST /api/task/external-agent-mode` 时，在 body 中同样传 `user_confirmed_external_processing=true`，任务创建后立即用返回的 task_id 绑定会话。此标记只能代表真实的本次授权，不能自行伪造；不要求 TUI onboarding=accepted，也不写入全局 accepted。服务端返回 `EXTERNAL_PROCESSING_NOT_CONFIRMED` 时先补齐本次授权；若旧服务仍返回 `ONBOARDING_NOT_ACCEPTED`，报告服务需要更新/重载，不让用户手动改配置。
 - 同一任务的批次、修复、重试和断线恢复沿用本次批准；重连注册仍传上述确认参数并绑定原 task_id。更换文件、目标或增加未授权阶段要先询问，新的任务使用新的会话。已绑定会话不得改绑其他任务；TUI 的历史接入选择不能替代本次任务批准。
-- 如果当前 Agent 无法自动启动或重载原生 MCP，再指导用户双击项目根目录的 `Launch.bat`；进入 AiNiee 主菜单后选择“启动 MCP 服务”，保持该窗口运行。菜单启动的是 `streamable-http`，默认连接地址为 `http://127.0.0.1:8765/mcp`；用户完成后，当前 Agent 再探测该地址并验证工具列表。`Launch.bat` 本身不是 MCP 端点，不能只看到主菜单就宣称服务已连接。
-- 如果当前 Agent 具备启动本地程序的能力，可以尝试启动项目根目录的 `Launch.bat`；启动动作完成后必须立即停止后续 MCP、Skills 和翻译工具调用，等待用户明确回复“已开启”“开启了”“可以了”等肯定语句。收到肯定回复后才重新探测 MCP URL、执行 initialize 握手并确认工具列表；未收到肯定回复时不得继续，也不能把启动进程当作连接成功。
+- 如果当前 Agent 无法自动启动或重载原生 MCP，再指导用户双击项目根目录的 `Windows launch.bat`；进入 AiNiee 主菜单后选择“启动 MCP 服务”，保持该窗口运行。菜单启动的是 `streamable-http`，默认连接地址为 `http://127.0.0.1:8765/mcp`；用户完成后，当前 Agent 再探测该地址并验证工具列表。`Windows launch.bat` 本身不是 MCP 端点，不能只看到主菜单就宣称服务已连接。
+- 如果当前 Agent 具备启动本地程序的能力，可以尝试启动项目根目录的 `Windows launch.bat`；启动动作完成后必须立即停止后续 MCP、Skills 和翻译工具调用，等待用户明确回复“已开启”“开启了”“可以了”等肯定语句。收到肯定回复后才重新探测 MCP URL、执行 initialize 握手并确认工具列表；未收到肯定回复时不得继续，也不能把启动进程当作连接成功。
 - stdio 接入优先使用项目内置 launcher：`Tools/MCPServer/codex_stdio_launcher.sh`（Windows 客户端可用 `Tools\MCPServer\codex_stdio_launcher.bat` 或在 JSON 配置中按 launcher 的隔离 uv 命令形式填写）；launcher 用隔离的 uv 环境启动 MCP，避免混用 WSL/Windows 两侧的 `.venv`。launcher 支持环境变量覆盖：`AINIEE_MCP_PYTHON` 指定 Python 解释器路径（必须是 3.12.*），`AINIEE_MCP_USE_WINDOWS_VENV=1` 让 WSL 侧的 launcher 改用项目 `.venv-win`。也可以用 CLI 启动：`uv run ainiee_cli.py mcp --mcp-transport stdio`。若需要原始命令，优先复用项目现有环境：Linux/WSL 使用 `{project_root}/.venv/bin/python`，Windows 使用 `{project_root}\\.venv-win\\Scripts\\python.exe`，对应命令为 `uv run --directory <project_root> --python <project_root>/.venv/bin/python python Tools/MCPServer/server.py --transport stdio`（Windows 下若 `.venv` 混用了两侧环境，命令会自动改用 `.venv-win`）；只有现有环境不存在或用户明确要求隔离环境时，才使用 `uv run --python 3.12 --isolated --no-project --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio`。AiNiee 要求 Python `3.12.*`，不要把 `python3` 或更低版本传给 `uv --python`。首次启动若依赖尚未缓存，把客户端的 MCP 启动超时调到约 90 秒。
 - 新的 `stdio` 进程启动时会先探测已在运行的 `streamable-http` 端点，命中则直接复用已有服务（stderr 打印 `AiNiee MCP reusing running service: http://127.0.0.1:端口/mcp`），不再重复启动一套 MCP；确需禁用这层复用时设置环境变量 `AINIEE_MCP_DISABLE_RUNNING_REUSE=1`。
 - stdio 首次连接只完成 initialize 和工具发现；嵌入式 WebServer 在需要 Web/API 或结构化任务上下文时才延迟启动，普通 TXT 的 `agent_prepare_project` 不会启动 WebServer。
@@ -77,7 +77,7 @@ description: 在用户要求翻译小说、文档、字幕或其他文件内容�
 
 ## 引导式学习与 TUI 建议
 
-- 当用户要求精细修改配置、提示词、术语表、规则、并发、输出格式、Profile 或其他需要多项选项的设置时，先用通俗语言主动引导用户了解 TUI：说明“我可以通过 MCP 帮你完成配置，不过这个功能在 TUI 中更方便探索；如果你希望更精细地调整设置并提升翻译质量，可以点击 `Launch.bat` 启动 TUI，自己查看和学习这些选项”。
+- 当用户要求精细修改配置、提示词、术语表、规则、并发、输出格式、Profile 或其他需要多项选项的设置时，先用通俗语言主动引导用户了解 TUI：说明“我可以通过 MCP 帮你完成配置，不过这个功能在 TUI 中更方便探索；如果你希望更精细地调整设置并提升翻译质量，可以点击 `Windows launch.bat` 启动 TUI，自己查看和学习这些选项”。
 - 这是建议和学习入口，不是阻止条件。用户已经明确要求 Agent 直接代办时，继续通过 MCP/受控接口完成，不要反复劝阻，也不要要求用户必须打开 TUI。
 - 对只需一次明确动作的任务（例如开始翻译、查询状态、手动导出、领取批次），直接执行并说明结果，不要为了“学习”强行插入 TUI 教程。
 - 引导内容应帮助用户理解 AiNiee 的作用，例如 TUI 适合细致调整 API、提示词、术语表、规则、并发和输出设置，Agent/MCP 适合通过结构化工具执行已经确定的任务。不要把 TUI 说成唯一正确入口，也不要暗示 Agent 模式不可用。

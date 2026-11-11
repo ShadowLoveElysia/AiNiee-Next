@@ -9,7 +9,7 @@ on:
     paths:
       - "Tools/WebServer/**"
       - "Tools/TauriShell/**"
-      - "LaunchGUI.sh"
+      - "Tools/TauriShell/LaunchGUI.sh"
       - ".github/workflows/tauri-dev-macos.yml"
 
 permissions:

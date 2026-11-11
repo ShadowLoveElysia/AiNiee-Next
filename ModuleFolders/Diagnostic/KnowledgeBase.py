@@ -241,7 +241,7 @@ class KnowledgeBase:
                 "id": "kb_006",
                 "question": "依赖包问题",
                 "keywords": ["import", "module", "依赖", "pip", "install", "ModuleNotFoundError", "uv"],
-                "answer": "依赖问题解决:\n1. 运行: uv sync\n2. 或单独安装: uv add <包名>\n3. 如果使用pip: uv pip install -r requirements.txt\n4. 确保使用正确的 Python 版本",
+                "answer": "依赖问题解决:\n1. 运行: uv sync\n2. 或单独安装: uv add <包名>\n3. 如果使用pip: uv pip install -r Tools/Bootstrap/requirements.txt\n4. 确保使用正确的 Python 版本",
                 "category": "环境问题",
                 "hit_count": 0
             },

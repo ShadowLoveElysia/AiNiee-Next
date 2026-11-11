@@ -8,7 +8,7 @@
 
 <br/>
 
-[简体中文](../README.md) | [English](../README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next** es una versión de línea de comandos basada en las funciones principales de traducción de [AiNiee](https://github.com/NEKOparapa/AiNiee). Utiliza **uv** para gestionar el entorno de Python e incluye mejoras para tareas largas, procesamiento por lotes, servidores y automatización.
 
@@ -53,13 +53,13 @@ cd AiNiee-Next
 Windows:
 
 ```batch
-Doble clic en prepare.bat
+Doble clic en Windows prepare.bat
 ```
 
 Linux / macOS:
 
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. Iniciar**
@@ -67,13 +67,13 @@ chmod +x prepare.sh && ./prepare.sh
 Windows:
 
 ```batch
-Doble clic en Launch.bat
+Doble clic en Windows launch.bat
 ```
 
 Linux / macOS:
 
 ```bash
-./Launch.sh
+./"Linux launch.sh"
 ```
 
 ### Método 2: configuración manual

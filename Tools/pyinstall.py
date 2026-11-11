@@ -32,8 +32,8 @@ for module_name in MODULES_TO_EXCLUDE:
     cmd.append(f"--exclude-module={module_name}")
     print(f"[INFO] Explicitly excluding module: {module_name}")
 
-if os.path.exists("./requirements.txt"):
-    with open("./requirements.txt", "r", encoding="utf-8") as reader:
+if os.path.exists("./Tools/Bootstrap/requirements.txt"):
+    with open("./Tools/Bootstrap/requirements.txt", "r", encoding="utf-8") as reader:
         for line in reader:
             if "#" not in line:
                 cmd.append("--hidden-import=" + line.strip())

@@ -9,7 +9,7 @@ on:
     paths:
       - "Tools/WebServer/**"
       - "Tools/TauriShell/**"
-      - "LaunchGUI.bat"
+      - "Tools/TauriShell/LaunchGUI.bat"
       - ".github/workflows/tauri-dev-windows.yml"
 
 permissions:

@@ -30,7 +30,7 @@ case "$BACKEND" in
         ;;
     *)
         echo "[ERROR] Unsupported backend: $BACKEND"
-        echo "Usage: ./prepare_comic.sh [cpu|gpu|metal]"
+        echo "Usage: bash \"Unix comic prepare.sh\" [cpu|gpu|metal]"
         exit 1
         ;;
 esac
@@ -100,4 +100,4 @@ echo "[4/4] Downloading default MangaCore model assets with requests..."
 "$MAIN_PYTHON" "$PROJECT_ROOT/ModuleFolders/Service/HttpService/ModelDownload.py"
 
 echo "[Done] MangaCore dependencies and assets are ready in $MAIN_VENV_DIR"
-chmod +x Launch.sh prepare_comic.sh
+chmod +x "Linux launch.sh" "Unix comic prepare.sh"

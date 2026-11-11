@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/../.."
 
 ensure_uv() {
     if command -v uv >/dev/null 2>&1; then
@@ -60,7 +60,7 @@ if [ "${AINIEE_GUI_DEV:-0}" != "1" ]; then
     echo
     echo "No Node.js is required for end users, but you must provide a prebuilt binary."
     echo "If you are developing locally, run with:"
-    echo "  AINIEE_GUI_DEV=1 ./LaunchGUI.sh"
+    echo "  AINIEE_GUI_DEV=1 ./Tools/TauriShell/LaunchGUI.sh"
     exit 1
 fi
 

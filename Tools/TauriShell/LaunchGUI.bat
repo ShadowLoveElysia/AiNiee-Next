@@ -2,7 +2,8 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title AiNiee GUI Launcher
 
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
+if errorlevel 1 exit /b 1
 
 if not exist "Tools\WebServer\dist\index.html" (
     echo [ERROR] Tools\WebServer\dist\index.html not found.
@@ -55,7 +56,7 @@ if /I not "%AINIEE_GUI_DEV%"=="1" (
     echo No Node.js is required for end users, but you must provide a prebuilt binary.
     echo If you are developing locally, run this script with:
     echo   set AINIEE_GUI_DEV=1
-    echo   LaunchGUI.bat
+    echo   Tools\TauriShell\LaunchGUI.bat
     echo.
     pause
     exit /b 1

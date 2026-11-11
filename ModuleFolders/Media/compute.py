@@ -155,7 +155,7 @@ def select_cuda_build(adapters: list[dict], *, installed_build="", selected_adap
     if "unsupported" in categories:
         raise RuntimeError("This GPU architecture is unsupported by Torch 2.9.1; select CPU explicitly")
     if not categories or "unknown" in categories:
-        raise RuntimeError("Cannot identify NVIDIA architecture; use prepare_media.bat cuda:0 MODEL cu126 or cu128 explicitly")
+        raise RuntimeError("Cannot identify NVIDIA architecture; use Windows media prepare.bat cuda:0 MODEL cu126 or cu128 explicitly")
     if "legacy" in categories and "blackwell" in categories:
         raise RuntimeError("Mixed legacy and Blackwell GPUs require a selected CUDA device; set CUDA_VISIBLE_DEVICES then retry")
     allowed = {"cu126"} if "legacy" in categories else {"cu128"} if "blackwell" in categories else {"cu126", "cu128"}

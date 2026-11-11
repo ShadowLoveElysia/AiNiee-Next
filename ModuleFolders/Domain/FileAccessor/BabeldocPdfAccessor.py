@@ -3,6 +3,10 @@ from concurrent.futures import Executor, Future
 from concurrent.futures.thread import _WorkItem
 from pathlib import Path
 
+from ModuleFolders.Infrastructure.Compatibility import install_babeldoc_compatibility
+
+install_babeldoc_compatibility()
+
 from babeldoc import progress_monitor
 from babeldoc.babeldoc_exception.BabelDOCException import ExtractTextError
 from babeldoc.docvision.doclayout import DocLayoutModel

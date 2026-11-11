@@ -21,7 +21,7 @@ AiNiee-Next has multiple entry points. They serve different users and workflows.
 
 ### CLI/TUI for First-Time Users
 
-CLI/TUI is the numbered menu interface shown after launching `Launch.bat` or running `uv run ainiee_cli.py`.
+CLI/TUI is the numbered menu interface shown after launching `Windows launch.bat` or running `uv run ainiee_cli.py`.
 
 It is recommended for first-time users because:
 

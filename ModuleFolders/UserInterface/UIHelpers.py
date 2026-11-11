@@ -65,7 +65,7 @@ def get_calibre_lang_code(current_lang):
 
 
 def ensure_calibre_available(current_lang, tool_name="ebook-convert.exe"):
-    ebook_module = import_module("批量电子书整合")
+    ebook_module = import_module("Tools.Ebook.批量电子书整合")
     return ebook_module.ensureCalibreTool(
         tool_name,
         get_calibre_lang_code(current_lang),

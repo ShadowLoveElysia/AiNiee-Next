@@ -12,12 +12,12 @@ _PROJECT_GUIDES = (
     ("项目规则", "Agents.md", "项目能力和客户端接入说明；必须先阅读"),
     ("项目规则", "SKILL.md", "AiNiee-Next 专用技能规则；处理用户文件前必须阅读"),
     ("项目总览", "README.md", "功能和常用入口概览；按需阅读"),
-    ("项目总览", "README_EN.md", "英文功能和入口概览；按需阅读"),
+    ("项目总览", "Docs/README_EN.md", "英文功能和入口概览；按需阅读"),
     ("MCP 说明", "Tools/MCPServer/MCP_CLIENT_GUIDE.md", "MCP 首轮调用、安全边界和批次协议；连接 MCP 前必须阅读"),
     ("Skills 说明", "Tools/Skills/README.md", "Skills REST/CLI 协议；不使用 MCP 时阅读"),
     ("CLI 入口", "ainiee_cli.py", "本地 TUI/CLI 入口；只读源码，不能作为写入接口"),
     ("运行依赖", "pyproject.toml", "Python 项目依赖和工具配置；按需阅读"),
-    ("运行依赖", "requirements.txt", "Python 依赖列表；按需阅读"),
+    ("运行依赖", "Tools/Bootstrap/requirements.txt", "Python 依赖列表；按需阅读"),
 )
 
 _PROJECT_DIRECTORIES = (

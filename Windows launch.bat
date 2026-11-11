@@ -9,7 +9,7 @@ if defined UV_INSTALL_DIR set "PATH=%UV_INSTALL_DIR%;%PATH%"
 uv --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] uv is not installed or not in PATH.
-    echo Please run prepare.bat first.
+    echo Please run Windows prepare.bat first.
     popd
     pause
     exit /b 1

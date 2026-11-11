@@ -26,6 +26,8 @@ import posixpath
 import urllib.parse
 import json
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 elysiaFitz = None
 
 
@@ -45,7 +47,7 @@ STRINGS = {
     'prompt_main_menu': {'zh': "\n欢迎使用！请选择操作模式:\n  1) 控制台交互模式\n  2) 查看所有参数说明\n  3) 退出\n请输入选项 (1, 2 或 3):", 'en': "\nWelcome! Please select an operation mode:\n  1) Interactive Console Mode\n  2) View All Parameter Help\n  3) Exit\nEnter your choice (1, 2 or 3):", 'ja': "\nようこそ！操作モードを選択してください:\n  1) 対話型コンソールモード\n  2) すべてのパラメータヘルプを表示\n  3) 終了\n選択肢（1、2、または3）を入力してください:"},
     'prompt_language_select': {'zh': "请选择后续提示的语言 (zh, en, ja):", 'en': "Please select a language for subsequent prompts (zh, en, ja):", 'ja': "後続のプロンプトの言語を選択してください (zh, en, ja):"},
     'prompt_input_path': {'zh': "请输入包含源文件（PDF, CBZ, EPUB等）的文件夹路径:", 'en': "Please enter the path to the folder containing source files (PDFs, CBZs, EPUBs, etc.):", 'ja': "ソースファイル（PDF、CBZ、EPUBなど）が含まれるフォルダのパスを入力してください:"},
-    'multi_folder_tip': {'zh': "提示：若要一次性处理多个文件夹，请使用命令行参数模式 (例如: python 批量电子书整合.py -p C:\\A C:\\B ...)。", 'en': "Tip: To process multiple folders at once, please use the command-line argument mode (e.g., python 批量电子书整合.py -p C:\\A C:\\B ...).", 'ja': "ヒント：一度に複数のフォルダを処理するには、コマンドライン引数モードを使用してください (例: python 批量电子书整合.py -p C:\\A C:\\B ...)。"},
+    'multi_folder_tip': {'zh': "提示：若要一次性处理多个文件夹，请使用命令行参数模式 (例如: python Tools/Ebook/批量电子书整合.py -p C:\\A C:\\B ...)。", 'en': "Tip: To process multiple folders at once, please use the command-line argument mode (e.g., python Tools/Ebook/批量电子书整合.py -p C:\\A C:\\B ...).", 'ja': "ヒント：一度に複数のフォルダを処理するには、コマンドライン引数モードを使用してください (例: python Tools/Ebook/批量电子书整合.py -p C:\\A C:\\B ...)。"},
     'warn_multi_folder_output_ignored': {'zh': "警告：在多文件夹模式下，-o/--output 参数 '{}' 将被忽略，以防止文件覆盖。将使用文件夹名称作为输出文件名。", 'en': "Warning: In multi-folder mode, the -o/--output argument '{}' is ignored to prevent file overwrites. Folder names will be used for output files.", 'ja': "警告：複数フォルダモードでは、-o/--output引数「{}」はファイルの上書きを防ぐために無視されます。フォルダ名が出力ファイル名として使用されます。"},
     'warn_multi_folder_title_ignored': {'zh': "警告：在多文件夹模式下，-t/--title 参数 '{}' 将被忽略。将使用文件夹名称作为标题。", 'en': "Warning: In multi-folder mode, the -t/--title argument '{}' is ignored. Folder names will be used for titles.", 'ja': "警告：複数フォルダモードでは、-t/--title引数「{}」は無視されます。フォルダ名がタイトルとして使用されます。"},
     'detected_folder_type': {'zh': "检测到文件夹主要包含 '{}' 文件。将首先将它们批量整合成一个临时的EPUB文件。", 'en': "Detected folder primarily contains '{}' files. They will be consolidated into a single temporary EPUB file first.", 'ja': "フォルダに主に「{}」ファイルが含まれていることが検出されました。最初にこれらを単一个の一時的なEPUBに統合します。"},
@@ -294,10 +296,7 @@ Kindle形式 ---
 }
 
 def getSakuraConfigPath():
-    try:
-        script_dir = os.path.dirname(__file__)
-    except NameError:
-        script_dir = os.getcwd()
+    script_dir = PROJECT_ROOT
     return os.path.join(script_dir, "config.json")
 
 def loadSakuraConfig():
@@ -370,10 +369,7 @@ def getCalibreToolPath(toolName):
         if os.path.exists(custom_tool_path):
             return custom_tool_path
 
-    try:
-        script_dir = os.path.dirname(__file__)
-    except NameError:
-        script_dir = os.getcwd()
+    script_dir = PROJECT_ROOT
 
     if platform.system() == "Windows":
         portableBaseLibraryPath = os.path.join(script_dir, 'lib', 'Calibre Portable')
@@ -400,10 +396,7 @@ def getCalibreToolPath(toolName):
 def downloadCalibre(languageCode):
     mobiusDownloadUrl = getLatestCalibrePortableUrl(languageCode)
     if not mobiusDownloadUrl: return None
-    try:
-        script_dir = os.path.dirname(__file__)
-    except NameError:
-        script_dir = os.getcwd()
+    script_dir = PROJECT_ROOT
     installerPath = os.path.join(script_dir, "calibre_portable_installer.exe")
     try:
         print(STRINGS['calibre_downloading'][languageCode])
@@ -421,10 +414,7 @@ def downloadCalibre(languageCode):
 def setupCalibreLocally(languageCode):
     installerPath = downloadCalibre(languageCode)
     if not installerPath: return False
-    try:
-        script_dir = os.path.dirname(__file__)
-    except NameError:
-        script_dir = os.getcwd()
+    script_dir = PROJECT_ROOT
     installDirectory = os.path.join(script_dir, 'lib', 'Calibre Portable')
     os.makedirs(installDirectory, exist_ok=True)
     print(STRINGS['calibre_extracting'][languageCode].format(installDirectory))

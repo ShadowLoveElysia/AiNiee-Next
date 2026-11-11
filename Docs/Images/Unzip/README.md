@@ -66,4 +66,4 @@
   <img src="9.png" alt="把 AiNiee-Next-main 文件夹拖到目标文件夹完成解压" width="92%">
 </p>
 
-解压完成后，进入 `AiNiee-Next-main` 文件夹，继续按照快速开始教程运行 `prepare.bat` 和 `Launch.bat`。
+解压完成后，进入 `AiNiee-Next-main` 文件夹，继续按照快速开始教程运行 `Windows prepare.bat` 和 `Windows launch.bat`。

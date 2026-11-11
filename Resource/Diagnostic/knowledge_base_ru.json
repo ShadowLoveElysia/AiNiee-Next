@@ -93,7 +93,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "Как исправить проблему с зависимостями:\n1. Выполните: uv sync\n2. Или установите отдельный пакет: uv add <имя_пакета>\n3. Если используете pip через uv: uv pip install -r requirements.txt\n4. Убедитесь, что используется правильная версия Python",
+      "answer": "Как исправить проблему с зависимостями:\n1. Выполните: uv sync\n2. Или установите отдельный пакет: uv add <имя_пакета>\n3. Если используете pip через uv: uv pip install -r Tools/Bootstrap/requirements.txt\n4. Убедитесь, что используется правильная версия Python",
       "category": "Окружение",
       "hit_count": 0
     },

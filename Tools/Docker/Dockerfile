@@ -41,7 +41,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy project definition and metadata required for build/sync
 COPY pyproject.toml README.md LICENSE ./
-COPY docker-entrypoint.sh ./docker-entrypoint.sh
+COPY Tools/Docker/docker-entrypoint.sh ./docker-entrypoint.sh
 # Using 'uv sync' will install dependencies from pyproject.toml. 
 # We use --no-install-project because the source code is not yet copied.
 RUN uv sync --no-install-project
@@ -51,7 +51,6 @@ COPY ainiee_cli.py ./
 COPY ModuleFolders/ ./ModuleFolders/
 COPY Resource/ ./Resource/
 COPY PluginScripts/ ./PluginScripts/
-COPY StevExtraction/ ./StevExtraction/
 COPY I18N/ ./I18N/
 COPY Tools/ ./Tools/
 

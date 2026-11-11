@@ -15,7 +15,7 @@ if not errorlevel 1 (
 where python >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Neither uv nor python is available.
-    echo Please run prepare.bat first or install Python 3.12.
+    echo Please run Windows prepare.bat first or install Python 3.12.
     popd
     exit /b 1
 )

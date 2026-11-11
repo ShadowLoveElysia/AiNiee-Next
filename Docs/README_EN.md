@@ -8,13 +8,13 @@
 
 <br/>
 
-[简体中文](README.md) | [English](README_EN.md) | [繁體中文](Docs/README_zh_CNTW.md) | [日本語](Docs/README_JA.md) | [한국어](Docs/README_KO.md) | [Русский](Docs/README_RU.md) | [Español](Docs/README_ES.md)
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next** is a command-line edition built on the core translation logic of [AiNiee](https://github.com/NEKOparapa/AiNiee). It uses **uv** to manage the Python environment and includes extensive improvements for long-running jobs, batch processing, server deployments, and automation.
 
 CLI/TUI is the primary interface, with a Web dashboard, task queues, plugins, and an MCP server also available. The project is suitable for personal translation, long-form content, and unattended batch jobs.
 
-[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Get a complete source snapshot of the default branch's latest commit. Extract the archive first. On Windows, open the extracted project folder and run `prepare.bat`, then `Launch.bat`.
+[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Get a complete source snapshot of the default branch's latest commit. Extract the archive first. On Windows, open the extracted project folder and run `Windows prepare.bat`, then `Windows launch.bat`.
 
 <a id="agent-mode"></a>
 
@@ -30,7 +30,7 @@ You can translate using a third-party Agent platform's **free** quota where avai
 4. Once the Agent can call AiNiee MCP tools, provide your file or its full path and specify the target language.
 
 <p align="center">
-  <img src="README_IMG/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
+  <img src="Images/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
   <br>
   <sub>Select option 1, then copy the entire prompt from the temporary text file into your external Agent.</sub>
 </p>
@@ -43,7 +43,7 @@ Enable SubAgent mode to translate this book, xxxx.epub, into Simplified Chinese.
 
 Replace `xxxx.epub` with your uploaded file or its full path. SubAgent support depends on the third-party client; the main Agent can still translate through MCP when subagents are unavailable.
 
-To configure models, API keys, and translation parameters yourself, read the [Traditional API Quick Start Guide](Docs/README_QUICK_START_EN.md).
+To configure models, API keys, and translation parameters yourself, read the [Traditional API Quick Start Guide](README_QUICK_START_EN.md).
 
 ---
 
@@ -60,7 +60,7 @@ When a task fails, the program collects the stack trace, runtime environment, AP
 The screenshot below demonstrates a ~20,000 line file being translated in approximately 4 minutes with 50 concurrent threads:
 
 <div align="center">
-  <img src="README_IMG/50并发deepseek测试.png" alt="50 Concurrency Performance Test" width="90%">
+  <img src="Images/50并发deepseek测试.png" alt="50 Concurrency Performance Test" width="90%">
   <br>
   <em>50 Threads + DeepSeek API | 20k Lines | ~4 min | 99.6% Success Rate | 397k TPM</em>
 </div>
@@ -83,13 +83,13 @@ The screenshot below demonstrates a ~20,000 line file being translated in approx
 
 ## Quick Start
 
-> Complete beginners and users who want less setup should start with [External Agent Mode](#agent-mode). For traditional API mode, read the [Quick Start Guide](Docs/README_QUICK_START_EN.md) and [DeepSeek API Key Guide](Docs/DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read the [Advanced Settings Guide](Docs/TRANSLATION_WORKFLOW_GUIDE_EN.md).
+> Complete beginners and users who want less setup should start with [External Agent Mode](#agent-mode). For traditional API mode, read the [Quick Start Guide](README_QUICK_START_EN.md) and [DeepSeek API Key Guide](DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read the [Advanced Settings Guide](TRANSLATION_WORKFLOW_GUIDE_EN.md).
 
 ### Method 1: One-Click Launch (Recommended)
 
 **1. Get the Code**
 
-Beginners can [download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip), extract it, and open the project folder containing `prepare.bat` and `Launch.bat`. Then continue to step 2.
+Beginners can [download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip), extract it, and open the project folder containing `Windows prepare.bat` and `Windows launch.bat`. Then continue to step 2.
 
 If you are familiar with Git, you can clone the project for easier updates:
 
@@ -102,25 +102,27 @@ cd AiNiee-Next
 
 Windows:
 ```batch
-Double-click prepare.bat
+Double-click Windows prepare.bat
 ```
 
 Linux / macOS:
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. Launch Application**
 
 Windows:
 ```batch
-Double-click Launch.bat
+Double-click Windows launch.bat
 ```
 
-Linux / macOS:
+Linux:
 ```bash
-./Launch.sh
+bash "Linux launch.sh"
 ```
+
+macOS: double-click `Mac launch.command`; run `Mac prepare.command` first on a fresh setup.
 
 ---
 
@@ -153,6 +155,22 @@ uv run ainiee_cli.py
 ```
 
 ---
+
+## File locations
+
+Platform launch and preparation scripts stay directly in the project root:
+
+| Platform / purpose | Preparation | Launch |
+|---|---|---|
+| Windows | `Windows prepare.bat` | `Windows launch.bat` |
+| macOS | `Mac prepare.command` | `Mac launch.command` |
+| Linux | `Linux prepare.sh` | `Linux launch.sh` |
+| Linux / WSL Qwen vLLM | `Linux qwen vllm prepare.sh` | `Linux qwen vllm launch.sh` |
+
+Manga and media preparation scripts also stay in the root. GUI launchers are archived under `Tools/TauriShell/` for future changes. Screenshots live in `Docs/Images/`, converters in `Tools/Ebook/` and `Tools/Converters/`, the game text extraction tool in `Tools/StevExtraction/`, diagnostic scripts in `Tools/Diagnostics/`, and the pip dependency list in `Tools/Bootstrap/requirements.txt`.
+
+Quote script names containing spaces, for example `bash "Linux launch.sh"`.
+The Python entry point, project metadata, `README.md`, license, Agent rules, and repository configuration stay in the root. Build Docker from the project root with `docker build -f Tools/Docker/Dockerfile .`.
 
 ## Command-Line Arguments
 
@@ -396,4 +414,4 @@ If related core modules are referenced, integrated, or reused in later stages, t
 
 ### Workflow runtime parameters
 
-Workflows accept per-run model, concurrency, context, quality switches, and step overrides while reusing configured interfaces. See [runtime parameter usage](Docs/WORKFLOW_RUNTIME_PARAMETERS.md).
+Workflows accept per-run model, concurrency, context, quality switches, and step overrides while reusing configured interfaces. See [runtime parameter usage](WORKFLOW_RUNTIME_PARAMETERS.md).

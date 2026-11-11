@@ -36,9 +36,9 @@ else
     echo "[INFO] Core runtime is ready, but live translation needs Python 3.12 with Tk."
     tk_help
 fi
-chmod +x Launch.sh Prepare.command Launch.command LaunchLive.command
-echo "Environment is ready. Run bash Launch.sh to start AiNiee."
+chmod +x "Linux launch.sh" "Mac prepare.command" "Mac launch.command" "Mac live launch.command"
+echo "Environment is ready. Run bash \"Linux launch.sh\" to start AiNiee."
 if [ "$task_system" = "Darwin" ]; then
-    echo "You can also double-click Launch.command or LaunchLive.command in Finder."
+    echo "You can also double-click Mac launch.command or Mac live launch.command in Finder."
 fi
 echo "Prepare inference libraries and models inside the live translation controller."

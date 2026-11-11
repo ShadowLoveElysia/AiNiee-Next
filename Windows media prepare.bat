@@ -11,7 +11,7 @@ set "PATH=%USERPROFILE%\.local\bin;%USERPROFILE%\.cargo\bin;%PATH%"
 if defined UV_INSTALL_DIR set "PATH=%UV_INSTALL_DIR%;%PATH%"
 uv --version
 if errorlevel 1 (
-    echo [ERROR] uv was not found. Install uv or run prepare.bat first.
+    echo [ERROR] uv was not found. Install uv or run Windows prepare.bat first.
     goto :failed
 )
 
@@ -116,7 +116,7 @@ exit /b 0
 :failed
 echo.
 echo [ERROR] Live translation setup failed. Copy the error lines above for diagnosis.
-echo If CUDA is unavailable, select CPU explicitly: prepare_media.bat cpu
+echo If CUDA is unavailable, select CPU explicitly: Windows media prepare.bat cpu
 popd
 pause
 exit /b 1

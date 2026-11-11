@@ -8,13 +8,13 @@
 
 <br/>
 
-[简体中文](README.md) | [English](README_EN.md) | [繁體中文](Docs/README_zh_CNTW.md) | [日本語](Docs/README_JA.md) | [한국어](Docs/README_KO.md) | [Русский](Docs/README_RU.md) | [Español](Docs/README_ES.md)
+[简体中文](README.md) | [English](Docs/README_EN.md) | [繁體中文](Docs/README_zh_CNTW.md) | [日本語](Docs/README_JA.md) | [한국어](Docs/README_KO.md) | [Русский](Docs/README_RU.md) | [Español](Docs/README_ES.md)
 
 **AiNiee-Next** 是基于 [AiNiee](https://github.com/NEKOparapa/AiNiee) 核心翻译逻辑开发的命令行版本。项目使用 **uv** 管理 Python 环境，并针对长时间运行、批量任务、服务器部署和自动化使用做了大量改进。
 
 项目以 CLI/TUI 为主要操作界面，同时提供 Web 控制面板、任务队列、插件系统和 MCP 服务，适合个人翻译、长篇内容处理和需要长期挂机的批量任务。
 
-[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 下载默认分支当前最新提交的完整源码副本。下载后先解压，Windows 用户进入解压后的项目目录，依次运行 `prepare.bat` 和 `Launch.bat`。
+[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 下载默认分支当前最新提交的完整源码副本。下载后先解压，Windows 用户进入解压后的项目目录，依次运行 `Windows prepare.bat` 和 `Windows launch.bat`。
 
 <a id="agent-mode"></a>
 
@@ -30,7 +30,7 @@
 4. 确认 Agent 已能调用 AiNiee MCP 工具后，提供要翻译的文件或完整路径，并说明目标语言。
 
 <p align="center">
-  <img src="README_IMG/Agent/1.png" alt="首次进入 AiNiee-Next：选择使用智能助手（Agent），随后复制临时文本文件中的提示词" width="92%">
+  <img src="Docs/Images/Agent/1.png" alt="首次进入 AiNiee-Next：选择使用智能助手（Agent），随后复制临时文本文件中的提示词" width="92%">
   <br>
   <sub>首次进入的操作方式选择界面。选择 1 后，请从自动打开的临时文本文件中复制完整提示词给外部 Agent。</sub>
 </p>
@@ -60,7 +60,7 @@
 下图展示了一个约 20,000 行的待翻译文件，在 50 并发线程下仅用约 4 分钟即可完成翻译任务：
 
 <div align="center">
-  <img src="README_IMG/50并发deepseek测试.png" alt="50并发性能测试" width="90%">
+  <img src="Docs/Images/50并发deepseek测试.png" alt="50并发性能测试" width="90%">
   <br>
   <em>50 并发 + DeepSeek API | 20k 行 | ~4 分钟完成 | 99.6% 成功率 | 397k TPM</em>
 </div>
@@ -88,7 +88,7 @@
 
 **1. 获取代码**
 
-新手可以直接[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)，解压后进入包含 `prepare.bat` 和 `Launch.bat` 的项目目录，继续第 2 步。
+新手可以直接[点击下载最新源码 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip)，解压后进入包含 `Windows prepare.bat` 和 `Windows launch.bat` 的项目目录，继续第 2 步。
 
 熟悉 Git 的用户也可以克隆项目，方便后续更新：
 
@@ -101,25 +101,27 @@ cd AiNiee-Next
 
 Windows:
 ```batch
-双击 prepare.bat
+双击 Windows prepare.bat
 ```
 
 Linux / macOS:
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. 启动应用**
 
 Windows:
 ```batch
-双击 Launch.bat
+双击 Windows launch.bat
 ```
 
-Linux / macOS:
+Linux:
 ```bash
-./Launch.sh
+bash "Linux launch.sh"
 ```
+
+macOS：双击 `Mac launch.command`；首次使用先双击 `Mac prepare.command`。
 
 ---
 
@@ -152,6 +154,31 @@ uv run ainiee_cli.py
 ```
 
 ---
+
+## 文件位置
+
+根目录直接保留各平台的启动脚本和准备脚本，无需进入额外的启动目录。
+
+| 用途 | 位置 |
+|---|---|
+| Windows 准备 / 启动 | `Windows prepare.bat` / `Windows launch.bat` |
+| macOS 准备 / 启动 | `Mac prepare.command` / `Mac launch.command` |
+| Linux 准备 / 启动 | `Linux prepare.sh` / `Linux launch.sh` |
+| 漫画扩展准备 | `Windows comic prepare.bat` / `Unix comic prepare.sh`（macOS、Linux） |
+| 同传扩展准备 | `Windows media prepare.bat` / `Mac media prepare.command` |
+| macOS 同传启动 | `Mac live launch.command` |
+| Linux / WSL Qwen vLLM | `Linux qwen vllm prepare.sh` / `Linux qwen vllm launch.sh` |
+| GUI 启动器（暂存，待后续调整） | `Tools/TauriShell/LaunchGUI.bat` / `Tools/TauriShell/LaunchGUI.sh` |
+| 英文说明、更新记录、教程截图 | `Docs/README_EN.md`、`Docs/update_log.md`、`Docs/Images/` |
+| 电子书整合 / XLSX 转换 | `Tools/Ebook/批量电子书整合.py` / `Tools/Converters/xlsx_converter.py` |
+| 游戏文本提取工具 | `Tools/StevExtraction/` |
+| 操作记录调试脚本 | `Tools/Diagnostics/debug_operation_logger.py` |
+| pip 依赖列表 | `Tools/Bootstrap/requirements.txt` |
+| Docker 构建 | `Tools/Docker/` |
+
+命令行调用带空格的脚本名时必须加引号，例如 `bash "Linux launch.sh"`。
+`ainiee_cli.py`、`pyproject.toml`、`uv.lock`、`README.md`、`LICENSE`、Agent 规则和仓库配置保留在根目录。
+Docker 请从项目根目录执行 `docker build -f Tools/Docker/Dockerfile .`。
 
 ## 命令行参数
 
@@ -405,7 +432,7 @@ UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi
 - 爱发电: https://ifdian.net/a/Next_ZhiXie
 
 <div align="center">
-  <img src="README_IMG/赞赏码.png" alt="赞赏码" width="320">
+  <img src="Docs/Images/赞赏码.png" alt="赞赏码" width="320">
 </div>
 
 ---

@@ -57,6 +57,7 @@ jobs:
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09
         with:
           context: .
+          file: Tools/Docker/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -78,7 +79,9 @@ jobs:
         run: |
           mkdir -p deploy_package
           
-          cp Dockerfile docker-entrypoint.sh pyproject.toml README.md deploy_package/
+          mkdir -p deploy_package/Tools/Docker
+          cp Tools/Docker/Dockerfile Tools/Docker/docker-entrypoint.sh deploy_package/Tools/Docker/
+          cp pyproject.toml README.md deploy_package/
           
           # 如果有 docker-compose.yml 也拷进去
           [ -f docker-compose.yml ] && cp docker-compose.yml deploy_package/

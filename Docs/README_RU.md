@@ -8,7 +8,7 @@
 
 <br/>
 
-[简体中文](../README.md) | [English](../README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
 **AiNiee-Next** — это версия для командной строки, созданная на основе основных функций перевода [AiNiee](https://github.com/NEKOparapa/AiNiee). Проект использует **uv** для управления Python-окружением и содержит улучшения для длительных задач, пакетной обработки, серверного запуска и автоматизации.
 
@@ -53,13 +53,13 @@ cd AiNiee-Next
 Windows:
 
 ```batch
-Дважды щелкните prepare.bat
+Дважды щелкните Windows prepare.bat
 ```
 
 Linux / macOS:
 
 ```bash
-chmod +x prepare.sh && ./prepare.sh
+chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
 ```
 
 **3. Запустить**
@@ -67,13 +67,13 @@ chmod +x prepare.sh && ./prepare.sh
 Windows:
 
 ```batch
-Дважды щелкните Launch.bat
+Дважды щелкните Windows launch.bat
 ```
 
 Linux / macOS:
 
 ```bash
-./Launch.sh
+./"Linux launch.sh"
 ```
 
 ### Способ 2: ручной запуск

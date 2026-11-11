@@ -314,8 +314,8 @@ Torch/Transformers dependencies, never installing these into the translation
 runtime. Run the following from the project root in Linux/WSL:
 
 ```bash
-bash prepare_qwen_vllm.sh nju qwen-vllm-0.6b tmp/models
-bash LaunchQwenVllm.sh --recognizer qwen-vllm-0.6b --model-root tmp/models --attention fa2
+bash "Linux qwen vllm prepare.sh" nju qwen-vllm-0.6b tmp/models
+bash "Linux qwen vllm launch.sh" --recognizer qwen-vllm-0.6b --model-root tmp/models --attention fa2
 ```
 
 Use `qwen-vllm-1.7b` in both commands for the larger model. You can reuse
@@ -375,16 +375,16 @@ and retry. Torch and torchaudio always use matching architecture-specific builds
 The BAT prompts for a source; its fourth argument skips the prompt:
 
 ```bat
-prepare_media.bat auto index "" nju
-prepare_media.bat cuda:0 index cu128 official
+"Windows media prepare.bat" auto index "" nju
+"Windows media prepare.bat" cuda:0 index cu128 official
 ```
 
 The Mac SH prompts when run interactively, defaults to China otherwise, and
 accepts the source as its third argument:
 
 ```bash
-bash prepare_media.sh auto index nju
-bash prepare_media.sh auto index official
+bash "Mac media prepare.sh" auto index nju
+bash "Mac media prepare.sh" auto index official
 ```
 
 `AINIEE_MEDIA_PACKAGE_SOURCE=nju` or `official` can also control the runtime
@@ -407,24 +407,24 @@ This change has no RTX 5070 hardware validation yet.
 
 For an existing installation reporting `no kernel image is available`, close
 the controller, update the NVIDIA driver, update project files, and rerun
-`prepare_media.bat cuda:0`. Then reopen the controller and check its environment.
+`Windows media prepare.bat cuda:0`. Then reopen the controller and check its environment.
 No separate CUDA Toolkit installation is required by these prebuilt wheels.
 
-Double-click root `prepare_media.bat` to install live translation extensions
+Double-click root `Windows media prepare.bat` to install live translation extensions
 with uv into `Resource/MediaRuntime`. It uses the saved controller model (Index
 by default), detects NVIDIA for the CUDA build, otherwise installs CPU Torch,
 prepares the selected GGUF runtime when applicable, and verifies readiness.
 Full uv installation errors remain visible in the console. uv must already
-exist; `prepare.bat` or manual uv installation can provide it.
+exist; `Windows prepare.bat` or manual uv installation can provide it.
 
 Optional commands from the project root:
 
 ```bat
-prepare_media.bat cpu
-prepare_media.bat auto index-q4
-prepare_media.bat cuda:0 hymt
-prepare_media.bat cuda:0 index cu126
-prepare_media.bat cuda:0 index cu128
+"Windows media prepare.bat" cpu
+"Windows media prepare.bat" auto index-q4
+"Windows media prepare.bat" cuda:0 hymt
+"Windows media prepare.bat" cuda:0 index cu126
+"Windows media prepare.bat" cuda:0 index cu128
 ```
 
 Successful verification saves the inference Python path for the controller.
@@ -439,7 +439,7 @@ Index-Echo experimental project extra into the base environment.
 ## macOS testing build
 
 For a terminal installer that exposes complete dependency errors, run
-`bash prepare_media.sh`, or double-click `PrepareMedia.command`. It reads the
+`bash "Mac media prepare.sh"`, or double-click `Mac media prepare.command`. It reads the
 saved model, creates the same native arm64 inference environment as the
 controller, installs Torch/ASR/translation libraries directly with uv, and
 selects MLX, Metal GGUF or MPS as appropriate. Existing runtime assets are
@@ -447,9 +447,9 @@ preserved with `--allow-existing`. Verification saves the Python path only
 after successful readiness checks. uv must already be installed.
 
 ```bash
-bash prepare_media.sh
-bash prepare_media.sh cpu
-bash prepare_media.sh auto index-q4
+bash "Mac media prepare.sh"
+bash "Mac media prepare.sh" cpu
+bash "Mac media prepare.sh" auto index-q4
 ```
 
 The installer currently targets Apple Silicon macOS. It reports inference
@@ -458,7 +458,7 @@ Command Line Tools does not make installed inference libraries fail. Models
 and recording permission remain separate. Audio-helper build errors stay
 visible for diagnosis. No automatic device/model fallback is performed.
 
-From Finder, open `LaunchLive.command` (or run `bash LaunchLive.command` in the
+From Finder, open `Mac live launch.command` (or run `bash Mac live launch.command` in the
 project directory). The MLX path needs macOS 14+ and native Apple Silicon.
 The launcher needs Python 3.12 with Tk; the python.org
 macOS installer includes Tk. Homebrew users need `python@3.12` and

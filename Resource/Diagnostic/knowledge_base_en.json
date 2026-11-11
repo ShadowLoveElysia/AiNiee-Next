@@ -91,7 +91,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "Dependency troubleshooting:\n1. Run: uv sync\n2. Or install an individual package: uv add <package>\n3. If you use pip through uv: uv pip install -r requirements.txt\n4. Make sure the correct Python version is being used",
+      "answer": "Dependency troubleshooting:\n1. Run: uv sync\n2. Or install an individual package: uv add <package>\n3. If you use pip through uv: uv pip install -r Tools/Bootstrap/requirements.txt\n4. Make sure the correct Python version is being used",
       "category": "Environment",
       "hit_count": 0
     },

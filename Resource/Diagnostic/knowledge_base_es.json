@@ -91,7 +91,7 @@
         "ModuleNotFoundError",
         "uv"
       ],
-      "answer": "Cómo resolver problemas de dependencias:\n1. Ejecuta: uv sync\n2. O instala un paquete concreto: uv add <paquete>\n3. Si usas pip mediante uv: uv pip install -r requirements.txt\n4. Asegúrate de estar usando la versión correcta de Python",
+      "answer": "Cómo resolver problemas de dependencias:\n1. Ejecuta: uv sync\n2. O instala un paquete concreto: uv add <paquete>\n3. Si usas pip mediante uv: uv pip install -r Tools/Bootstrap/requirements.txt\n4. Asegúrate de estar usando la versión correcta de Python",
       "category": "Entorno",
       "hit_count": 0
     },
