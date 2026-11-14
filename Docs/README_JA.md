@@ -1,196 +1,203 @@
 # AiNiee-Next
 
-<div align="center">
-  <img src="https://img.shields.io/badge/Interface-CLI%20%2F%20TUI-0078D4?style=for-the-badge&logo=windows-terminal&logoColor=white" alt="CLI">
-  <img src="https://img.shields.io/badge/Runtime-uv-purple?style=for-the-badge&logo=python&logoColor=white" alt="uv">
-  <img src="https://img.shields.io/badge/Status-Stable-success?style=for-the-badge" alt="Status">
-</div>
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
-<br/>
+AiNiee-Next は、大規模言語モデルを利用した一括翻訳ツールです。小説、電子書籍、文書、字幕、ゲームテキスト、漫画、リアルタイムの音声・映像字幕を処理できます。
 
-[簡体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+コマンドラインと対話式ターミナルメニュー（CLI/TUI）を中心に動作し、Web ダッシュボード、デスクトップウィンドウ、外部 AI クライアント向けの MCP・Skills インターフェースも提供します。単一ファイルを手軽に翻訳する用途から、長編シリーズや一括タスクを継続的に処理する用途まで対応します。
 
-**AiNiee-Next** は、[AiNiee](https://github.com/NEKOparapa/AiNiee) の中核となる翻訳処理をもとに開発したコマンドライン版です。Python 環境は **uv** で管理し、長時間実行、バッチ処理、サーバー運用、自動化に向けた改善を加えています。
-
-操作は CLI/TUI が中心で、Web ダッシュボード、タスクキュー、プラグイン、MCP サービスも利用できます。個人での翻訳、長文コンテンツの処理、長時間のバッチ実行に適しています。
-
----
-
-## 主な特徴
-
-- **安定した実行と復旧**：低レベルの I/O 出力を整理して不要なログによる TUI の乱れを抑え、例外処理、自動再試行、途中からの再開に対応します。Windows、Linux、macOS、Android（Termux）、Headless サーバーで利用できます。
-- **エラー診断**：traceback、実行環境、API、モデル、直近の操作を収集し、内蔵ルールと任意の LLM 分析で原因の切り分けを支援します。疑わしいコード上の問題は GitHub Issue 用に整理できます。
-- **多形式対応**：Epub、Docx、Txt、Srt、Ass、Vtt、Lrc、Json、Po、Paratranz など 20 種類以上に対応し、Calibre と連携して `.mobi`、`.azw3`、`.kepub`、`.fb2` などの電子書籍も処理できます。
-- **タスクと設定の管理**：実行中の同時実行数調整、API Key の切り替え、Web 監視、タスク状況、費用と完了時間の見積もりに加え、複数の Profile、設定のホットリロード、並べ替え可能なバッチキューを利用できます。キュー実行中も待機中のタスクを編集でき、設定した順番で自動実行されます。
-- **プラグインとキャッシュ**：一元管理できるプラグインで機能を拡張し、RAG による過去訳の参照と翻訳チェックを利用できます。Anthropic、Google、Amazon Bedrock ではシステムプロンプトや用語集をキャッシュでき、非対応 API では自動的に無効化して通知します。
-- **モデルと API**：主要なオンライン API、サードパーティーの API 中継サービス、ローカルモデルに対応し、インターフェースに応じたパラメーター設定の案内を表示します。DeepSeek R1 や Claude 3.5 などの推論モデル、複数 API の自動フェイルオーバー、切り替え条件の設定にも対応します。
-- **高い同時処理性能**：aiohttp を使った非同期モードは 100 件を超える同時リクエストに対応し、再試行できないエラーと一時的なエラーを分けて処理します。API プロバイダーごとの互換性を記録し、ファイル記述子やポートなどのシステム資源も保護します。同時実行数が 15 以上になると、非同期モードの利用を案内します。
-- **Web、MCP、MangaCore**：Web ダッシュボードではタスク、設定、キュー、プラグインを管理でき、MCP は LLM クライアントに制御された操作手段を提供します。MangaCore は漫画の自動バッチ処理と Web 編集に対応します。
+[最新ソースコード ZIP をダウンロード](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — デフォルトブランチの最新コミットのソースコード一式をダウンロードします。まず展開し、Windows では展開先のプロジェクトフォルダーで `Windows prepare.bat`、`Windows launch.bat` の順に実行してください。
 
 ---
 
 ## クイックスタート
 
-新規ユーザーは、まず次の英語または中国語ドキュメントを参照してください。
+### 1. 基本環境のセットアップ
 
-- [Quick Start Guide](README_QUICK_START_EN.md)
-- [DeepSeek API Key Guide](DEEPSEEK_API_KEY_EN.md)
-- [Prompt, Glossary, Polishing, and Advanced Settings Guide](TRANSLATION_WORKFLOW_GUIDE_EN.md)
+Python 3.12 とパッケージマネージャー `uv` が必要です。リポジトリのルートには各プラットフォーム用の準備スクリプトが用意されています。初回は対応するスクリプトを実行するだけで、基本環境を自動的に構成できます。
 
-### 方法 1：ワンクリック起動
+- **Windows**：`Windows prepare.bat` をダブルクリックします。
+- **Linux**：ターミナルで `bash "Linux prepare.sh"` を実行します。
+- **macOS**：`Mac prepare.command` をダブルクリックします。
 
-**1. コードを取得**
+テキスト、電子書籍、字幕、ゲームスクリプトの翻訳だけであれば、この手順を終えれば使い始められます。漫画、リアルタイム通訳、動画翻訳には追加の画像・音声モデル環境が必要です。必要になったときに、後述の手順 5 に従って個別にインストールしてください。
 
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-```
+### 2. 起動と初期設定
 
-**2. 初回環境セットアップ**
+基本環境の準備ができたら、プラットフォームに対応する起動スクリプトでメインプログラムを開きます。
 
-Windows：
+- **Windows**：`Windows launch.bat` をダブルクリックします。
+- **Linux**：`bash "Linux launch.sh"` を実行します。
+- **macOS**：`Mac launch.command` をダブルクリックします。
 
-```batch
-"Windows prepare.bat" をダブルクリック
-```
+プロジェクトのルートから、コマンドラインで `uv run ainiee_cli.py` を実行して起動することもできます。
 
-Linux / macOS：
+初回起動時にはセットアップウィザードが表示されます。案内に従って次の 2 項目を設定してください。
 
-```bash
-chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
-```
+1. 表示言語を選びます（簡体字中国語、繁体字中国語、英語、日本語、韓国語、ロシア語、スペイン語の 7 言語に対応）。
+2. 翻訳方法を選びます。
 
-**3. 起動**
+   - **API モード（一般的な方法）**：API 管理でプラットフォームを選びます。OpenAI 互換 API、Anthropic、Google、DeepSeek、Sakura / LocalLLM などのローカルモデル用インターフェースに対応しています。API アドレス、API キー、モデル名を入力し、接続をテストしてから保存します。
+   - **外部 Agent モード**：外部 AI アシスタントやコーディングクライアントの利用枠を使って翻訳したい場合は、ウィザードの案内に従って MCP または外部接続ガイドを有効にしてください。
 
-Windows：
+### 3. 最初のテキスト・電子書籍タスクを開始
 
-```batch
-"Windows launch.bat" をダブルクリック
-```
+1. メインメニューで入力ファイルまたはフォルダー全体を選び、原文言語、翻訳先言語、出力先を設定します。
+2. 用語集、キャラクター設定、カスタムプロンプトが必要な場合は、ルールとプロンプトのメニューで設定して有効にします。実行パラメーターと作品ごとのルールは別々に保存されるため、作品を切り替えるたびに API 設定を変更する必要はありません。
+3. 設定を確認して翻訳を開始します。実行中でも、いつでも一時停止、同時実行数の調整、予備キーへの切り替えができます。
+4. 通信が切れたり手動で停止したりした場合は、次回同じプロジェクトを選んでキャッシュを復元すると途中から再開できます。翻訳済みの部分は再リクエストされません。
+5. 翻訳完了後はそのまま書き出すか、内蔵ターミナルエディターや校正機能で確認してから書き出せます。
 
-Linux / macOS：
+### 4. Web ダッシュボードまたはデスクトップ版を起動
 
-```bash
-./"Linux launch.sh"
-```
+ブラウザーでの操作に慣れている場合、特に統計グラフの確認、キャッシュのページ単位の編集、漫画エディターの利用には、ターミナルのメインメニューから Web ダッシュボードを起動できます。コマンドラインからデスクトップ版の起動スクリプトを使うこともできます。
 
-### 方法 2：手動起動
+- **Windows**：`Tools\TauriShell\LaunchGUI.bat` を実行します。
+- **Linux / macOS**：`Tools/TauriShell/LaunchGUI.sh` を実行します。
 
-uv をインストール：
+### 5. 漫画・リアルタイム通訳・オフライン動画機能を利用
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+これら 3 つのモジュールは推論用の依存関係やモデルの容量が大きいため、初回利用前に対応する拡張環境の準備スクリプトを実行してください。
 
-Windows PowerShell：
+- **漫画翻訳**：
 
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
+  - 環境の準備：Windows では `Windows comic prepare.bat`、Linux/macOS では `Unix comic prepare.sh` を実行します。
+  - 使い方：Web ダッシュボードの漫画エディターで視覚的な編集と書き出しを行うか、`uv run ainiee_cli.py manga <INPUT_PATH>` で一括処理します。
 
-起動：
+- **リアルタイム通訳とオフライン動画**：
 
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-uv run ainiee_cli.py
-```
+  - 環境の準備：Windows では `Windows media prepare.bat`、macOS では `Mac media prepare.command` を実行します。Linux/WSL で独立した vLLM 音声認識サービスを利用する場合は、別途 `Linux qwen vllm prepare.sh` を実行します。
+  - 使い方：メインメニューから開くか、`uv run ainiee_cli.py live`（リアルタイム字幕。macOS では `Mac live launch.command` のダブルクリックでも起動可能）と `uv run ainiee_cli.py video`（オフライン動画）を直接実行します。
 
 ---
 
-## コマンドライン例
+## ドキュメントと Wiki
 
-翻訳タスク：
+| トピック | ドキュメント |
+| :--- | :--- |
+| 入門 | [図解クイックスタート](README_QUICK_START_EN.md) · [DeepSeek API キーの取得](DEEPSEEK_API_KEY_EN.md) |
+| 翻訳設定 | [プロンプト・用語集・推敲・ソフトウェア設定](TRANSLATION_WORKFLOW_GUIDE_EN.md) |
+| 自動化 | [ワークフローの実行パラメーターと継承ルール](WORKFLOW_RUNTIME_PARAMETERS.md) |
+| リアルタイム通訳と動画 | [メディア機能とモデルの説明](../ModuleFolders/Media/README.md) · [macOS リアルタイム通訳テストガイド](MACOS_LIVE_TRANSLATION_TEST.md) |
+| MCP | [サービス接続](../Tools/MCPServer/README.md) · [クライアント利用ガイド](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
+| Skills | [HTTP・CLI・Python からの呼び出し](../Tools/Skills/README.md) |
+| Agent | [Headless Agent 利用ガイド](../Tools/Agent/README.md) |
+| デスクトップ版 | [Tauri の起動とビルド](../Tools/TauriShell/README.md) |
+| 拡張開発 | [プラグインの作成](../PluginScripts/README.md) · [Reader / Writer の作成](../ModuleFolders/Domain/FileAccessor/README.md) |
+| ゲームテキスト | [StevExtraction 利用ガイド](../Tools/StevExtraction/使用说明.md) |
+| 更新 | [更新履歴](update_log.md) |
+| 他の言語 | [简体中文](../README.md) · [English](README_EN.md) · [繁體中文](README_zh_CNTW.md) · [한국어](README_KO.md) · [Русский](README_RU.md) · [Español](README_ES.md) |
+
+---
+
+## 主な機能
+
+### テキスト・電子書籍・ゲームのローカライズ
+
+- **必要な設定だけを注入**：リクエスト時には、現在の断片に実際に登場する用語や翻訳禁止語だけを照合して含めます。英語の語形変化や単語境界の判定にも対応し、無関係な情報によるモデルへの干渉を減らします。
+- **キャラクターの呼び出しと巻ごとの時系列**：前後数行にある名前、別名、敬称、人称、口癖から、その場にいるキャラクターを自動的に呼び出します。複数巻の小説では巻番号ごとにキャラクターや設定の変化を記録でき、前の巻の翻訳に後の巻で初めて登場する訳名が混ざるのを防ぎます。
+- **複数の一貫性参照（任意）**：同一プロジェクトで繰り返される長文の翻訳メモリ、ローカルのキーワード照合による過去の訳文参照、ツール呼び出しによるあらすじと人物記憶に対応します。記憶モードを有効にすると、前後の順序を保つため自動的にシングルスレッドで実行されます。
+- **エラーへの対応と訳抜け補完**：コードブロック、プレースホルダー、改行、先頭・末尾の空白を自動保護し、応答の行数、番号、外国語の残存を検査します。バッチ内の数行だけが訳抜けした場合は、抜けた行だけを追加翻訳して元の位置に戻すため、バッチ全体を翻訳し直す必要がありません。
+- **推敲と校正レビュー**：独立した推敲フロー、ルールに基づく記号・プレースホルダー検査、AI 校正提案に対応します。提案には原文のフィンガープリントが記録され、ターミナルや Web から個別に採用、却下、取り消しができます。手動で編集した訳文を誤って上書きしない仕組みです。
+- **電子書籍整理ツール**：不規則な EPUB の保守的な読み込み（本文ノイズと日本語ルビの除外を含む）、入れ子のテキスト抽出と元の書籍構造への書き戻し、文字コードと宣言の同期、翻訳後の目次・章タイトルの同期、縦書き・横書きの切り替え、フォント・文字サイズの強制指定解除、本文段落プリセット、ローカルリンクの修復、画像圧縮と WebP 変換に伴う参照の更新、対訳 EPUB、言語・書名メタデータの整理、シリーズ巻番号の認識と命名統一、シリーズメタデータの書き込みと一括自動合本、TXT の自動章分けと EPUB 変換、日中翻訳の引用符の正規化に対応します。翻訳キャッシュを使って書き出し設定を変更し、再書き出しすることもできます。シリーズ電子書籍の一括統合スクリプト（`Tools/Ebook/批量电子书整合.py`）とゲームテキスト抽出ツール（`Tools/StevExtraction`）も付属します。
+
+### 漫画翻訳と Web エディター
+
+- 画像、フォルダー、ZIP/CBZ、RAR/CBR、PDF の読み込みに対応し、吹き出し・テキスト検出、OCR、一括翻訳、背景修復、自動組版・レンダリングを連携させます。
+- 品質チェックを内蔵し、モデルの異常な機能低下、文字欠け、テキストのはみ出しがあるページを要確認としてマークし、そのまま完成品として書き出すことを防ぎます。
+- Web 版にはレイヤーエディターを備え、テキスト枠の位置・スタイル調整、ブラシによる修復マスクの描き直し、特定ページの特定段階だけの再実行、元に戻す・やり直しに対応します。画像、PDF、CBZ、ZIP、EPUB、レイヤー付き PSD ファイル（または JSX スクリプト）を書き出せます。
+
+### リアルタイム通訳とオフライン動画
+
+- **リアルタイム通訳**：システム音声、または指定アプリケーションのプロセスツリーの音声を取得します。Windows では他のソフトの音を混ぜずに特定のアプリやゲームだけを取得でき、macOS ではネイティブ Helper を利用します。音声の区切り検出、ローカルモデルによる認識・翻訳を経て、フローティング字幕ウィンドウに表示します。配信者用の用語集と、独立した非公開の双方向テキスト翻訳ウィンドウも付属します。
+- **オフライン動画**：音声の自動抽出とノイズ除去、音声認識、字幕タイムラインの整理を行います。ローカルモデルとクラウド API を組み合わせて利用でき、最終的に FFmpeg でソフト字幕付き MKV または字幕焼き込み MP4 を作成します。
+
+### 自動化と外部連携
+
+- **キュー・スケジュール・フォルダー監視**：タスクキュー（実行中でも未開始の項目を編集可能）、Cron スケジュール、フォルダーの自動監視に対応します。新しいファイルの書き込みが安定すると自動的にキューへ追加し、シリーズの巻順も認識します。
+- **MCP / Skills / Docker**：MCP Server（stdio / streamable-http / SSE）と Skills HTTP/CLI サービスを起動できます。翻訳の推論を外部 AI クライアントに任せ、ファイル読み込み、検証、アトミックな書き戻しは AiNiee が一元的に処理します。コンテナーへのデプロイは `Tools/Docker/Dockerfile` を参照してください。
+
+---
+
+## よく使うコマンドライン操作
+
+対話式メニューのほか、主要なタスクはすべてコマンドラインから直接実行でき、スクリプト化や自動化に利用できます。
 
 ```bash
-uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese -t Chinese --resume --yes
-```
+# ファイルまたはフォルダーを翻訳し、出力先・言語を指定して自動再開
+uv run ainiee_cli.py translate INPUT_PATH -o OUTPUT_PATH -s Japanese -t Chinese --resume --yes
 
-キュータスク：
+# 推敲のみ／翻訳と推敲／キャッシュからの書き出しのみ（モデル呼び出しなし）
+uv run ainiee_cli.py polish INPUT_PATH --yes
+uv run ainiee_cli.py all_in_one INPUT_PATH --yes
+uv run ainiee_cli.py export INPUT_PATH --yes
 
-```bash
-uv run ainiee_cli.py queue --queue-file my_queue.json --yes
-```
+# 漫画の一括処理（最初にローカルモデルとデバイスの状態を確認）
+uv run ainiee_cli.py manga INPUT_PATH --manga-runtime-check
+uv run ainiee_cli.py manga INPUT_PATH --yes
 
-MCP サーバー：
+# リアルタイム通訳またはオフライン動画翻訳を直接開く
+uv run ainiee_cli.py live
+uv run ainiee_cli.py video
 
-```bash
+# MCP Server または Skills サービスを起動
 uv run ainiee_cli.py mcp --mcp-transport stdio
+uv run ainiee_cli.py --skills
+python Tools/Skills/cli.py list
 ```
 
-主な引数：
-
-- `translate` / `polish` / `export` / `queue` / `mcp`：タスク種別
-- `-o, --output`：出力先
-- `-p, --profile`：Profile 名
-- `-s, --source`：翻訳元言語
-- `-t, --target`：翻訳先言語
-- `--type`：Txt、Epub、MTool、RenPy などのプロジェクト種別
-- `--resume`：キャッシュから自動再開
-- `--yes`：非対話モード
-- `--threads`：並行スレッド数
-- `--platform`：API プラットフォーム
-- `--model`：モデル名
-- `--api-url`：API URL
-- `--api-key`：API Key
-- `--mcp-transport`：`stdio` / `streamable-http` / `sse`
+すべてのコマンドライン引数を確認するには `uv run ainiee_cli.py --help` を実行してください。
 
 ---
 
-## Web ダッシュボード
+## 対応ファイル形式
 
-起動手順：
-
-1. `uv run ainiee_cli.py` を実行してメインメニューを開く
-2. **15. Start Web Server** を選択
-3. 既定ではポート `8000` でサービスが起動し、ブラウザが開きます
-
-Web ダッシュボードでは、タスク進捗、Profile、用語集、キュー、プラグイン、一部の MangaCore 機能を管理できます。
-
----
-
-## MCP サービス
-
-AiNiee-Next は任意機能として MCP サーバーを提供します。MCP 対応 LLM クライアントから、プロジェクト機能を安全に操作できます。
-
-起動例：
-
-```bash
-uv run ainiee_cli.py mcp --mcp-transport streamable-http
-```
-
-接続先：
-
-```text
-ローカル: http://127.0.0.1:8765/mcp
-LAN: http://<your-lan-ip>:8765/mcp
-```
-
-詳細：
-
-- [MCP Client Guide](../Tools/MCPServer/MCP_CLIENT_GUIDE.md)
+| 分類 | 形式 | 説明 |
+| :--- | :--- | :--- |
+| プレーンテキスト | `.txt`, `.md` | 行ごとに抽出・書き戻しを行います。Markdown では画像だけの行と参照定義を自動的にスキップします |
+| 電子書籍 | `.epub` | 内部構造と目次を解析し、訳文を書き戻します |
+| Office 文書 | `.docx`, `.pptx` | テキストノードやテキストボックス内の段落を抽出して書き戻します。PPTX の画像内テキストは認識せず、段落内の一部の混在書式は簡略化されます |
+| 表計算 | `.csv`, `.xlsx` | CSV は直接読み書きします。XLSX は CSV に分割して翻訳後に再構成するため、複雑な数式や書式は保持できません。単純なテキスト表向けです |
+| 字幕・歌詞 | `.srt`, `.vtt`, `.ass`, `.lrc` | タイムラインとスタイルタグを保持し、本文だけを置き換えます |
+| ローカライズプロジェクト | `.po`, `.json` | PO は現在、単数形のエントリーを処理します。JSON は i18next、Paratranz、MTool などの構造を自動認識します |
+| ゲームプロジェクト | Ren'Py, Translator++, VNText | 専用形式での抽出・書き戻しに対応します |
+| PDF | `.pdf` | BabelDOC による段落抽出とレイアウトへの書き戻しを利用します。スキャン文書の結果は OCR の条件に依存します |
+| 旧形式の Office | `.doc`, `.ppt` など | Windows のみ対応し、ローカルに Microsoft Word が必要です |
+| その他の電子書籍 | `.mobi`, `.azw3`, `.fb2` など | Calibre のインストールと有効化が必要です。変換後に処理し、元の形式へ戻します |
 
 ---
 
-## 漫画処理の参考元
+## 注意事項
 
-MangaCore の自動漫画翻訳フローは、主に次のプロジェクトを参考にしています。
-
-- [hgmzhn / manga-translator-ui](https://github.com/hgmzhn/manga-translator-ui)
-
-手動修正と漫画エディタの設計は、主に次のプロジェクトを参考にしています。
-
-- [mayocream / Koharu](https://github.com/mayocream/koharu)
-
-今後関連モジュールを参照、統合、再利用する場合も、出典と謝辞を保持し、対応するオープンソースライセンスを遵守します。
+1. **動画翻訳の範囲**：オフライン動画処理は現在、音声トラック内の発話だけを対象とし、映像内に埋め込まれた文字は認識しません。また、長い動画の自動用語抽出は現在、文字起こし全体を一度にモデルへ送信します（予算に基づく分割は未実装です）。非常に長い動画では、用語集を手動で入力するか、長いコンテキストに対応するモデルを使ってください。
+2. **外部ツールへの依存**：漫画をレイヤー付き PSD として書き出すにはローカルに Photoshop が必要です。インストールされていない場合は JSX スクリプトのみ書き出せます。RAR/CBR の圧縮・展開には、対応する外部コマンドラインツールがシステム上に必要です。
+3. **リモートアクセスの安全性**：Web ダッシュボードは既定でローカルのループバックアドレスのみを監視します。内蔵のセッション検証は主にローカル API のクロスサイト悪用を防ぐためのもので、複数ユーザーのアカウント・権限管理機能ではありません。リモートから利用する場合は、信頼できるプライベートネットワーク内で使うか、リバースプロキシとアクセス認証を前段に設置してください。
 
 ---
 
-## 免責事項
+## 参考プロジェクトと謝辞
 
-- 本プロジェクトは AiNiee の非公式最適化ブランチです。
-- コア翻訳ロジックは原版と同じ方針を保っています。原版の利用規約も確認してください。
-- 本ツールは個人学習および合法的な用途のために提供されています。
+- [AiNiee](https://github.com/NEKOparapa/AiNiee)：本プロジェクトはその中核となる翻訳ロジックを基に開発しました。原作者 NEKOparapa と貢献者の皆様に感謝します。
+- [manga-translator-ui](https://github.com/hgmzhn/manga-translator-ui)（[Gitee ミラー](https://gitee.com/hgmzhn/manga-translator-ui)）：漫画の自動処理フロー、段階の分離、実行時アセットの構成を参考にしました。
+- [Koharu](https://github.com/mayocream/koharu)：漫画プロジェクト、レイヤー、テキストブロックの編集、手動での仕上げフローを参考にしました。
+
+出典の説明と謝辞は引き続き保持し、参照・再利用にあたっては各プロジェクトのオープンソースライセンスに従います。
+
+---
+
+## ライセンス
+
+本プロジェクトは GNU Affero General Public License v3.0 (AGPL-3.0) の下で公開されています。詳細はルートディレクトリの `LICENSE` ファイルを参照してください。
+
+---
+
+## AiNiee-Next の支援
+
+AiNiee-Next が役立った場合は、[愛発電（Afdian）](https://ifdian.net/a/Next_ZhiXie) または下の支援用 QR コードから、開発と保守の継続をご支援いただけます。支援者はプロジェクトの謝辞一覧に掲載します。一つひとつのご支援に感謝します。
+
+<div align="center">
+  <img src="Images/赞赏码.png" alt="支援用 QR コード" width="320">
+</div>
 
 ---
 

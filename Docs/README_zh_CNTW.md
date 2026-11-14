@@ -1,196 +1,203 @@
 # AiNiee-Next
 
-<div align="center">
-  <img src="https://img.shields.io/badge/Interface-CLI%20%2F%20TUI-0078D4?style=for-the-badge&logo=windows-terminal&logoColor=white" alt="CLI">
-  <img src="https://img.shields.io/badge/Runtime-uv-purple?style=for-the-badge&logo=python&logoColor=white" alt="uv">
-  <img src="https://img.shields.io/badge/Status-Stable-success?style=for-the-badge" alt="Status">
-</div>
+[简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
-<br/>
+AiNiee-Next 是一個基於大型語言模型的批次翻譯工具，支援小說、電子書、文件、字幕、遊戲文字、漫畫以及即時音視訊字幕的處理。
 
-[簡體中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
+程式核心執行於命令列與終端互動選單（CLI/TUI）中，同時提供網頁控制台、桌面端視窗，以及供外部 AI 用戶端呼叫的 MCP 和 Skills 介面，既可以拿來快速翻譯單本檔案，也適合長篇系列和批次任務的長期處理。
 
-**AiNiee-Next** 是以 [AiNiee](https://github.com/NEKOparapa/AiNiee) 核心翻譯邏輯為基礎開發的命令列版本。專案使用 **uv** 管理 Python 環境，並針對長時間執行、批次任務、伺服器部署與自動化使用做了許多改進。
-
-專案以 CLI/TUI 為主要操作介面，同時提供 Web 控制面板、任務佇列、外掛系統與 MCP 服務，適合個人翻譯、長篇內容處理及需要長時間執行的批次任務。
-
----
-
-## 主要特色
-
-- **穩定執行與錯誤復原**：過濾底層 I/O 輸出，減少多餘日誌對 TUI 的干擾，並支援例外攔截、自動重試與斷點續傳；可在 Windows、Linux、macOS、Android（Termux）及 Headless 伺服器環境執行。
-- **智慧診斷**：收集 traceback、執行環境、API 平台、模型與最近操作，搭配內建規則及可選的 LLM 分析判斷問題來源，並可整理成便於回報的 GitHub Issue。
-- **多格式翻譯**：支援 Epub、Docx、Txt、Srt、Ass、Vtt、Lrc、Json、Po、Paratranz 等 20 多種格式，也可搭配 Calibre 處理 `.mobi`、`.azw3`、`.kepub`、`.fb2` 等電子書。
-- **任務與設定管理**：支援執行中調整併發數、切換 API Key、開啟 Web 監看、查看任務狀態以及費用與完成時間預估，並提供多 Profile、設定熱重載和可調整順序的批次任務佇列；佇列執行時也能修改待處理任務，並會依序自動執行。
-- **外掛與快取**：可透過集中管理的外掛擴充功能，並提供 RAG 歷史譯文參考與翻譯檢查；Anthropic、Google、Amazon Bedrock 可快取系統提示詞與術語表，API 不相容時會自動停用並提示。
-- **模型與 API 支援**：相容主流線上 API、第三方 API 轉接服務及本機模型，會依介面類型提供相應的參數提示，支援 DeepSeek R1、Claude 3.5 等推理模型，也可設定多組 API 自動故障轉移及觸發門檻。
-- **高併發處理**：aiohttp 非同步模式可同時處理超過 100 個請求，區分不應重試的錯誤與暫時性錯誤、記錄 API 服務商相容性，並保護檔案描述元與連接埠等系統資源；併發數達到 15 時會提示啟用非同步模式。
-- **Web、MCP 與 MangaCore**：Web 控制面板可管理任務、設定、佇列與外掛；MCP 讓 LLM 客戶端透過受控工具操作專案；MangaCore 提供漫畫自動批次處理與 Web 編輯流程。
+[點此下載最新原始碼 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 下載預設分支目前最新提交的完整原始碼副本。下載後先解壓縮，Windows 使用者進入解壓縮後的專案目錄，依序執行 `Windows prepare.bat` 和 `Windows launch.bat`。
 
 ---
 
 ## 快速開始
 
-新使用者建議先閱讀：
+### 1. 安裝基礎環境
 
-- [圖文快速上手教程](README_QUICK_START.md)
-- [DeepSeek API Key 申請教程](DEEPSEEK_API_KEY.md)
-- [提示詞、術語表、潤色與軟體設定教程](TRANSLATION_WORKFLOW_GUIDE.md)
+專案依賴 Python 3.12 和 `uv` 套件管理器。儲存庫根目錄附有各平台的準備指令碼，首次使用直接執行對應指令碼即可自動設定好基礎環境：
 
-### 方式一：一鍵啟動
+- **Windows**：按兩下執行 `Windows prepare.bat`
+- **Linux**：在終端執行 `bash "Linux prepare.sh"`
+- **macOS**：按兩下執行 `Mac prepare.command`
 
-**1. 取得程式碼**
+如果你只需要翻譯文字、電子書、字幕或遊戲腳本，完成這一步就可以直接開始使用了。漫畫、即時口譯和影片翻譯需要額外的視覺或語音模型環境，用到時再按後面的第 5 步單獨安裝即可。
 
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-```
+### 2. 啟動與首次設定
 
-**2. 首次準備環境**
+基礎環境就緒後，執行對應平台的啟動指令碼開啟主程式：
 
-Windows：
+- **Windows**：按兩下執行 `Windows launch.bat`
+- **Linux**：執行 `bash "Linux launch.sh"`
+- **macOS**：按兩下執行 `Mac launch.command`
 
-```batch
-雙擊 Windows prepare.bat
-```
+也可以在專案根目錄直接用命令列啟動：`uv run ainiee_cli.py`。
 
-Linux / macOS：
+第一次啟動會進入引導精靈，按提示完成兩步設定即可：
 
-```bash
-chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
-```
+1. 選擇介面語言（支援簡中、繁中、英、日、韓、俄、西 7 種語言）。
+2. 選擇翻譯方式：
 
-**3. 啟動**
+   - **API 模式（最常用）**：在介面管理裡選擇平台（支援 OpenAI 相容介面、Anthropic、Google、DeepSeek 以及 Sakura / LocalLLM 等本機模型介面），填寫介面位址、API Key 和模型名稱，測試連線成功後儲存。
+   - **外部 Agent 模式**：如果你希望直接呼叫外部 AI 助手或程式開發用戶端的額度來翻譯，可按精靈開啟 MCP 或外部接入引導。
 
-Windows：
+### 3. 開始第一個文字或電子書任務
 
-```batch
-雙擊 Windows launch.bat
-```
+1. 在主選單中選擇輸入檔案或整個資料夾，設定來源語言、目標語言和輸出路徑。
+2. 如需使用術語表、角色設定或自訂提示詞，可在規則和提示詞選單中設定並啟用。執行參數和作品規則是分開儲存的，切換不同作品時不用重複修改介面設定。
+3. 確認設定後開始翻譯。執行過程中隨時可以暫停、調整並行數或切換備用 Key。
+4. 如果中途斷線或手動停止，下次選擇同一個專案並選擇還原快取即可接續處理，已經翻好的部分不會重複請求。
+5. 翻譯完成後，可以直接匯出成品，也可以先用內建的終端編輯器或校對功能檢查一遍再匯出。
 
-Linux / macOS：
+### 4. 啟動網頁控制台或桌面端
 
-```bash
-./"Linux launch.sh"
-```
+如果你更習慣用瀏覽器操作（尤其是查看統計圖表、分頁編輯快取，或使用漫畫編輯器），可以在終端主選單裡直接啟動 Web 控制台，或在命令列使用桌面端啟動指令碼：
 
-### 方式二：手動啟動
+- **Windows**：執行 `Tools\TauriShell\LaunchGUI.bat`
+- **Linux / macOS**：執行 `Tools/TauriShell/LaunchGUI.sh`
 
-安裝 uv：
+### 5. 使用漫畫、即時口譯與離線影片功能
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+這三個模組的推論依賴和模型體積較大，首次使用前需先執行對應的擴充準備指令碼：
 
-Windows PowerShell 可使用：
+- **漫畫翻譯**：
 
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
+  - 準備環境：Windows 執行 `Windows comic prepare.bat`，Linux/macOS 執行 `Unix comic prepare.sh`。
+  - 使用方式：在網頁控制台進入漫畫編輯器進行視覺化編輯和匯出，或透過命令列 `uv run ainiee_cli.py manga <輸入路徑>` 批次執行。
 
-取得程式碼並啟動：
+- **即時口譯與離線影片**：
 
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-uv run ainiee_cli.py
-```
+  - 準備環境：Windows 執行 `Windows media prepare.bat`，macOS 執行 `Mac media prepare.command`。如果是在 Linux/WSL 下使用獨立的 vLLM 語音辨識服務，另行執行 `Linux qwen vllm prepare.sh`。
+  - 使用方式：可透過主選單進入，或直接執行 `uv run ainiee_cli.py live`（即時字幕，macOS 也可按兩下 `Mac live launch.command`）與 `uv run ainiee_cli.py video`（離線影片）。
 
 ---
 
-## 命令列範例
+## 文件與 Wiki
 
-翻譯任務：
+| 主題 | 文件 |
+| :--- | :--- |
+| 入門 | [圖文快速上手](README_QUICK_START.md) · [DeepSeek API Key 申請](DEEPSEEK_API_KEY.md) |
+| 翻譯設定 | [提示詞、術語表、潤飾與軟體設定](TRANSLATION_WORKFLOW_GUIDE.md) |
+| 自動化 | [工作流程執行參數與繼承規則](WORKFLOW_RUNTIME_PARAMETERS.md) |
+| 即時口譯與影片 | [媒體功能與模型說明](../ModuleFolders/Media/README.md) · [macOS 即時口譯測試指南](MACOS_LIVE_TRANSLATION_TEST.md) |
+| MCP | [服務接入](../Tools/MCPServer/README.md) · [用戶端使用指南](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
+| Skills | [HTTP、CLI 與 Python 呼叫](../Tools/Skills/README.md) |
+| Agent | [Headless Agent 使用說明](../Tools/Agent/README.md) |
+| 桌面端 | [Tauri 啟動與建置](../Tools/TauriShell/README.md) |
+| 擴充開發 | [外掛編寫](../PluginScripts/README.md) · [Reader / Writer 編寫](../ModuleFolders/Domain/FileAccessor/README.md) |
+| 遊戲文字 | [StevExtraction 使用說明](../Tools/StevExtraction/使用说明.md) |
+| 更新 | [更新日誌](update_log.md) |
+| 其他語言 | [简体中文](../README.md) · [English](README_EN.md) · [日本語](README_JA.md) · [한국어](README_KO.md) · [Русский](README_RU.md) · [Español](README_ES.md) |
+
+---
+
+## 主要功能
+
+### 文字、電子書與遊戲在地化
+
+- **按需注入設定**：傳送請求時只比對目前片段裡真正用到的術語和禁翻詞，支援英文詞形變化和詞邊界判斷，減少無關資訊對模型的干擾。
+- **角色召回與分卷時間線**：根據前後幾行的名字、別名、敬稱、人稱和口頭禪自動帶出目前在場角色；多卷本小說可以按卷號記錄角色和設定變化，翻譯前幾卷時不會誤用後幾卷才出現的新譯名。
+- **多種一致性參考（可選）**：支援同專案重複長句的翻譯記憶參考、基於本機關鍵字比對的歷史譯文參考，以及基於工具呼叫的劇情摘要與人物記憶（開啟記憶模式後為了確保前後順序，會自動切換為單執行緒執行）。
+- **容錯與補譯**：自動保護程式碼區塊、佔位符號、換行和首尾空白；收到回覆後檢查行數、編號和外文殘留。一批裡如果只漏譯了少數幾行，會單獨補譯缺失行並放回原位，不用整批重翻。
+- **潤飾與校對審閱**：支援獨立潤飾流程、基於規則的符號／佔位符號檢查，以及 AI 校對建議。校對建議記錄了原文指紋，可以在終端或網頁端逐條接受、拒絕或復原，不會誤覆寫你手動改過的譯文。
+- **電子書整理工具**：支援異常 EPUB 保守讀取（含正文雜訊與日文注音過濾）、巢狀文字擷取與原書結構內回寫、編碼與宣告同步、譯後目錄及章節標題同步、橫直排切換、解除強制字型與字級、正文段落預設、局部連結修復、圖片壓縮與 WebP 轉換及引用同步、雙語 EPUB、語言與書名中繼資料整理、系列卷號辨識與統一命名、系列中繼資料寫入及批次自動合訂、TXT 自動分章轉 EPUB，以及日譯中引號規範化；支援利用翻譯快取調整匯出設定後重新匯出。另附有系列電子書批次整合指令碼（`Tools/Ebook/批量电子书整合.py`）和遊戲文字擷取工具（`Tools/StevExtraction`）。
+
+### 漫畫翻譯與網頁編輯器
+
+- 支援圖片、資料夾、ZIP/CBZ、RAR/CBR 和 PDF 匯入，串聯對話框與文字偵測、OCR、批次翻譯、底圖修補和自動排版渲染。
+- 內建品質攔截檢查，如果某頁出現模型異常降級、缺字或文字溢出，會標記為待人工複查並阻止直接作為成品匯出。
+- 網頁端提供完整的圖層編輯器，支援調整文字框位置與樣式、用筆刷重繪修補遮罩、單獨重跑某一頁的某個階段，以及復原／重做。支援匯出圖片、PDF、CBZ、ZIP、EPUB，以及帶圖層的 PSD 檔案（或 JSX 指令碼）。
+
+### 即時口譯與離線影片
+
+- **即時口譯**：擷取系統聲音或指定應用程式處理序樹音訊（Windows 支援只擷取指定軟體或遊戲處理序，不混入其他軟體聲音；macOS 透過原生 Helper 擷取），經過語音分段和本機模型辨識翻譯後，以浮動字幕視窗顯示。附帶實況主術語表和獨立的私密雙向文字互譯視窗。
+- **離線影片**：自動擷取音訊並降噪、語音辨識並整理字幕時間軸，支援本機模型與雲端 API 組合使用，最終透過 FFmpeg 封裝 MKV 軟字幕或壓製 MP4 硬字幕。
+
+### 自動化與外部接入
+
+- **佇列、排程與目錄監看**：支援任務佇列（執行中仍可修改尚未開始的排隊項目）、Cron 排程任務，以及資料夾自動監看（偵測到新檔案寫入穩定後自動加入佇列，支援辨識系列卷號順序）。
+- **MCP / Skills / Docker**：支援啟動 MCP Server（stdio / streamable-http / SSE）與 Skills HTTP/CLI 服務，可將翻譯推論交給外部 AI 用戶端，由 AiNiee 統一處理檔案讀取、驗證和原子性回寫。容器部署可參考 `Tools/Docker/Dockerfile`。
+
+---
+
+## 命令列常用操作
+
+除了互動式選單，所有核心任務也可以直接透過命令列執行，方便寫進指令碼或配合自動化使用：
 
 ```bash
-uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese -t Chinese --resume --yes
-```
+# 翻譯檔案或目錄，指定輸出目錄、語言並自動接續處理
+uv run ainiee_cli.py translate INPUT_PATH -o OUTPUT_PATH -s Japanese -t Chinese --resume --yes
 
-佇列任務：
+# 僅潤飾／翻譯＋潤飾一體／僅從快取匯出成品（不呼叫模型）
+uv run ainiee_cli.py polish INPUT_PATH --yes
+uv run ainiee_cli.py all_in_one INPUT_PATH --yes
+uv run ainiee_cli.py export INPUT_PATH --yes
 
-```bash
-uv run ainiee_cli.py queue --queue-file my_queue.json --yes
-```
+# 漫畫批次處理（先檢查本機模型和裝置狀態）
+uv run ainiee_cli.py manga INPUT_PATH --manga-runtime-check
+uv run ainiee_cli.py manga INPUT_PATH --yes
 
-MCP 服務：
+# 直接進入即時口譯或離線影片翻譯
+uv run ainiee_cli.py live
+uv run ainiee_cli.py video
 
-```bash
+# 啟動 MCP Server 或 Skills 服務
 uv run ainiee_cli.py mcp --mcp-transport stdio
+uv run ainiee_cli.py --skills
+python Tools/Skills/cli.py list
 ```
 
-常用參數：
-
-- `translate` / `polish` / `export` / `queue` / `mcp`：任務類型
-- `-o, --output`：輸出路徑
-- `-p, --profile`：設定檔名稱
-- `-s, --source`：來源語言
-- `-t, --target`：目標語言
-- `--type`：專案類型，例如 Txt、Epub、MTool、RenPy
-- `--resume`：自動恢復快取任務
-- `--yes`：非互動模式
-- `--threads`：併發執行緒數
-- `--platform`：API 平台
-- `--model`：模型名稱
-- `--api-url`：API 位址
-- `--api-key`：API 金鑰
-- `--mcp-transport`：MCP 傳輸模式，可選 `stdio` / `streamable-http` / `sse`
+查看全部命令列參數可執行 `uv run ainiee_cli.py --help`。
 
 ---
 
-## Web 控制面板
+## 支援的檔案格式
 
-啟動方式：
-
-1. 執行 `uv run ainiee_cli.py` 進入主選單
-2. 選擇 **15. Start Web Server**
-3. 程式會啟動服務，預設連接埠為 `8000`，並自動開啟瀏覽器
-
-Web 控制面板可用於查看任務進度、管理 Profile、編輯術語表、管理佇列、控制外掛，以及操作部分 MangaCore 功能。
-
----
-
-## MCP 服務
-
-AiNiee-Next 提供可選 MCP 服務，讓支援 MCP 的 LLM 客戶端透過受控工具操作專案能力。
-
-啟動範例：
-
-```bash
-uv run ainiee_cli.py mcp --mcp-transport streamable-http
-```
-
-連線位址：
-
-```text
-本機位址: http://127.0.0.1:8765/mcp
-區域網路位址: http://<你的區域網路 IP>:8765/mcp
-```
-
-完整說明請參考：
-
-- [MCP 客戶端指南](../Tools/MCPServer/MCP_CLIENT_GUIDE.md)
+| 類別 | 格式 | 說明 |
+| :--- | :--- | :--- |
+| 純文字 | `.txt`, `.md` | 逐行擷取與回寫，Markdown 會自動跳過純圖片行和參照定義 |
+| 電子書 | `.epub` | 解析內部結構與目錄並回寫 |
+| 辦公文件 | `.docx`, `.pptx` | 擷取文字節點或文字框段落回寫；PPTX 不辨識圖片內文字，部分段內混合樣式會被簡化 |
+| 試算表 | `.csv`, `.xlsx` | CSV 直接讀寫；XLSX 是拆成 CSV 翻完再組合回去的，複雜公式和樣式無法保留，適合純文字表格 |
+| 字幕與歌詞 | `.srt`, `.vtt`, `.ass`, `.lrc` | 保留時間軸和樣式標記，只替換正文內容 |
+| 在地化專案 | `.po`, `.json` | PO 目前處理單數項目；JSON 自動辨識 i18next、Paratranz、MTool 等結構 |
+| 遊戲專案 | Ren'Py, Translator++, VNText | 專用格式擷取與回寫 |
+| PDF | `.pdf` | 依賴 BabelDOC 擷取段落與回填排版，掃描文件的效果取決於 OCR 條件 |
+| 舊版 Office | `.doc`, `.ppt` 等 | 僅支援 Windows，需要本機安裝 Microsoft Word |
+| 其他電子書 | `.mobi`, `.azw3`, `.fb2` 等 | 需啟用並安裝 Calibre，轉換後再處理和轉回 |
 
 ---
 
-## 漫畫處理參考
+## 注意事項
 
-MangaCore 的自動漫畫翻譯流程主要參考：
-
-- [hgmzhn / manga-translator-ui](https://github.com/hgmzhn/manga-translator-ui)
-
-人工精修與漫畫編輯器思路主要參考：
-
-- [mayocream / Koharu](https://github.com/mayocream/koharu)
-
-後續若接入或復用相關核心模組，專案會持續保留來源說明與致謝資訊，並遵守對應開源協議。
+1. **影片翻譯範圍**：離線影片流程目前只處理音軌語音，不辨識影片畫面裡的內嵌文字；另外長影片的自動術語擷取目前會把整段轉錄一次傳給模型（尚未實作按預算分段），影片很長時建議手動填寫詞表或使用長上下文模型。
+2. **外部工具依賴**：漫畫匯出分層 PSD 需要本機安裝 Photoshop（否則只能匯出 JSX 指令碼）；壓縮與解壓縮 RAR/CBR 格式需要系統環境中存在對應的外部命令列工具。
+3. **遠端存取安全**：Web 控制台預設只監聽本機回送位址，內建的工作階段驗證主要用於防止本機介面被跨網站濫用，並非多使用者帳號權限系統。如需遠端存取，請務必在受信任內網使用，或在前端設定反向代理和存取驗證。
 
 ---
 
-## 免責聲明
+## 專案參考與鳴謝
 
-- 本專案是 AiNiee 的非官方最佳化分支，重點在執行體驗與工程穩定性。
-- 核心翻譯邏輯與原版保持一致，請遵守原版使用協議。
-- 本工具僅供個人學習與合法用途使用。
+- [AiNiee](https://github.com/NEKOparapa/AiNiee)：本專案基於其核心翻譯邏輯開發，感謝原作者 NEKOparapa 及貢獻者。
+- [manga-translator-ui](https://github.com/hgmzhn/manga-translator-ui)（[Gitee 備份](https://gitee.com/hgmzhn/manga-translator-ui)）：漫畫自動處理流程、階段拆分與執行時資產組織參考。
+- [Koharu](https://github.com/mayocream/koharu)：漫畫專案、圖層、文字區塊編輯和人工精修流程參考。
+
+相關來源說明與鳴謝會持續保留，引用與重用遵循各專案的開源授權條款。
+
+---
+
+## 開源授權
+
+本專案基於 GNU Affero General Public License v3.0 (AGPL-3.0) 開源，詳情請參閱根目錄下的 `LICENSE` 檔案。
+
+---
+
+## 支持 AiNiee-Next
+
+如果 AiNiee-Next 對你有幫助，歡迎透過[愛發電](https://ifdian.net/a/Next_ZhiXie)或下方贊助碼支持持續開發與維護。支持者會加入專案鳴謝名單，感謝每一份支持。
+
+<div align="center">
+  <img src="Images/赞赏码.png" alt="贊助碼" width="320">
+</div>
 
 ---
 

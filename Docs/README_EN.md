@@ -1,408 +1,203 @@
 # AiNiee-Next
 
-<div align="center">
-  <img src="https://img.shields.io/badge/Interface-CLI%20%2F%20TUI-0078D4?style=for-the-badge&logo=windows-terminal&logoColor=white" alt="CLI">
-  <img src="https://img.shields.io/badge/Runtime-uv-purple?style=for-the-badge&logo=python&logoColor=white" alt="uv">
-  <img src="https://img.shields.io/badge/Status-Stable-success?style=for-the-badge" alt="Status">
-</div>
-
-<br/>
-
 [简体中文](../README.md) | [English](README_EN.md) | [繁體中文](README_zh_CNTW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Русский](README_RU.md) | [Español](README_ES.md)
 
-**AiNiee-Next** is a command-line edition built on the core translation logic of [AiNiee](https://github.com/NEKOparapa/AiNiee). It uses **uv** to manage the Python environment and includes extensive improvements for long-running jobs, batch processing, server deployments, and automation.
+AiNiee-Next is a large language model–based batch translation tool for novels, ebooks, documents, subtitles, game text, manga, and real-time audio and video subtitles.
 
-CLI/TUI is the primary interface, with a Web dashboard, task queues, plugins, and an MCP server also available. The project is suitable for personal translation, long-form content, and unattended batch jobs.
+Its core runs through the command line and interactive terminal menus (CLI/TUI). It also provides a web dashboard, a desktop window, and MCP and Skills interfaces for external AI clients. It works for quickly translating a single file as well as ongoing work on long series and batch tasks.
 
-[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Get a complete source snapshot of the default branch's latest commit. Extract the archive first. On Windows, open the extracted project folder and run `Windows prepare.bat`, then `Windows launch.bat`.
-
-<a id="agent-mode"></a>
-
-## Recommended for Beginners: External Agent Mode
-
-If you are a complete beginner or want to start translating with less setup, choose **Smart assistant (Agent)**. You can use WorkBuddy, Qwen Office, Doubao Desktop, or another standard Agent client or framework that supports MCP to process files through AiNiee, without first completing the traditional API setup wizard.
-
-You can translate using a third-party Agent platform's **free** quota where available. Availability, quota size, and eligible models depend on the platform's current rules and your account.
-
-1. Prepare the environment and launch AiNiee-Next using [Quick Start](#quick-start) below.
-2. On the first run, choose your interface language, then **1. Smart assistant (Agent)**.
-3. A temporary text file will open. Copy its **entire prompt** into WorkBuddy, Qwen Office, Doubao Desktop, or another MCP-capable Agent and let it follow the connection instructions.
-4. Once the Agent can call AiNiee MCP tools, provide your file or its full path and specify the target language.
-
-<p align="center">
-  <img src="Images/Agent/1.png" alt="First-run Agent selection screen, shown in Chinese" width="92%">
-  <br>
-  <sub>Select option 1, then copy the entire prompt from the temporary text file into your external Agent.</sub>
-</p>
-
-**Enable SubAgent mode if your client supports it**, so the main Agent can coordinate translation work with subagents. After connecting, you can say:
-
-```text
-Enable SubAgent mode to translate this book, xxxx.epub, into Simplified Chinese. Use AiNiee-Next MCP to process the file.
-```
-
-Replace `xxxx.epub` with your uploaded file or its full path. SubAgent support depends on the third-party client; the main Agent can still translate through MCP when subagents are unavailable.
-
-To configure models, API keys, and translation parameters yourself, read the [Traditional API Quick Start Guide](README_QUICK_START_EN.md).
-
----
-
-## Diagnostics and Issue Reporting
-
-When a task fails, the program collects the stack trace, runtime environment, API provider, model, and recent operations. Built-in rules and optional LLM analysis then help determine whether the problem comes from the API, network, configuration, runtime environment, or project code. Suspected code issues can also be organized into a GitHub Issue with the error description, environment details, key traceback, and initial analysis.
-
----
-
-## Performance Showcase
-
-**Built for ultimate performance and stability.**
-
-The screenshot below demonstrates a ~20,000 line file being translated in approximately 4 minutes with 50 concurrent threads:
-
-<div align="center">
-  <img src="Images/50并发deepseek测试.png" alt="50 Concurrency Performance Test" width="90%">
-  <br>
-  <em>50 Threads + DeepSeek API | 20k Lines | ~4 min | 99.6% Success Rate | 397k TPM</em>
-</div>
-
----
-
-## Key Features
-
-- **Reliable execution and recovery**: Cleans up low-level I/O output to keep dependency logs from disrupting the TUI, with exception handling, automatic retries, and checkpoint resume for long-running jobs.
-- **Cross-platform support**: Runs on Windows, Linux, macOS, and Android (Termux), including headless server environments.
-- **Broad format support**: Handles more than 20 formats, including Epub, Docx, Txt, Srt, Ass, Vtt, Lrc, Json, Po, and Paratranz. Calibre integration also supports ebooks such as `.mobi`, `.azw3`, `.kepub`, and `.fb2`.
-- **Task and configuration management**: Adjust concurrency and rotate API keys during a run, open Web monitoring, and review task status, cost, and completion-time estimates. Multiple profiles, hot-reloaded settings, and reorderable batch queues are supported; pending tasks can be edited while the queue runs and are executed automatically in order.
-- **Plugins and translation assistance**: Extend the program through centrally managed plugins, use previous translations through RAG, and check for missing translations, translation errors, and formatting problems.
-- **Context caching**: Supports context caching for Anthropic, Google, and Amazon Bedrock, including system prompts and glossaries. The feature is disabled with a notice when the current API is incompatible.
-- **Model and API support**: Works with major online APIs, third-party gateways, and local models, with relevant parameter guidance for each interface type. Reasoning models such as DeepSeek R1 and Claude 3.5 are supported, along with multiple API endpoints, automatic failover, and configurable failover thresholds.
-- **High-concurrency processing**: The aiohttp-based async mode supports more than 100 concurrent requests, distinguishes permanent errors from temporary failures, records provider compatibility, and protects system resources such as file descriptors and ports. At 15 or more concurrent requests, the program suggests enabling async mode.
-- **Web, MCP, and MangaCore**: The Web dashboard provides visual task management, MCP offers controlled access for LLM clients, and MangaCore supports automatic manga batch processing and Web-based editing.
+[Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Download a complete source snapshot of the default branch's latest commit. Extract it first; Windows users should open the extracted project folder and run `Windows prepare.bat`, followed by `Windows launch.bat`.
 
 ---
 
 ## Quick Start
 
-> Complete beginners and users who want less setup should start with [External Agent Mode](#agent-mode). For traditional API mode, read the [Quick Start Guide](README_QUICK_START_EN.md) and [DeepSeek API Key Guide](DEEPSEEK_API_KEY_EN.md). For translation quality, prompts, glossary, polishing, WebUI, and MCP guidance, read the [Advanced Settings Guide](TRANSLATION_WORKFLOW_GUIDE_EN.md).
+### 1. Set Up the Base Environment
 
-### Method 1: One-Click Launch (Recommended)
+The project requires Python 3.12 and the `uv` package manager. The repository root includes setup scripts for each platform. On first use, run the appropriate script to configure the base environment automatically:
 
-**1. Get the Code**
+- **Windows**: Double-click `Windows prepare.bat`.
+- **Linux**: Run `bash "Linux prepare.sh"` in a terminal.
+- **macOS**: Double-click `Mac prepare.command`.
 
-Beginners can [download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip), extract it, and open the project folder containing `Windows prepare.bat` and `Windows launch.bat`. Then continue to step 2.
+If you only need to translate text, ebooks, subtitles, or game scripts, you can start using the program after this step. Manga, live translation, and video translation require additional vision or speech model environments; install those separately using step 5 when needed.
 
-If you are familiar with Git, you can clone the project for easier updates:
+### 2. Launch and Initial Configuration
 
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-```
+Once the base environment is ready, open the program using the launch script for your platform:
 
-**2. Environment Setup (First Run)**
+- **Windows**: Double-click `Windows launch.bat`.
+- **Linux**: Run `bash "Linux launch.sh"`.
+- **macOS**: Double-click `Mac launch.command`.
 
-Windows:
-```batch
-Double-click Windows prepare.bat
-```
+You can also launch it from the command line in the project root: `uv run ainiee_cli.py`.
 
-Linux / macOS:
-```bash
-chmod +x "Linux prepare.sh" && ./"Linux prepare.sh"
-```
+On the first launch, the setup wizard guides you through two steps:
 
-**3. Launch Application**
+1. Select the interface language (seven languages are supported: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Russian, and Spanish).
+2. Select a translation method:
 
-Windows:
-```batch
-Double-click Windows launch.bat
-```
+   - **API Mode (most common)**: Select a provider in API management (OpenAI-compatible APIs, Anthropic, Google, DeepSeek, and local model interfaces such as Sakura / LocalLLM are supported). Enter the API URL, API key, and model name, test the connection, and save.
+   - **External Agent Mode**: To translate using the quota of an external AI assistant or coding client, follow the wizard to enable MCP or the external integration guide.
 
-Linux:
-```bash
-bash "Linux launch.sh"
-```
+### 3. Start Your First Text or Ebook Task
 
-macOS: double-click `Mac launch.command`; run `Mac prepare.command` first on a fresh setup.
+1. Select an input file or an entire folder in the main menu, then set the source language, target language, and output path.
+2. If you need a glossary, character settings, or custom prompts, configure and enable them in the rules and prompts menus. Runtime parameters and work-specific rules are saved separately, so switching works does not require reconfiguring your API settings.
+3. Confirm the configuration and start translating. You can pause, adjust concurrency, or switch to a backup key at any time during the task.
+4. If the connection drops or you stop the task manually, select the same project next time and restore its cache to resume. Already translated content will not be requested again.
+5. When translation finishes, export the result directly or review it first using the built-in terminal editor or proofreading tools.
 
----
+### 4. Open the Web Dashboard or Desktop App
 
-### Method 2: Manual Configuration
+If you prefer working in a browser—especially for viewing statistics, editing paginated cache entries, or using the manga editor—you can start the web dashboard from the terminal main menu, or use the desktop launch scripts from the command line:
 
-**1. Install uv**
+- **Windows**: Run `Tools\TauriShell\LaunchGUI.bat`.
+- **Linux / macOS**: Run `Tools/TauriShell/LaunchGUI.sh`.
 
-Windows (PowerShell):
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
+### 5. Use Manga, Live Translation, and Offline Video Features
 
-Linux / macOS:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+These three modules have larger inference dependencies and models. Before first use, run the corresponding extension setup script:
 
-Android (Termux):
-```bash
-pkg update && pkg upgrade
-pkg install python
-pip install uv
-```
+- **Manga Translation**:
 
-**2. Get the Code and Launch**
-```bash
-git clone https://github.com/ShadowLoveElysia/AiNiee-Next.git
-cd AiNiee-Next
-uv run ainiee_cli.py
-```
+  - Environment setup: On Windows, run `Windows comic prepare.bat`; on Linux/macOS, run `Unix comic prepare.sh`.
+  - Usage: Open the manga editor in the web dashboard for visual editing and export, or process batches with `uv run ainiee_cli.py manga <INPUT_PATH>`.
+
+- **Live Translation and Offline Video**:
+
+  - Environment setup: On Windows, run `Windows media prepare.bat`; on macOS, run `Mac media prepare.command`. For a standalone vLLM speech recognition service on Linux/WSL, also run `Linux qwen vllm prepare.sh`.
+  - Usage: Enter through the main menu, or run `uv run ainiee_cli.py live` (live subtitles; on macOS, you can also double-click `Mac live launch.command`) and `uv run ainiee_cli.py video` (offline video).
 
 ---
 
-## File locations
+## Documentation and Wiki
 
-Platform launch and preparation scripts stay directly in the project root:
+| Topic | Documentation |
+| :--- | :--- |
+| Getting started | [Illustrated Quick Start](README_QUICK_START_EN.md) · [Getting a DeepSeek API Key](DEEPSEEK_API_KEY_EN.md) |
+| Translation settings | [Prompts, Glossaries, Polishing, and Application Settings](TRANSLATION_WORKFLOW_GUIDE_EN.md) |
+| Automation | [Workflow Runtime Parameters and Inheritance Rules](WORKFLOW_RUNTIME_PARAMETERS.md) |
+| Live translation and video | [Media Features and Models](../ModuleFolders/Media/README.md) · [macOS Live Translation Testing Guide](MACOS_LIVE_TRANSLATION_TEST.md) |
+| MCP | [Service Integration](../Tools/MCPServer/README.md) · [Client Guide](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
+| Skills | [HTTP, CLI, and Python Calls](../Tools/Skills/README.md) |
+| Agent | [Headless Agent Guide](../Tools/Agent/README.md) |
+| Desktop | [Tauri Launch and Build](../Tools/TauriShell/README.md) |
+| Extension development | [Writing Plugins](../PluginScripts/README.md) · [Writing Readers / Writers](../ModuleFolders/Domain/FileAccessor/README.md) |
+| Game text | [StevExtraction Guide](../Tools/StevExtraction/使用说明.md) |
+| Updates | [Changelog](update_log.md) |
+| Other languages | [简体中文](../README.md) · [繁體中文](README_zh_CNTW.md) · [日本語](README_JA.md) · [한국어](README_KO.md) · [Русский](README_RU.md) · [Español](README_ES.md) |
 
-| Platform / purpose | Preparation | Launch |
-|---|---|---|
-| Windows | `Windows prepare.bat` | `Windows launch.bat` |
-| macOS | `Mac prepare.command` | `Mac launch.command` |
-| Linux | `Linux prepare.sh` | `Linux launch.sh` |
-| Linux / WSL Qwen vLLM | `Linux qwen vllm prepare.sh` | `Linux qwen vllm launch.sh` |
+---
 
-Manga and media preparation scripts also stay in the root. GUI launchers are archived under `Tools/TauriShell/` for future changes. Screenshots live in `Docs/Images/`, converters in `Tools/Ebook/` and `Tools/Converters/`, the game text extraction tool in `Tools/StevExtraction/`, diagnostic scripts in `Tools/Diagnostics/`, and the pip dependency list in `Tools/Bootstrap/requirements.txt`.
+## Main Features
 
-Quote script names containing spaces, for example `bash "Linux launch.sh"`.
-The Python entry point, project metadata, `README.md`, license, Agent rules, and repository configuration stay in the root. Build Docker from the project root with `docker build -f Tools/Docker/Dockerfile .`.
+### Text, Ebooks, and Game Localization
 
-## Command-Line Arguments
+- **On-demand context injection**: Only glossary entries and do-not-translate terms that match the current passage are included in requests. English inflections and word boundaries are supported, reducing interference from irrelevant information.
+- **Character recall and volume timelines**: Names, aliases, honorifics, personal pronouns, and speech habits in nearby lines are used to recall the characters currently present. For multi-volume novels, character and setting changes can be recorded by volume, preventing later names or translations from being applied to earlier volumes.
+- **Multiple consistency references (optional)**: Supports translation memory for repeated long sentences within a project, historical translations retrieved through local keyword matching, and plot summaries and character memories accessed through tool calls. Enabling memory mode automatically switches processing to a single thread to preserve order.
+- **Error recovery and missing-line translation**: Automatically protects code blocks, placeholders, line breaks, and leading/trailing whitespace, then checks response line counts, IDs, and remaining foreign-language text. If only a few lines are missing from a batch, those lines are translated separately and put back in place without retranslating the whole batch.
+- **Polishing and proofreading review**: Supports a standalone polishing workflow, rule-based punctuation/placeholder checks, and AI proofreading suggestions. Suggestions record fingerprints of the original text and can be accepted, rejected, or undone individually in the terminal or web dashboard, protecting translations you have edited manually from being overwritten.
+- **Ebook utilities**: Supports conservative reading of irregular EPUBs (including filtering text noise and Japanese ruby annotations), nested text extraction and writing translations back into the original book structure, synchronization of encodings and declarations, translated table-of-contents and chapter-title synchronization, horizontal/vertical layout switching, removal of forced fonts and font sizes, body paragraph presets, local link repair, image compression and WebP conversion with reference updates, bilingual EPUBs, language and book-title metadata management, series volume recognition and consistent naming, series metadata and automatic batch compilation, automatic TXT chapter detection and EPUB conversion, and Japanese-to-Chinese quotation mark normalization. Export settings can be adjusted and the book re-exported from the translation cache. Also included are a batch ebook series compilation script (`Tools/Ebook/批量电子书整合.py`) and game text extraction tools (`Tools/StevExtraction`).
 
-Supports launching tasks directly via command-line arguments for script integration and automation.
+### Manga Translation and Web Editor
 
-**Translation Task Example:**
+- Imports images, folders, ZIP/CBZ, RAR/CBR, and PDF files, combining speech bubble and text detection, OCR, batch translation, background inpainting, and automatic typesetting and rendering.
+- Built-in quality gates mark pages for manual review if a model unexpectedly falls back to a degraded mode, characters are missing, or text overflows, and prevent those pages from being exported directly as finished output.
+- The web interface provides a full layer editor for adjusting text box positions and styles, repainting inpainting masks with a brush, rerunning an individual stage on a single page, and undo/redo. Export formats include images, PDF, CBZ, ZIP, EPUB, and layered PSD files (or JSX scripts).
+
+### Live Translation and Offline Video
+
+- **Live translation**: Captures system audio or audio from a selected application's process tree (Windows can capture only the chosen application or game without audio from other programs; macOS uses a native helper). After speech segmentation and local model recognition and translation, subtitles appear in a floating window. Includes a streamer glossary and a separate private two-way text translation window.
+- **Offline video**: Automatically extracts and denoises audio, recognizes speech, and organizes subtitle timing. Local models and cloud APIs can be combined, with FFmpeg producing MKV files with soft subtitles or MP4 files with burned-in subtitles.
+
+### Automation and External Integration
+
+- **Queues, scheduling, and folder watching**: Supports task queues (pending tasks can still be edited while the queue is running), Cron schedules, and automatic folder watching. New files are queued once writes have stabilized, with series volume ordering supported.
+- **MCP / Skills / Docker**: Supports an MCP Server (stdio / streamable-http / SSE) and Skills HTTP/CLI services. Translation inference can be delegated to external AI clients while AiNiee handles file reading, validation, and atomic write-back. For container deployment, see `Tools/Docker/Dockerfile`.
+
+---
+
+## Common Command-Line Operations
+
+In addition to the interactive menus, all core tasks can be run directly from the command line for scripting and automation:
+
 ```bash
-uv run ainiee_cli.py translate input.txt -o output_dir -p MyProfile -s Japanese -t Chinese --resume --yes
-```
+# Translate a file or folder, specify output and languages, and resume automatically
+uv run ainiee_cli.py translate INPUT_PATH -o OUTPUT_PATH -s Japanese -t Chinese --resume --yes
 
-**Queue Task Example:**
-```bash
-uv run ainiee_cli.py queue --queue-file my_queue.json --yes
-```
+# Polish only / translate and polish / export only from cache (no model calls)
+uv run ainiee_cli.py polish INPUT_PATH --yes
+uv run ainiee_cli.py all_in_one INPUT_PATH --yes
+uv run ainiee_cli.py export INPUT_PATH --yes
 
-**MCP Server Example:**
-```bash
+# Batch manga processing (check local models and device status first)
+uv run ainiee_cli.py manga INPUT_PATH --manga-runtime-check
+uv run ainiee_cli.py manga INPUT_PATH --yes
+
+# Open live translation or offline video translation directly
+uv run ainiee_cli.py live
+uv run ainiee_cli.py video
+
+# Start an MCP Server or Skills service
 uv run ainiee_cli.py mcp --mcp-transport stdio
+uv run ainiee_cli.py --skills
+python Tools/Skills/cli.py list
 ```
 
-**Main Arguments:**
-- `translate` / `polish` / `export` / `queue` / `mcp`: Task type
-- `-o, --output`: Output path
-- `-p, --profile`: Configuration profile name
-- `-s, --source`: Source language
-- `-t, --target`: Target language
-- `--type`: Project type (Txt, Epub, MTool, RenPy etc.)
-- `--resume`: Auto-resume cached tasks
-- `--yes`: Non-interactive mode
-- `--threads`: Concurrent thread count
-- `--platform`: Target platform
-- `--model`: Model name
-- `--api-url`: API URL
-- `--api-key`: API Key
-- `--mcp-transport`: MCP transport mode, supports `stdio` / `streamable-http` / `sse`
+Run `uv run ainiee_cli.py --help` to view all command-line options.
 
 ---
 
-## Web Dashboard
+## Supported File Formats
 
-This project includes a React-based Web Dashboard, now in stable release.
-
-**How to Start:**
-1. Run `uv run ainiee_cli.py` to enter the main menu
-2. Select **15. Start Web Server**
-3. The program will start the service (default port 8000) and open your browser
-
-**Features:**
-- Visual Dashboard: Real-time RPM, TPM, and task progress charts
-- Network Access: Remote monitoring via LAN IP
-- Profile Management: Create and switch profiles from web UI
-- Queue Management: Drag-and-drop task reordering
-- Plugin Center: Enable/disable RAG and other features
-
-> **Development Note**: The Web Dashboard is now stable, but has fewer features compared to TUI mode. This project focuses on CLI/TUI interaction as the core development direction. Web features will be gradually updated in future releases.
+| Category | Formats | Notes |
+| :--- | :--- | :--- |
+| Plain text | `.txt`, `.md` | Extracts and writes back line by line; Markdown automatically skips image-only lines and reference definitions |
+| Ebooks | `.epub` | Parses internal structure and navigation, then writes translations back |
+| Office documents | `.docx`, `.pptx` | Extracts and writes back text nodes or text-box paragraphs; PPTX does not recognize text inside images, and some mixed formatting within paragraphs is simplified |
+| Spreadsheets | `.csv`, `.xlsx` | CSV is read and written directly; XLSX is split into CSV files for translation and then reassembled. Complex formulas and formatting are not preserved; use it for simple text tables |
+| Subtitles and lyrics | `.srt`, `.vtt`, `.ass`, `.lrc` | Preserves timing and style tags, replacing only the text |
+| Localization projects | `.po`, `.json` | PO currently handles singular entries; JSON automatically recognizes structures such as i18next, Paratranz, and MTool |
+| Game projects | Ren'Py, Translator++, VNText | Format-specific extraction and write-back |
+| PDF | `.pdf` | Uses BabelDOC for paragraph extraction and layout write-back; results for scanned documents depend on OCR conditions |
+| Legacy Office | `.doc`, `.ppt`, etc. | Windows only; requires Microsoft Word installed locally |
+| Other ebooks | `.mobi`, `.azw3`, `.fb2`, etc. | Requires Calibre to be installed and enabled; files are converted for processing and converted back afterward |
 
 ---
 
-## MCP Server
+## Notes
 
-This project provides an optional MCP server module that reuses the existing WebServer backend and aims to cover the full Web API surface, so MCP clients can get an experience close to the Web dashboard.
-Any LLM client that supports MCP over `stdio` or `streamable-http` can connect to this project directly, without reading repository files or manually assembling Web API calls.
-
-**Startup Options:**
-1. Direct CLI: `uv run ainiee_cli.py mcp --mcp-transport stdio`
-2. Main menu: open the main menu and select **16. Start MCP Server**
-
-**Notes:**
-- The MCP server is optional and does not affect the main process when missing
-- Required components and Python dependencies are checked on every MCP startup
-- If dependencies are missing, the program shows complete install commands for the current system
-- Menu startup uses background `streamable-http` mode and returns to the menu after 3 seconds
-- If you change `mcp_server_port`, update the MCP route in your client as well
-
-**Direct LLM client integration:**
-1. MCP clients that support `stdio` can launch AiNiee CLI as a local MCP server.
-If your client uses a `command + args` configuration format, this generic template can be used as a reference:
-
-```json
-{
-  "mcpServers": {
-    "ainiee-cli": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "H:\\小说\\AiNiee-CLI",
-        "--isolated",
-        "--no-project",
-        "--quiet",
-        "--with",
-        "mcp",
-        "--with",
-        "fastapi",
-        "--with",
-        "uvicorn[standard]",
-        "--with",
-        "requests",
-        "python",
-        "Tools/MCPServer/server.py",
-        "--transport",
-        "stdio"
-      ]
-    }
-  }
-}
-```
-
-Different clients may use slightly different field names, but the core idea is the same: `command=uv` plus the `args` shown above.
-Replace the path with your own project directory. On Linux / macOS, replace `H:\\小说\\AiNiee-CLI` with `/path/to/AiNiee-CLI`.
-
-2. If your client only accepts a raw command, use:
-
-```bash
-uv run --directory /path/to/AiNiee-CLI --isolated --no-project --quiet --with mcp --with fastapi --with uvicorn[standard] --with requests python Tools/MCPServer/server.py --transport stdio
-```
-
-3. Codex over `stdio`, preferably via the bundled launcher:
-
-```bash
-codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_launcher.sh
-```
-
-If this is the first startup and dependencies are not cached yet, add a larger timeout in `~/.codex/config.toml`, for example:
-
-```toml
-[mcp_servers.ainiee-cli]
-startup_timeout_sec = 90
-```
-
-4. MCP clients that support `streamable-http` can connect directly to the MCP HTTP route exposed by AiNiee CLI.
-Start it first with:
-
-```bash
-uv run ainiee_cli.py mcp --mcp-transport streamable-http
-```
-
-or from the main menu with **16. Start MCP Server**.
-
-If the client uses a URL-style configuration, this is a valid reference:
-
-```json
-{
-  "mcpServers": {
-    "ainiee-cli": {
-      "transport": "streamable-http",
-      "url": "http://127.0.0.1:8765/mcp"
-    }
-  }
-}
-```
-
-Endpoints:
-
-```text
-Local endpoint: http://127.0.0.1:8765/mcp
-LAN endpoint: http://<your-lan-ip>:8765/mcp
-```
-
-5. If MCP startup reports missing dependencies, run this from the project root:
-
-```bash
-set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp" "fastapi" "uvicorn[standard]" "requests"
-```
-
-On Linux / macOS, use:
-
-```bash
-UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi' 'uvicorn[standard]' 'requests'
-```
-
-If you change `mcp_server_port`, replace `8765` in the route above with the new port.
-If the project `.venv` was created under another OS first, for example in WSL and then reused from Windows, recreate `.venv` before running `uv add` to avoid `lib64` / symlink related errors.
-
-**Recommended first MCP calls for LLM clients:**
-- `get_mcp_usage_manual`
-- `get_mcp_security_policy`
-- `get_mcp_tool_categories`
-- `get_mcp_tool_catalog(category="<needed-category>")`
-- `get_mcp_validation_checklist`
-
-These tools tell the LLM what MCP capabilities are available, how tool parameters are structured, which routes are restricted, and why bypassing MCP is forbidden. The endpoint catalog is category-based by default, so clients do not need to inject every Web API endpoint into context at once.
-
-**MCP security requirements:**
-- The LLM must not bypass MCP by sending direct HTTP requests to the Web UI, localhost, or LAN ports
-- The LLM must use MCP tools only for AiNiee operations
-- `api_key` / `access_key` / `secret_key` are redacted on MCP reads
-- MCP reads of sensitive config also return `_mcp_security_notice`, explicitly stating that the restriction is permission-based and that bypassing through any other channel is forbidden
-- A redacted placeholder is not a usable secret and must not be written back as if it were real
-- Sensitive Web API routes require a valid Web UI session cookie or MCP bridge token, so bare unauthenticated HTTP bypass requests are rejected
-
-Full client-facing guide:
-- `Tools/MCPServer/MCP_CLIENT_GUIDE.md`
+1. **Video translation scope**: The offline video workflow currently processes speech in the audio track only; it does not recognize text embedded in video frames. Automatic term extraction for long videos currently sends the entire transcript to the model in one request (budget-based splitting has not yet been implemented). For very long videos, supply a glossary manually or use a model with a long context window.
+2. **External tool dependencies**: Exporting layered PSD files from manga requires Photoshop installed locally; otherwise, only JSX scripts can be exported. Compressing and extracting RAR/CBR files requires the corresponding external command-line tools on the system.
+3. **Remote access security**: The web dashboard listens on the local loopback address by default. Its built-in session checks mainly prevent cross-site misuse of local endpoints; they are not a multi-user account and permissions system. For remote access, use a trusted private network or place a reverse proxy with access authentication in front of it.
 
 ---
 
-## Architecture
+## References and Acknowledgments
 
-This project utilizes a Wrapper / Adapter pattern:
+- [AiNiee](https://github.com/NEKOparapa/AiNiee): This project is built on its core translation logic. Thanks to the original author NEKOparapa and all contributors.
+- [manga-translator-ui](https://github.com/hgmzhn/manga-translator-ui) ([Gitee mirror](https://gitee.com/hgmzhn/manga-translator-ui)): A reference for the automated manga pipeline, stage separation, and runtime asset organization.
+- [Koharu](https://github.com/mayocream/koharu): A reference for manga projects, layers, text block editing, and manual refinement workflows.
 
-- **Core**: Original AiNiee core business logic unchanged
-- **Adapter Layer**: `ainiee_cli.py` handles environment isolation and exception interception
-- **Runtime**: Managed by uv for dependency consistency
-
----
-
-## Manga Reference
-
-The MangaCore subsystem uses a layered design: fully automatic batch translation and manual page refinement are treated as separate workflows instead of being merged into one entry point.
-
-**The fully automatic manga translation workflow** primarily references the workflow represented by `manga-translator-ui-main` and its upstream project **hgmzhn / manga-translator-ui**:
-
-- GitHub: https://github.com/hgmzhn/manga-translator-ui
-- Gitee mirror: https://gitee.com/hgmzhn/manga-translator-ui
-
-This part mainly references its staged workflow and runtime asset organization: image/archive import, text detection, OCR, translation, inpainting, text rendering, and final export. In AiNiee-Next, this low-interaction batch workflow is carried by `translate ... --manga`, the Web task page Manga Mode, and the `MangaCore` batch pipeline.
-
-**Manual refinement and manga editor logic** primarily references **mayocream / Koharu**:
-
-- GitHub: https://github.com/mayocream/koharu
-
-This part mainly references Koharu's manual refinement ideas, including project/page/text-block models, layered page states, current-page reruns, text block position and style adjustments, inpaint result inspection, and editable final exports.
-
-If related core modules are referenced, integrated, or reused in later stages, this project will continue to preserve source attribution and acknowledgement, and will comply with the corresponding open-source license terms.
+Source attribution and acknowledgments will continue to be retained. References and reuse follow the respective projects' open-source licenses.
 
 ---
 
-## Disclaimer
+## License
 
-- This project is an unofficial optimized branch of AiNiee
-- Core translation algorithms remain consistent with the original version
-- This tool is intended for personal learning and legal use only
+This project is open source under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENSE` file in the repository root for details.
+
+---
+
+## Support AiNiee-Next
+
+If AiNiee-Next has been useful to you, you can support its continued development and maintenance through [Afdian](https://ifdian.net/a/Next_ZhiXie) or the donation QR code below. Supporters will be added to the project acknowledgments. Thank you for every contribution.
+
+<div align="center">
+  <img src="Images/赞赏码.png" alt="Donation QR code" width="320">
+</div>
 
 ---
 
@@ -411,7 +206,3 @@ If related core modules are referenced, integrated, or reused in later stages, t
   <br>
   Based on the original work by NEKOparapa
 </div>
-
-### Workflow runtime parameters
-
-Workflows accept per-run model, concurrency, context, quality switches, and step overrides while reusing configured interfaces. See [runtime parameter usage](WORKFLOW_RUNTIME_PARAMETERS.md).
