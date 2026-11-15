@@ -344,12 +344,13 @@ class GlossaryMenu:
             border_style="yellow"
         ))
 
-        # 选择文件
-        console.print(f"\n[cyan]{self.i18n.get('prompt_select_file_to_analyze') or '请选择要分析的文件:'}[/cyan]")
+        console.print(f"\n[cyan]{self.i18n.get('prompt_select_file_to_analyze') or '请选择要分析的文件或文件夹:'}[/cyan]")
         selected_path = self.file_selector.select_path(select_file=True, select_dir=True)
 
-        if not selected_path or not os.path.exists(selected_path):
-            console.print(f"[red]{self.i18n.get('err_not_file') or '错误: 路径不存在'}[/red]")
+        if not selected_path:
+            return
+        selected_path = self.analyzer.validate_input_path(selected_path)
+        if selected_path is None:
             Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
             return
 

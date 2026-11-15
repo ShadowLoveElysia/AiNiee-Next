@@ -214,21 +214,57 @@ class GlossaryAnalyzer:
         }
         return aliases.get(text, text)
 
+    def validate_input_path(self, input_path):
+        """统一校验术语分析的文件或目录输入，避免空路径被当作当前目录。"""
+        try:
+            path = os.fsdecode(input_path).strip().strip('"').strip("'")
+            if not path or "\0" in path:
+                raise ValueError(self._tr('msg_glossary_invalid_input_path', '请选择有效的文件或文件夹路径。'))
+            path = os.path.abspath(os.path.expanduser(path))
+            if not os.path.exists(path):
+                raise ValueError(self._tr('msg_path_not_exist', '路径不存在'))
+            if not (os.path.isfile(path) or os.path.isdir(path)):
+                raise ValueError(self._tr('msg_glossary_invalid_input_path', '请选择有效的文件或文件夹路径。'))
+        except (OSError, TypeError, ValueError) as exc:
+            console.print(
+                f"{self._tr('msg_glossary_invalid_input_path', '请选择有效的文件或文件夹路径。')}: {exc}",
+                style="red", markup=False,
+            )
+            return None
+        return path
+
     def prepare_analysis_scan(self, input_path, analysis_percent=100, analysis_lines=None):
-        console.print(f"[cyan]{self.i18n.get('msg_reading_file') or '正在读取文件...'}[/cyan]")
-
-        project_type = self.config.get("translation_project", "auto")
-        cache_data = self.file_reader.read_files(project_type, input_path, "")
-
-        if not cache_data:
-            console.print(f"[red]{self.i18n.get('msg_no_content') or '无法读取文件内容'}[/red]")
+        input_path = self.validate_input_path(input_path)
+        if input_path is None:
             return None
 
-        all_items = list(cache_data.items_iter())
+        is_directory = os.path.isdir(input_path)
+        reading_key = "msg_glossary_reading_directory" if is_directory else "msg_reading_file"
+        reading_default = "正在扫描文件夹中的可分析文件..." if is_directory else "正在读取文件..."
+        console.print(self._tr(reading_key, reading_default), style="cyan", markup=False)
+
+        try:
+            project_type = self.file_reader._normalize_project_type(self.config.get("translation_project", "auto"))
+            # 缓存项目的读取入口只接收目录，普通源文件应走格式识别。
+            if project_type == "Ainiee_cache" and not is_directory:
+                project_type = "auto"
+            cache_data = self.file_reader.read_files(project_type, input_path, "")
+            all_items = list(cache_data.items_iter()) if cache_data else []
+            # 保留显式选择的 JSON 等格式语义；不匹配时复用自动识别。
+            if not all_items and project_type.casefold() not in ("auto", "autotype"):
+                cache_data = self.file_reader.read_files("auto", input_path, "")
+                all_items = list(cache_data.items_iter()) if cache_data else []
+        except Exception as exc:
+            console.print(
+                f"{self._tr('msg_no_content', '无法读取文件内容')}: {exc}",
+                style="red", markup=False,
+            )
+            return None
+
         total_lines = len(all_items)
 
-        if total_lines == 0:
-            console.print(f"[red]{self.i18n.get('msg_no_text_found') or '未找到可分析的文本'}[/red]")
+        if total_lines == 0 or not any(item.source_text.strip() for item in all_items):
+            console.print(self._tr('msg_glossary_no_readable_text', '未找到可分析的文本，请确认文件格式受支持、文件非空且可读取。'), style="red", markup=False)
             return None
 
         if analysis_lines:
@@ -243,6 +279,7 @@ class GlossaryAnalyzer:
         language_profile = self._build_analysis_language_profile(items_to_analyze)
 
         return {
+            "input_path": input_path,
             "all_items": all_items,
             "total_lines": total_lines,
             "lines_to_analyze": lines_to_analyze,
@@ -274,7 +311,7 @@ class GlossaryAnalyzer:
         执行术语表分析的核心逻辑
 
         Args:
-            input_path: 输入文件路径
+            input_path: 输入文件或文件夹路径
             analysis_percent: 分析百分比
             analysis_lines: 分析行数（优先于百分比）
             temp_config: 临时API配置（可选）
@@ -289,14 +326,15 @@ class GlossaryAnalyzer:
         Returns:
             tuple: (filtered_terms, glossary_data) 或 None（如果失败）
         """
-        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
-        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
-
         scan_result = self.prepare_analysis_scan(input_path, analysis_percent, analysis_lines)
         if scan_result is None:
             return None
 
+        from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
+        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+
+        input_path = scan_result["input_path"]
         total_lines = scan_result["total_lines"]
         lines_to_analyze = scan_result["lines_to_analyze"]
         items_to_analyze = scan_result["items_to_analyze"]
