@@ -898,7 +898,12 @@ class PromptBuilder(Base):
     # 构建翻译示例
     def build_translation_example(config: TaskConfig) -> str:
         filter_legacy_references_for_prompt(config)
-        data = config.translation_example_data
+        data = [
+            item for item in (config.translation_example_data or [])
+            if isinstance(item, dict)
+            and isinstance(item.get("src"), str) and item["src"].strip()
+            and isinstance(item.get("dst"), str) and item["dst"].strip()
+        ]
 
         # 数据校验
         if len(data) == 0:

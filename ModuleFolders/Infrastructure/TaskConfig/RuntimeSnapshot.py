@@ -14,6 +14,7 @@ RUNTIME_SNAPSHOT_ENV = "AINIEE_RUNTIME_SNAPSHOT_FILE"
 _RESOURCE_KEYS = {
     "pre_translation_data", "post_translation_data", "prompt_dictionary_data", "exclusion_list_data",
     "characterization_data", "world_building_content", "writing_style_content", "translation_example_data",
+    "world_building_history", "writing_style_history",
     "translation_prompt_selection", "polishing_prompt_selection", "plugin_enables",
     "source_language", "target_language", "polishing_mode_selection", "api_settings",
     "dynamic_glossary_series", "dynamic_glossary_volume", "dynamic_glossary_volume_map",

@@ -170,6 +170,9 @@ export const Rules: React.FC = () => {
             .reduce((text, entry) => {
                 const entryVolume = normalizeVolume(entry.volume);
                 if (entryVolume === null || entryVolume > volume) return text;
+                if (entry._glossary_origin === 'legacy_translation' || entry._mapping_status === 'seed') return text;
+                if (entry.content === null || entry.content === undefined) return text;
+                if (entry.mode === 'snapshot') return String(entry.content).trim();
                 return timelineTextAppend(text, entry.content);
             }, '');
     };

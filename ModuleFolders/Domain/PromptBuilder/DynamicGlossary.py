@@ -1,4 +1,5 @@
 import copy
+from types import SimpleNamespace
 
 
 TIMELINE_TEXT_KEYS = {
@@ -66,7 +67,7 @@ def apply_dynamic_glossary(config, current_volume):
     ]
 
     for data_key, history_key in TIMELINE_TEXT_KEYS.items():
-        selected = _select_text_history(getattr(config, history_key, None), volume)
+        selected = select_text_history(getattr(config, history_key, None), volume)
         if selected is not None:
             setattr(config, data_key, selected)
         elif isinstance(getattr(config, history_key, None), list) and getattr(config, history_key, None):
@@ -122,10 +123,27 @@ def _select_timeline_item(item, current_volume, key_field, tracked_fields):
     return selected
 
 
-def _select_text_history(history, current_volume):
+def rules_for_volume(rules, current_volume):
+    """Materialize a detached rules view shared by extraction and translation."""
+    keys = (
+        "prompt_dictionary_data", "characterization_data", "exclusion_list_data",
+        "translation_example_data", *TIMELINE_TEXT_KEYS, *TIMELINE_TEXT_KEYS.values(),
+    )
+    config = SimpleNamespace(**{key: copy.deepcopy(rules[key]) for key in keys if key in rules})
+    apply_dynamic_glossary(config, current_volume)
+    filter_legacy_references_for_prompt(config)
+    return {key: getattr(config, key) for key in keys if hasattr(config, key)}
+
+
+def select_text_history(history, current_volume):
+    """Unmarked history keeps legacy append semantics; snapshots reset the text."""
     if not isinstance(history, list) or not history:
         return None
+    current_volume = normalize_volume(current_volume)
+    if current_volume is None:
+        return None
     selected = ""
+    found = False
     for entry in sorted((item for item in history if isinstance(item, dict)), key=_history_sort_key):
         if _is_legacy_reference_item(entry):
             continue
@@ -135,8 +153,12 @@ def _select_text_history(history, current_volume):
         content = entry.get("content")
         if content is None:
             continue
-        selected = _append_timeline_text_block(selected, str(content))
-    return selected or None
+        found = True
+        if entry.get("mode") == "snapshot":
+            selected = str(content).strip()
+        else:
+            selected = _append_timeline_text_block(selected, str(content))
+    return selected if found else None
 
 
 def _select_effective_history_entry(history, current_volume, key_field, tracked_fields):

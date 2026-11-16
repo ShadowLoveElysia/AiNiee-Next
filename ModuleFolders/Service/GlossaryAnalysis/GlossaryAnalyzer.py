@@ -7,11 +7,15 @@ import re
 import threading
 import concurrent.futures
 from datetime import datetime
-import rapidjson as json
+try:
+    import rapidjson as json
+except ModuleNotFoundError:
+    import json
 
 from rich.console import Console
 
 from ModuleFolders.Domain.PromptBuilder.PromptBuilder import PromptBuilder
+from ModuleFolders.Domain.PromptBuilder.DynamicGlossary import rules_for_volume
 from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     atomic_write_json,
     normalize_rules_payload,
@@ -341,6 +345,8 @@ class GlossaryAnalyzer:
         selected_text = scan_result["selected_text"]
         estimated_tokens = scan_result["estimated_tokens"]
         normalized_mode = self._normalize_analysis_mode(analysis_mode)
+        if normalized_mode == "split" and replace and self._normalize_volume_number(source_volume) is not None:
+            normalized_mode = "incremental_split"
         legacy_mode = self.normalize_legacy_mode(legacy_mode)
 
         console.print(f"[green]{self.i18n.get('msg_total_lines') or '总行数'}: {total_lines}[/green]")
@@ -397,6 +403,11 @@ class GlossaryAnalyzer:
             console.print(f"[cyan]{self.i18n.get('msg_using_current_config') or '使用当前配置'}: {platform_config.get('target_platform')}[/cyan]")
 
         target_language = getattr(task_config, "target_language", self.config.get("target_language", "Chinese"))
+        system_prompt += (
+            f'\nWrite explanatory fields (info, gender, age, personality, speech_style, '
+            f'additional_info, world_building, writing_style) in "{target_language}". '
+            'Keep original names, matching keys, aliases, and quoted pronouns in the source language.\n'
+        )
         if translate_during_analysis:
             system_prompt = self._append_analysis_translation_instruction(system_prompt, target_language)
             console.print(
@@ -407,7 +418,9 @@ class GlossaryAnalyzer:
             existing_context = (
                 existing_rules_context
                 if existing_rules_context is not None
-                else self._build_incremental_existing_rules_context(selected_text)
+                else self._build_incremental_existing_rules_context(
+                    selected_text, incremental_options.get("source_volume")
+                )
             )
             mode_bits = []
             if incremental_options.get("new"):
@@ -594,6 +607,7 @@ class GlossaryAnalyzer:
                     batch_context,
                     batch_idx,
                     len(batches),
+                    text_snapshots=bool(incremental_options.get("replace")),
                 )
                 messages = [{"role": "user", "content": text_content}]
                 try:
@@ -610,6 +624,7 @@ class GlossaryAnalyzer:
                             parsed,
                             fill_existing=True,
                             replace_existing=True,
+                            replace_text=bool(incremental_options.get("replace")),
                         )
                         if not terms and not self._has_non_glossary_analysis(parsed):
                             raw_response_diagnostics.append(
@@ -1013,6 +1028,12 @@ class GlossaryAnalyzer:
             "不要输出删除指令，不要要求删除旧卷视角；旧卷术语和角色描述必须保留给旧卷翻译使用。"
             "如果没有必要新增或替换，对应字段返回空数组或空字符串。"
         )
+        text_rule = (
+            "world_building 和 writing_style 必须输出截至当前卷的完整有效版本，而不是只写变更句。"
+            "保留仍有效的通用规则，修订已变化的状态，删除过期的‘本卷’要求，避免复述剧情。"
+            if allow_replace
+            else "world_building 和 writing_style 仅输出不与已有规则冲突的新规则，不改写已有内容。"
+        )
         metadata_rule = (
             f"本次来源标签为 {source_label}，卷号为 {volume_text}。"
             "replace 只表示为当前卷写入新的历史版本，不是全局覆盖。"
@@ -1034,6 +1055,8 @@ class GlossaryAnalyzer:
 - {new_rule}
 - {replace_rule}
 - {delta_rule}
+- 文本规则例外：{text_rule}
+- 修改既有术语或角色字段时，保留该字段仍有效的事实、关系和语言特征；不要只为简写而丢弃旧信息。原名和别名保留原文，译名沿用已确认的现有译名。
 - {metadata_rule}
 - 非必要不新增，非必要不修改；不要因为词频高就提取普通名词。
 - 如果后续卷揭示角色反转或设定变化，不要删除早期卷视角；输出当前卷之后应使用的新描述即可，程序会记录历史版本。
@@ -1044,8 +1067,12 @@ class GlossaryAnalyzer:
 """
         return f"{system_prompt.rstrip()}\n{instruction.strip()}\n"
 
-    def _append_incremental_split_instruction(self, system_prompt, accumulated_context, batch_index, total_batches):
+    def _append_incremental_split_instruction(self, system_prompt, accumulated_context, batch_index, total_batches, text_snapshots=False):
         context_json = json.dumps(accumulated_context or {}, ensure_ascii=False, indent=2)
+        text_rule = (
+            "world_building 和 writing_style 如需更新，应输出结合现有规则与已累计快照的完整有效版本，保留仍有效信息并修正过期状态。"
+            if text_snapshots else "world_building 和 writing_style 只补充当前批有证据的新信息。"
+        )
         instruction = f"""
 
 ## 超长文本增量分批模式
@@ -1058,6 +1085,7 @@ class GlossaryAnalyzer:
 - 如果某个术语、角色、世界观或文风信息已经存在且当前批没有提供新证据，不要重复输出。
 - 如果当前批有明确证据表明既有术语、角色、世界观、文风、译名或注释发生变化、应补全或应修正，必须输出更新后的条目；不要因为它已存在就省略。
 - 输出更新时只写当前最新状态，程序会按当前最新结果合并。
+- 文本规则例外：{text_rule}
 - 这是同一文件内部的分批，不是系列卷号增量；不要输出 Vol_2、Vol_3、第2卷、第3卷、volume、updated_volume、history 等卷号/时间线标识，除非原文本身明确出现这些内容且它们是需要提取的术语。
 
 ### 已累计规则快照
@@ -1100,19 +1128,22 @@ class GlossaryAnalyzer:
                     existing[key] = value
         return result
 
-    def _build_incremental_existing_rules_context(self, source_text=""):
+    def _build_incremental_existing_rules_context(self, source_text="", source_volume=None):
         source_text = self._normalize_glossary_text(source_text)
+        volume = self._normalize_volume_number(source_volume)
+        # Include confirmed same-volume entries for retries, but never future volumes.
+        rules = rules_for_volume(self.config, volume) if volume is not None else self.config
         matched_terms = PromptBuilder.find_glossary_matches(
-            self.config.get("prompt_dictionary_data", []),
+            rules.get("prompt_dictionary_data", []),
             source_text,
         )
         matched_exclusions = self._filter_rule_items_by_source_text(
-            self.config.get("exclusion_list_data", []),
+            rules.get("exclusion_list_data", []),
             source_text,
             self._exclusion_item_match_keys,
         )
         matched_characters = self._filter_rule_items_by_source_text(
-            self.config.get("characterization_data", []),
+            rules.get("characterization_data", []),
             source_text,
             self._character_item_match_keys,
         )
@@ -1122,7 +1153,7 @@ class GlossaryAnalyzer:
             matched_characters,
         )
         matched_examples = self._filter_translation_examples_for_incremental_context(
-            self.config.get("translation_example_data", []),
+            rules.get("translation_example_data", []),
             source_text,
             matched_keys,
         )
@@ -1132,9 +1163,11 @@ class GlossaryAnalyzer:
             "exclusion_list_data": self._trim_existing_rule_value(matched_exclusions),
             "characterization_data": self._trim_existing_rule_value(matched_characters),
             "world_building_content": self._trim_existing_rule_value(
-                self.config.get("world_building_content", "")
+                rules.get("world_building_content", "")
             ),
-            "writing_style_content": "",
+            "writing_style_content": self._trim_existing_rule_value(
+                rules.get("writing_style_content", ""), max_chars=6000
+            ),
             "translation_example_data": self._trim_existing_rule_value(matched_examples),
         }
 
@@ -1223,7 +1256,7 @@ class GlossaryAnalyzer:
             return text[:max_chars] + f"\n...({len(text) - max_chars} chars omitted)"
         return text
 
-    def _merge_analysis_payload(self, target, source, fill_existing=False, replace_existing=False):
+    def _merge_analysis_payload(self, target, source, fill_existing=False, replace_existing=False, replace_text=False):
         if not source:
             return target
 
@@ -1244,14 +1277,9 @@ class GlossaryAnalyzer:
             source.get("translation_example_data", []),
             ("src", "dst"),
         )
-        target["world_building_content"] = self._append_text_block(
-            target.get("world_building_content", ""),
-            source.get("world_building_content", ""),
-        )
-        target["writing_style_content"] = self._append_text_block(
-            target.get("writing_style_content", ""),
-            source.get("writing_style_content", ""),
-        )
+        for key in ("world_building_content", "writing_style_content"):
+            text = self._normalize_glossary_text(source.get(key))
+            target[key] = text if replace_text and text else self._append_text_block(target.get(key, ""), text)
         return target
 
     def _finalize_analysis_payload(self, payload, terms):
@@ -1379,6 +1407,12 @@ class GlossaryAnalyzer:
     def _merge_structured_rules_into_config(self, structured_rules, merge_options=None):
         summary = {key: 0 for key in STRUCTURED_RULE_KEYS}
         options = merge_options or {}
+        concerns = self._review_incremental_rules(structured_rules, options.get("source_volume"))
+        if any(concerns.values()):
+            console.print(
+                f"[yellow]{self._tr('glossary_review_warning', '增量规则需要复核')}: "
+                f"language={concerns['language']}, shortened={concerns['shortened']}[/yellow]"
+            )
         incremental_enabled = bool(options.get("enabled"))
         allow_new = bool(options.get("new")) if incremental_enabled else True
         allow_replace = bool(options.get("replace"))
@@ -1574,6 +1608,40 @@ class GlossaryAnalyzer:
             self.config["translation_example_switch"] = True
 
         return summary
+
+    def _review_incremental_rules(self, incoming, source_volume=None):
+        """Flag suspicious descriptions without rejecting valid quotes or state changes."""
+        concerns = {"language": 0, "shortened": 0}
+        language = str(self.config.get("target_language", "")).lower()
+        chinese = language.startswith("zh") or "chinese" in language or "中文" in language
+        volume = self._normalize_volume_number(source_volume)
+        rules = rules_for_volume(self.config, volume) if volume is not None else self.config
+        groups = (
+            ("prompt_dictionary_data", "src", ("info",), "dst"),
+            ("characterization_data", "original_name", ("personality", "speech_style", "additional_info"), "translated_name"),
+        )
+        for group, key, fields, name_field in groups:
+            existing = {item.get(key): item for item in rules.get(group, []) if isinstance(item, dict)}
+            for item in incoming.get(group, []) or []:
+                if not isinstance(item, dict):
+                    continue
+                if chinese and re.search(r"[ぁ-ゖァ-ヺ]", str(item.get(name_field) or "")):
+                    concerns["language"] += 1
+                for field in fields:
+                    text = self._normalize_glossary_text(item.get(field))
+                    if not text:
+                        continue
+                    plain = re.sub(r"「[^」]*」|『[^』]*』|\"[^\"]*\"", "", text)
+                    if chinese and len(re.findall(r"[ぁ-ゖ]", plain)) >= 4:
+                        concerns["language"] += 1
+                    previous = self._normalize_glossary_text(existing.get(item.get(key), {}).get(field))
+                    if len(previous) >= 30 and len(text) * 2 < len(previous):
+                        concerns["shortened"] += 1
+        for key in ("world_building_content", "writing_style_content"):
+            text = self._normalize_glossary_text(incoming.get(key))
+            if chinese and len(re.findall(r"[ぁ-ゖ]", text)) >= 4:
+                concerns["language"] += 1
+        return concerns
 
     def multi_translate_and_select(self, filtered_terms, temp_config=None, rounds=3, save_mode="import", base_glossary_path=None, merge_options=None):
         """
@@ -2724,10 +2792,20 @@ Translation|Note"""
         if not label and volume is not None:
             label = self._format_volume_label(volume)
 
-        base_text = self._select_text_history_for_merge(history, volume) or current_text
-        version_text = self._append_timeline_text_block(base_text, incoming_text)
+        # Replacement is a complete effective snapshot. Add-only updates remain deltas.
+        version_text = incoming_text
+        previous = next((
+            old for old in history if isinstance(old, dict)
+            and self._history_key(old) == ("volume", volume)
+            and old.get("_mapping_status") != "seed"
+            and old.get("_glossary_origin") != LEGACY_GLOSSARY_ORIGIN
+        ), None)
+        mode = "snapshot" if replace else "append"
+        if not replace and previous:
+            version_text = self._append_timeline_text_block(previous.get("content"), incoming_text)
+            mode = previous.get("mode", "append")
         if version_text:
-            entry = {"source": label, "content": version_text}
+            entry = {"source": label, "content": version_text, "mode": mode}
             if self._contains_legacy_reference_text(incoming_text):
                 entry["_glossary_origin"] = LEGACY_GLOSSARY_ORIGIN
                 entry["_mapping_status"] = "seed"
@@ -2739,6 +2817,8 @@ Translation|Note"""
             merged = []
             replaced = False
             for old in history:
+                if not isinstance(old, dict):
+                    continue
                 if self._history_key(old) == self._history_key(entry):
                     merged.append(entry)
                     replaced = True
@@ -2750,20 +2830,6 @@ Translation|Note"""
             history.sort(key=lambda item: self._history_sort_key(item))
             self.config[history_key] = history
         return current_text or incoming_text
-
-    def _select_text_history_for_merge(self, history, current_volume):
-        if not isinstance(history, list):
-            return ""
-        volume = self._normalize_volume_number(current_volume)
-        if volume is None:
-            return ""
-        selected = ""
-        for entry in sorted((item for item in history if isinstance(item, dict)), key=self._history_sort_key):
-            entry_volume = self._normalize_volume_number(entry.get("volume"))
-            if entry_volume is None or entry_volume >= volume:
-                continue
-            selected = self._append_timeline_text_block(selected, entry.get("content"))
-        return selected
 
     def _derive_characters_from_terms(self, terms):
         result = []
