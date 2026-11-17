@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from ModuleFolders.Domain.FileAccessor.EpubAccessor import EpubAccessor
 from ModuleFolders.Domain.FileOutputer.EbookNaming import identify_ebook, output_book_name, series_metadata_enabled
-from ModuleFolders.Domain.FileOutputer.EbookOptions import language_tag, resolve_epub_language
+from ModuleFolders.Domain.FileOutputer.EbookOptions import EXPORT_DEFAULTS, language_tag, resolve_epub_language
 
 
 CHAPTER_HEADING = re.compile(
@@ -68,5 +68,5 @@ def build_txt_epub(text, source_path, destination, settings):
             reader_font_control=settings.get('epub_reader_font_control', False),
             series_name=identity.series if series_metadata_enabled(settings) else '', series_volume=identity.volume,
             paragraph_preset=settings.get('epub_paragraph_preset', 'off'),
-            repair_links=settings.get('epub_repair_links', False),
+            repair_links=settings.get('epub_repair_links', EXPORT_DEFAULTS['epub_repair_links']),
         )

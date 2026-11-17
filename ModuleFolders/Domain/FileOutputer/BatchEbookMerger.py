@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from ModuleFolders.Domain.FileAccessor.EpubAccessor import EpubAccessor
-from ModuleFolders.Domain.FileOutputer.EbookOptions import resolve_epub_language
+from ModuleFolders.Domain.FileOutputer.EbookOptions import EXPORT_DEFAULTS, resolve_epub_language
 from ModuleFolders.Domain.FileOutputer.EbookNaming import (
     EbookIdentity, naming_enabled, render_ebook_name, safe_book_name, series_metadata_enabled, volume_range,
 )
@@ -86,7 +86,7 @@ def merge_batch_ebooks(records, output_dir, fallback_name, settings, script_path
                 series_name=identity.series if series_metadata_enabled(settings) else '',
                 series_volume=identity.volume,
                 paragraph_preset=settings.get('epub_paragraph_preset', 'off'),
-                repair_links=settings.get('epub_repair_links', False),
+                repair_links=settings.get('epub_repair_links', EXPORT_DEFAULTS['epub_repair_links']),
                 optimize_images=settings.get('ebook_optimize_images', False),
                 image_format=settings.get('ebook_image_format', 'preserve'),
                 image_quality=settings.get('ebook_image_quality', 80),

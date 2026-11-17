@@ -1071,7 +1071,7 @@ class TaskExecutor(Base):
                     getattr(self.config, 'enable_context_enhancement', False),
                     self.config.pre_line_counts,
                     getattr(self.config, 'chunk_soft_limit_extra_lines', 0),
-                    getattr(self.config, 'line_split_optimization_mode', 'off')
+                    getattr(self.config, 'line_split_optimization_mode', 'tail')
                 )
 
                 # 生成翻译任务合集列表
@@ -1414,7 +1414,7 @@ class TaskExecutor(Base):
                         False,  # 润色模式不需要上下文增强
                         0,
                         getattr(self.config, 'chunk_soft_limit_extra_lines', 0),
-                        getattr(self.config, 'line_split_optimization_mode', 'off')
+                        getattr(self.config, 'line_split_optimization_mode', 'tail')
                     )
                 elif self.config.polishing_mode_selection == POLISH_TRANSLATED_TEXT:
                     chunks, previous_chunks, file_paths, source_context_chunks = self.cache_manager.generate_item_chunks(
@@ -1425,7 +1425,7 @@ class TaskExecutor(Base):
                         False,  # 润色模式不需要上下文增强
                         0,
                         getattr(self.config, 'chunk_soft_limit_extra_lines', 0),
-                        getattr(self.config, 'line_split_optimization_mode', 'off')
+                        getattr(self.config, 'line_split_optimization_mode', 'tail')
                     )
 
                 # 生成润色任务合集列表

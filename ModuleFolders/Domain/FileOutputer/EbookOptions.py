@@ -4,9 +4,9 @@ import re
 
 
 EXPORT_DEFAULTS = {
-    'epub_language_follow_source': 'interface',
+    'epub_language_follow_source': 'target',
     'epub_paragraph_preset': 'off',
-    'epub_repair_links': False,
+    'epub_repair_links': True,
     'ebook_optimize_images': False,
     'ebook_image_format': 'preserve',
     'ebook_image_quality': 80,
@@ -39,6 +39,6 @@ def resolve_epub_language(settings):
     if mode == 'disabled':
         return ''
     if mode == 'auto':
-        source = 'target_language' if settings.get('epub_language_follow_source', 'interface') == 'target' else 'interface_language'
+        source = 'target_language' if settings.get('epub_language_follow_source', EXPORT_DEFAULTS['epub_language_follow_source']) == 'target' else 'interface_language'
         mode = settings.get(source, 'Chinese' if source == 'target_language' else 'zh_CN')
     return language_tag(mode)

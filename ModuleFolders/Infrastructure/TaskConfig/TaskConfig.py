@@ -114,7 +114,7 @@ class TaskConfig(Base):
             'reply_format_check': False
         }
 
-        self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
+        self.show_detailed_logs = True # Fix: Initialize show_detailed_logs
 
         # 文件输出相关设置
         self.keep_original_encoding = True
@@ -149,7 +149,7 @@ class TaskConfig(Base):
         self.tokens_limit_switch = False # NEW: 切换 Token 模式还是 Line 模式
         self.lines_limit = 20 # NEW: 每次翻译的行数限制，在 Token 模式下无效
         self.chunk_soft_limit_extra_lines = 10
-        self.line_split_optimization_mode = "off"
+        self.line_split_optimization_mode = "tail"
         self.retry_split_min_lines = 15
         self.sparse_completion_previous_lines = 15
         self.sparse_completion_lookahead_lines = 8
@@ -160,9 +160,9 @@ class TaskConfig(Base):
         self.enable_bilingual_output = False # NEW: 是否启用双语输出
         self.bilingual_text_order = "translation_first" # NEW: 双语文本顺序
         self.epub_language_update_mode = "auto"
-        self.epub_language_follow_source = "interface"
+        self.epub_language_follow_source = "target"
         self.epub_paragraph_preset = "off"
-        self.epub_repair_links = False
+        self.epub_repair_links = True
         self.ebook_optimize_images = False
         self.ebook_image_format = "preserve"
         self.ebook_image_quality = 80
@@ -199,8 +199,8 @@ class TaskConfig(Base):
         self.thinking_budget = -1
         self.structured_output_mode = 0
         self.enable_stream_api = True  # 流式API开关，默认启用
-        self.sdk_request_mode = "httpx" # 请求模式：httpx/openai/anthropic/google
-        self.use_openai_sdk = False     # 兼容旧配置：True 视为 OpenAI SDK
+        self.sdk_request_mode = "openai" # 请求模式：httpx/openai/anthropic/google
+        self.use_openai_sdk = True     # 兼容旧配置：True 视为 OpenAI SDK
         self.manga_detect_engine = "comic-text-bubble-detector"
         self.manga_segment_engine = "comic-text-detector"
         self.manga_ocr_engine = "mit48px-ocr"
@@ -209,7 +209,7 @@ class TaskConfig(Base):
         self.manga_detect_device = "auto"
         self.manga_ocr_device = "auto"
         self.manga_inpaint_device = "auto"
-        self.show_detailed_logs = False # Fix: Initialize show_detailed_logs
+        self.show_detailed_logs = True # Fix: Initialize show_detailed_logs
 
     def __repr__(self) -> str:
         return (

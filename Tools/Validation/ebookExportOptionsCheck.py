@@ -73,6 +73,8 @@ class ExportSettingsTests(unittest.TestCase):
 
     def test_follow_source_preserves_explicit_and_disabled_modes(self):
         settings = {'interface_language': 'ja', 'target_language': 'Chinese_Traditional'}
+        self.assertEqual(resolve_epub_language(settings), 'zh-TW')
+        settings['epub_language_follow_source'] = 'interface'
         self.assertEqual(resolve_epub_language(settings), 'ja')
         settings['epub_language_follow_source'] = 'target'
         self.assertEqual(resolve_epub_language(settings), 'zh-TW')

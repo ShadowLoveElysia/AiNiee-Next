@@ -274,7 +274,7 @@ register_config(ConfigItem(
 
 register_config(ConfigItem(
     key="line_split_optimization_mode",
-    default="off",
+    default="tail",
     level=ConfigLevel.USER,
     config_type=ConfigType.CHOICE,
     i18n_key="setting_line_split_optimization_mode",
@@ -462,9 +462,9 @@ register_config(ConfigItem(
 ))
 
 for _export_key, _export_default, _export_type, _export_choices, _export_category, _export_dependency in (
-    ("epub_language_follow_source", "interface", ConfigType.CHOICE, ["interface", "target"], "output", None),
+    ("epub_language_follow_source", "target", ConfigType.CHOICE, ["interface", "target"], "output", None),
     ("epub_paragraph_preset", "off", ConfigType.CHOICE, ["off", "indent", "spaced", "reader"], "utility", None),
-    ("epub_repair_links", False, ConfigType.BOOL, [], "utility", None),
+    ("epub_repair_links", True, ConfigType.BOOL, [], "utility", None),
     ("txt_generate_epub", False, ConfigType.BOOL, [], "utility", None),
     ("ebook_optimize_images", False, ConfigType.BOOL, [], "output", None),
     ("ebook_image_format", "preserve", ConfigType.CHOICE, ["preserve", "webp"], "output", "ebook_optimize_images"),
@@ -989,7 +989,7 @@ register_config(ConfigItem(
 
 register_config(ConfigItem(
     key="show_detailed_logs",
-    default=False,
+    default=True,
     level=ConfigLevel.USER,
     config_type=ConfigType.BOOL,
     i18n_key="setting_detailed_logs",
@@ -1018,7 +1018,7 @@ register_config(ConfigItem(
 # --- API请求模式 (USER) ---
 register_config(ConfigItem(
     key="sdk_request_mode",
-    default="httpx",
+    default="openai",
     level=ConfigLevel.USER,
     config_type=ConfigType.CHOICE,
     i18n_key="setting_sdk_request_mode",
@@ -1030,7 +1030,7 @@ register_config(ConfigItem(
 # --- 兼容旧配置：由 sdk_request_mode 取代，不再显示 ---
 register_config(ConfigItem(
     key="use_openai_sdk",
-    default=False,
+    default=True,
     level=ConfigLevel.SYSTEM,
     config_type=ConfigType.BOOL,
     i18n_key="setting_use_openai_sdk",

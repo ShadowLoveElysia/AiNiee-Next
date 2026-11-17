@@ -303,6 +303,12 @@ def load_effective_config(
             except Exception:
                 profile_config = {}
 
+        # Normalize explicit legacy choices before merging the new SDK defaults.
+        if "sdk_request_mode" in profile_config or "use_openai_sdk" in profile_config:
+            sync_sdk_request_mode_config(
+                profile_config,
+                prefer_sdk_request_mode="sdk_request_mode" in profile_config,
+            )
         effective = deep_merge(base_config, profile_config)
         # Profile provenance is file metadata, not an editable runtime setting.
         effective.pop(PROFILE_ORIGIN_KEY, None)

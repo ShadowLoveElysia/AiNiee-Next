@@ -46,9 +46,9 @@ class OutputConfig:
     interface_language: str = "zh_CN"
     target_language: str = "Chinese"
     source_language: str = "auto"
-    epub_language_follow_source: str = "interface"
+    epub_language_follow_source: str = "target"
     epub_paragraph_preset: str = "off"
-    epub_repair_links: bool = False
+    epub_repair_links: bool = True
     ebook_optimize_images: bool = False
     ebook_image_format: str = "preserve"
     ebook_image_quality: int = 80
