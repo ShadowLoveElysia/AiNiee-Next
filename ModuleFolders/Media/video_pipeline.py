@@ -661,7 +661,7 @@ def run_video(config, emit, stop, *, recognizer_factory=None, translator_factory
         translator = (translator_factory or (lambda: load_translator(config, devices[0])))()
         current_translator = translator
         try:
-            emit({"type": "video_log", "message": "术语表：提交完整 ASR 文本，开始提取临时术语"})
+            emit({"type": "video_log", "message": "术语表：按上下文预算分段提取，并合并本视频临时术语"})
             from ModuleFolders.Media.video_glossary import extract_video_glossary
             glossary = extract_video_glossary(cues, translator, config, stop, progress)
             emit({"type": "video_glossary", "count": len(glossary)})

@@ -24,11 +24,13 @@ _GROUPS = {
     "checks": "newline_character_count_check return_to_original_text_check residual_original_text_check reply_format_check retry_count round_limit enable_smart_round_limit smart_round_max_limit untranslated_retry_limit untranslated_reduction_rate enable_retry_backoff enable_api_failover api_failover_threshold",
     "proofread": "enable_auto_proofread proofread_context_lines proofread_batch_size proofread_confidence_threshold",
     "text": "pre_translation_switch post_translation_switch exclusion_list_switch auto_process_text_code_segment language_filter_minority_ratio_threshold",
+    "export": "strict_export",
     "connection": "platform model",
     "prompt": "translation_prompt_id polishing_prompt_id",
 }
 
 _EXTRA = {
+    "strict_export": ("bool", False, None, None),
     "platform": ("string", None, None, None),
     "model": ("string", None, None, None),
     "translation_prompt_id": ("string", None, None, None),
@@ -77,7 +79,7 @@ def runtime_parameter_schema() -> list[dict]:
                 "label": item.i18n_key if item else f"runtime_{key}",
                 "description": item.i18n_desc_key if item else "",
                 "depends_on": item.depends_on if item else None,
-                "steps": ["translate"] if key in {"translation_consistency_enhancement", "translation_memory_switch", "rag_enabled", "rag_top_k", "character_recall_switch", "character_recall_context_lines", "character_recall_lookahead_lines", "enable_context_enhancement", "translation_prompt_id", "enable_auto_proofread"} else ["polish"] if key in {"polishing_prompt_id", "polishing_pre_line_counts"} else ["translate", "polish", "extract_glossary", "proofread"],
+                "steps": ["translate", "polish"] if key == "strict_export" else ["translate"] if key in {"translation_consistency_enhancement", "translation_memory_switch", "rag_enabled", "rag_top_k", "character_recall_switch", "character_recall_context_lines", "character_recall_lookahead_lines", "enable_context_enhancement", "translation_prompt_id", "enable_auto_proofread"} else ["polish"] if key in {"polishing_prompt_id", "polishing_pre_line_counts"} else ["translate", "polish", "extract_glossary", "proofread"],
             })
     return fields
 

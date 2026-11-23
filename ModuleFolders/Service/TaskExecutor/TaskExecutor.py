@@ -324,6 +324,25 @@ class TaskExecutor(Base):
             if character_info:
                 self.translation_consistency_state["character_info"] = character_info
 
+    def _execute_consistency_tasks(self, tasks):
+        with self._concurrency_lock:
+            self._current_active = 0
+        for task in tasks:
+            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                break
+            result = self._gated_run(task)
+            future = concurrent.futures.Future()
+            future.set_result(result)
+            self.task_done_callback(future)
+            # A later memory state cannot be built across an unsuccessful prefix.
+            if not result or not result.get("check_result"):
+                break
+
+    def _commit_consistency_memory(self, batch, summary, characters):
+        state = self.consistency_memory.commit(batch, summary, characters)
+        with self._translation_consistency_lock:
+            self.translation_consistency_state = state
+
     def reset_translation_memory_index(self) -> None:
         with self._translation_memory_lock:
             self.translation_memory_index = {}
@@ -1007,6 +1026,13 @@ class TaskExecutor(Base):
             self.plugin_manager.broadcast_event("text_filter", self.config, self.cache_manager.project)
             self.plugin_manager.broadcast_event("preproces_text", self.config, self.cache_manager.project)
             self.build_translation_memory_index()
+            self.consistency_memory = None
+            if getattr(self.config, "translation_consistency_enhancement", False):
+                from ModuleFolders.Service.TaskExecutor.ConsistencyMemory import ConsistencyMemory
+                self.consistency_memory = ConsistencyMemory(self.cache_manager.project, self.config, continue_status)
+                self.translation_consistency_state = dict(self.consistency_memory.state)
+                if self.consistency_memory.warning:
+                    self.warning(self.consistency_memory.warning)
 
             # Language/text filters mark rows as EXCLUDED. From here on, the progress bar
             # tracks only rows that can actually be translated, while keeping raw counts for UI hints.
@@ -1121,7 +1147,11 @@ class TaskExecutor(Base):
                     )
                     if getattr(self.config, "translation_consistency_enhancement", False):
                         task.set_consistency_context_provider(self.get_translation_consistency_state_snapshot)
-                        task.set_consistency_state_updater(self.update_translation_consistency_state)
+                        task.commit_scope = self.cache_manager.project.atomic_scope
+                        task.set_consistency_state_updater(
+                            lambda summary, characters, batch=chunk:
+                                self._commit_consistency_memory(batch, summary, characters)
+                        )
                     if getattr(self.config, "translation_memory_switch", False):
                         task.set_translation_memory_provider(self.get_translation_memory_references)
                     if (
@@ -1182,7 +1212,9 @@ class TaskExecutor(Base):
                 self.print("")
 
                 # 根据配置选择同步或异步执行模式
-                if getattr(self.config, 'enable_async_mode', False):
+                if getattr(self.config, "translation_consistency_enhancement", False):
+                    self._execute_consistency_tasks(tasks_list)
+                elif getattr(self.config, 'enable_async_mode', False):
                     self._execute_tasks_async(tasks_list)
                 else:
                     # 重置并发计数器，防止上一轮异常退出后卡死

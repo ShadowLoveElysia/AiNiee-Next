@@ -1,12 +1,14 @@
 import os
 import re
 import threading
+from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+from ModuleFolders.Infrastructure.SensitiveData import sanitize_sensitive_data
 from ModuleFolders.Service.TaskExecutor.TranslatorUtil import get_source_language_for_file
 from ModuleFolders.Domain.ResponseExtractor.ResponseExtractor import ResponseExtractor
 from ModuleFolders.Domain.ResponseChecker.ResponseChecker import ResponseChecker
@@ -87,7 +89,7 @@ class SimpleExecutor(Base):
         api_keys = re.sub(r"\s+","", api_key).split(",")
 
         # 轮询所有密钥进行测试
-        for api_key in api_keys:
+        for key_index, api_key in enumerate(api_keys, 1):
 
             # 构建 Prompt
             messages = [
@@ -102,11 +104,12 @@ class SimpleExecutor(Base):
             self.print("")
             self.info("正在进行接口测试 ...")
             self.info(f"接口名称 - {platform_name}")
-            self.info(f"接口地址 - {api_url}")
-            self.info(f"接口密钥 - {'*'*(len(api_key)-8)}{api_key[-8:]}") # 隐藏敏感信息
+            self.info(f"接口主机 - {urlsplit(api_url or '').hostname}")
+            self.info(f"接口密钥序号 - {key_index}/{len(api_keys)}")
             self.info(f"模型名称 - {model_name}")
             if extra_body:
-                self.info(f"额外参数 - {extra_body}")
+                safe_fields = sanitize_sensitive_data(extra_body)
+                self.info(f"额外参数 - 已配置 {len(safe_fields)} 项")
             self.print(f"系统提示词 - {system_prompt}")
             self.print(f"信息内容 - {messages}")
 
@@ -135,7 +138,7 @@ class SimpleExecutor(Base):
             # 测试成功
             if skip == False:
                 self.info("接口测试成功 ...")
-                self.info(f"接口返回信息 - {response_content}")
+                self.info("接口已返回响应")
                 # 储存结果
                 success.append(api_key)
 
@@ -151,7 +154,7 @@ class SimpleExecutor(Base):
         self.print("")
         self.info(f"接口测试结果：共测试 {len(api_keys)} 个接口，成功 {len(success)} 个，失败 {len(failure)} 个 ...")
         if len(failure) >0:
-            self.error(f"失败的接口密钥 - {', '.join(failure)}")
+            self.error(f"失败的接口密钥数量 - {len(failure)}")
         self.print("")
 
         # 发送完成事件

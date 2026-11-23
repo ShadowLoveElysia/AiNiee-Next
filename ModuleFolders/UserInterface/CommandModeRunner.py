@@ -109,6 +109,9 @@ def _skills_task_argument_names(args) -> list[str]:
         ("target_lang", "--target"),
         ("project_type", "--type"),
         ("resume", "--resume"),
+        ("strict_export", "--strict-export"),
+        ("glossary_impact", "--glossary-impact"),
+        ("glossary_impact_suggestions", "--glossary-impact-suggestions"),
         ("non_interactive", "--yes"),
         ("threads", "--threads"),
         ("retry", "--retry"),
@@ -361,8 +364,19 @@ class CommandModeRunner:
             console.print("[red]Error: --manga currently only supports the translate task.[/red]")
             return 2
 
+        if getattr(args, "glossary_impact_suggestions", False) and not getattr(args, "glossary_impact", None):
+            console.print("[red]--glossary-impact-suggestions requires --glossary-impact.[/red]")
+            return 2
+        if getattr(args, "glossary_impact", None) and (getattr(args, "runtime_overrides", None)
+                or getattr(args, "step_overrides", None) or getattr(args, "workflow_file", None)):
+            console.print("[red]--glossary-impact cannot be combined with workflow overrides.[/red]")
+            return 2
+        if getattr(args, "glossary_impact", None) and args.task != "export":
+            console.print("[red]--glossary-impact requires export and a cached project.[/red]")
+            return 2
         if (getattr(args, "runtime_overrides", None) or getattr(args, "step_overrides", None)
-                or getattr(args, "workflow_file", None)) and not getattr(args, "manga", False):
+                or getattr(args, "workflow_file", None)
+                or (args.task == "queue" and getattr(args, "strict_export", False))) and not getattr(args, "manga", False):
             return self._run_configured_workflow(args)
 
         if args.profile:
@@ -370,6 +384,11 @@ class CommandModeRunner:
 
         if args.rules_profile:
             self.host.switch_active_rules_profile(args.rules_profile)
+
+        if getattr(args, "strict_export", False):
+            runtime = dict(getattr(self.host, "runtime_config_overrides", {}) or {})
+            runtime["strict_export"] = True
+            self.host.runtime_config_overrides = runtime
 
         if getattr(args, "execution_mode", None) is None:
             args.execution_mode = str(
@@ -414,11 +433,14 @@ class CommandModeRunner:
             if not args.input_path:
                 console.print("[red]Error: input_path is required for export.[/red]")
                 return 2
-            self.host.run_export_only(
+            result = self.host.run_export_only(
                 target_path=args.input_path,
                 non_interactive=args.non_interactive,
+                strict_export=getattr(args, "strict_export", False),
+                glossary_impact=getattr(args, "glossary_impact", None),
+                glossary_impact_suggestions=getattr(args, "glossary_impact_suggestions", False),
             )
-            return 0
+            return result or 0
 
         return 0
 
@@ -429,6 +451,8 @@ class CommandModeRunner:
         from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import merge_runtime_overrides
         from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV
 
+        if getattr(args, "strict_export", False):
+            args.runtime_overrides = merge_runtime_overrides(args.runtime_overrides, {"strict_export": True})
         if args.task == "queue":
             from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
             manager = QueueManager()

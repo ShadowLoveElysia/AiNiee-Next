@@ -5,6 +5,9 @@ from typing import Type
 
 from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 from ModuleFolders.Infrastructure.Cache.CacheProject import CacheProject
+from ModuleFolders.Domain.FileOutputer.ExportAudit import (
+    IncompleteExportError, build_export_audit, write_export_audit,
+)
 from ModuleFolders.Domain.FileOutputer.AutoTypeWriter import AutoTypeWriter
 from ModuleFolders.Domain.FileOutputer.BaseWriter import BaseTranslationWriter, OutputConfig, TranslationOutputConfig, WriterInitParams, BilingualOrder
 from ModuleFolders.Domain.FileOutputer.DirectoryWriter import DirectoryWriter
@@ -96,6 +99,16 @@ class FileOutputer:
         
         self.last_output_files = []
         output_config = dict(output_config)
+        audit = build_export_audit(cache_data)
+        self.last_export_audit_path = str(write_export_audit(audit, output_path))
+        if audit["blocking_issues"]:
+            from ModuleFolders.Base.Base import Base
+            Base().warning(f"Export has {audit['blocking_issues']} incomplete/structural issues; see {self.last_export_audit_path}")
+        if output_config.get("strict_export", getattr(task_config, "strict_export", False)) and audit["blocking_issues"]:
+            raise IncompleteExportError(
+                f"Export blocked by {audit['blocking_issues']} incomplete/structural issues; "
+                f"see {self.last_export_audit_path}"
+            )
         for key, default in {**UTILITY_DEFAULTS, **EXPORT_DEFAULTS,
                              "epub_language_update_mode": "auto", "interface_language": "zh_CN",
                              "target_language": "Chinese", "source_language": "auto"}.items():

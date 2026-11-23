@@ -721,51 +721,27 @@ class CacheManager(Base):
         if tail_count == 0 or tail_count > extra_lines + 2:
             return chunks
 
-        if mode == "tail":
-            overflow = tail_count - extra_lines
-            if overflow <= 0:
-                return chunks
-
-            candidates = chunks[:-1]
-            if len(candidates) < 2:
-                return chunks
-
-            optimized = [list(chunk) for chunk in candidates]
-            tail = list(tail_chunk)
-            index = len(optimized) - 2
-            while overflow > 0 and index >= 0:
-                room = max(0, (limit_count + 2) - len(optimized[index]))
-                take_count = min(2, room, overflow, len(tail))
-                if take_count > 0:
-                    optimized[index].extend(tail[:take_count])
-                    tail = tail[take_count:]
-                    overflow -= take_count
-                index -= 1
-
-            if overflow == 0 and len(tail) <= extra_lines:
-                return optimized + [tail]
+        # Redistribute sizes, then slice the original sequence so context stays adjacent.
+        sizes = [len(chunk) for chunk in chunks[:-1]]
+        absorb_count = max(0, tail_count - extra_lines) if mode == "tail" else tail_count
+        if not absorb_count:
             return chunks
-
-        absorb_count = tail_count
-        candidates = chunks[:-1]
-        if not candidates:
+        candidates = range(len(sizes) - (2 if mode == "tail" else 1), -1, -1)
+        remaining = absorb_count
+        for index in candidates:
+            take = min(2, max(0, limit_count + 2 - sizes[index]), remaining)
+            sizes[index] += take
+            remaining -= take
+        if remaining:
             return chunks
-
-        optimized = [list(chunk) for chunk in candidates]
-        tail = list(tail_chunk)
-        index = len(optimized) - 1
-        while absorb_count > 0 and index >= 0:
-            room = max(0, (limit_count + 2) - len(optimized[index]))
-            take_count = min(2, room, absorb_count, len(tail))
-            if take_count > 0:
-                optimized[index].extend(tail[:take_count])
-                tail = tail[take_count:]
-                absorb_count -= take_count
-            index -= 1
-
-        if absorb_count == 0:
-            return optimized
-        return chunks
+        if tail_count > absorb_count:
+            sizes.append(tail_count - absorb_count)
+        items = [item for chunk in chunks for item in chunk]
+        result, offset = [], 0
+        for size in sizes:
+            result.append(items[offset:offset + size])
+            offset += size
+        return result
 
     # 生成待翻译片段
     def generate_item_chunks(self, limit_type: str, limit_count: int, previous_line_count: int, task_mode,

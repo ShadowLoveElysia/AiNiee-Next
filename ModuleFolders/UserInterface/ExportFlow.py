@@ -42,7 +42,7 @@ class ExportFlow:
             elif item.polished_text and item.polished_text.strip():
                 item.translation_status = TranslationStatus.POLISHED
 
-    def run_export_only(self, target_path=None, non_interactive=False):
+    def run_export_only(self, target_path=None, non_interactive=False, strict_export=False, glossary_impact=None, glossary_impact_suggestions=False):
         from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
 
         if target_path is None:
@@ -57,17 +57,17 @@ class ExportFlow:
             cache_path = selected_cache
             output_path = os.path.dirname(os.path.dirname(cache_path))
             target_path = self._infer_source_target(output_path)
-            if not target_path:
+            if not target_path and not glossary_impact:
                 console.print(
                     f"[red]Unable to locate the original input for cache: {cache_path}[/red]"
                 )
-                return
+                return 1
         elif os.path.isdir(target_path):
             target_path = self._maybe_switch_to_single_file(target_path)
 
-        if not os.path.exists(target_path):
+        if not (selected_cache and glossary_impact) and not os.path.exists(target_path):
             console.print(f"[red]Error: Input path '{target_path}' not found.[/red]")
-            return
+            return 1
 
         if not selected_cache:
             abs_input = os.path.abspath(target_path)
@@ -91,18 +91,38 @@ class ExportFlow:
                 output_path, "cache", "AinieeCacheData_proofread.json"
             )
         if not cache_path:
-            return
+            return 1 if non_interactive else 0
 
         try:
             with console.status(f"[cyan]{self.i18n.get('msg_export_started')}[/cyan]"):
                 if hasattr(self.host.cache_manager, "flush_pending_save"):
                     self.host.cache_manager.flush_pending_save()
                 project = CacheManager.read_from_file(cache_path)
+                if glossary_impact:
+                    from ModuleFolders.Service.GlossaryAnalysis.GlossaryImpact import write_glossary_impact
+                    report_path = write_glossary_impact(project, *glossary_impact, output_path)
+                    console.print(f"Glossary impact: {report_path}")
+                    if glossary_impact_suggestions:
+                        import json
+                        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
+                        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+                        from ModuleFolders.Service.GlossaryAnalysis.GlossaryImpact import generate_impact_suggestions
+                        from pathlib import Path
+                        config = TaskConfig()
+                        config.load_config_from_dict(self.host.config)
+                        config.prepare_for_translation(TaskType.TRANSLATION)
+                        result = generate_impact_suggestions(
+                            project, json.loads(Path(report_path).read_text(encoding="utf-8")),
+                            glossary_impact[1], config, output_path,
+                        )
+                        console.print(f"Review suggestions generated: {result['suggestions']}; cache unchanged")
+                    return 0
                 if self._is_proofread_cache(cache_path):
                     self._normalize_ai_proofread_status_for_export(project)
                 self.host.task_executor.config.initialize(self.host.config)
                 config = self.host.task_executor.config
                 output_config = {
+                    "strict_export": strict_export or bool(getattr(config, "strict_export", False)),
                     "translated_suffix": config.output_filename_suffix,
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
@@ -129,9 +149,11 @@ class ExportFlow:
             console.print(f"[dim]Output: {output_path}[/dim]")
         except Exception as exc:
             console.print(f"[red]Export Error: {exc}[/red]")
+            return 1
 
         if not non_interactive:
             Prompt.ask(f"\n{self.i18n.get('msg_press_enter')}")
+        return 0
 
     @staticmethod
     def _cache_path_from_input(path):

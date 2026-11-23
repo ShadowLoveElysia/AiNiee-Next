@@ -2353,8 +2353,8 @@ class CLIMenu:
             skip_preflight=True,
         )
 
-    def run_export_only(self, target_path=None, non_interactive=False):
-        self.export_flow.run_export_only(target_path, non_interactive)
+    def run_export_only(self, target_path=None, non_interactive=False, strict_export=False, glossary_impact=None, glossary_impact_suggestions=False):
+        return self.export_flow.run_export_only(target_path, non_interactive, strict_export, glossary_impact, glossary_impact_suggestions)
 
     def run_manga_translation(self):
         start_path = self.config.get("label_input_path", ".")
@@ -2581,6 +2581,9 @@ def main():
     # 运行策略
     parser.add_argument('-r', '--resume', action='store_true', help=i18n.get('help_resume'))
     parser.add_argument('-y', '--yes', action='store_true', dest='non_interactive', help=i18n.get('help_yes'))
+    parser.add_argument('--strict-export', action='store_true', help='Block export on incomplete items or high-severity structural errors; always write a completion report.')
+    parser.add_argument('--glossary-impact-suggestions', action='store_true', help='Use the selected model to generate glossary-change suggestions for review; requires --glossary-impact and makes API requests.')
+    parser.add_argument('--glossary-impact', nargs=2, metavar=('OLD_RULES', 'NEW_RULES'), help='Compare two glossary JSON files against the selected cache without translation.')
     parser.add_argument('--runtime-overrides', help='JSON object of per-run settings; omitted fields inherit')
     parser.add_argument('--step-overrides', help='JSON object of settings by workflow step ID')
     parser.add_argument('--workflow-file', help='Workflow JSON file to execute with this task')

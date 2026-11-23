@@ -21,13 +21,17 @@ class OfficeFileConverter(BaseFileConverter):
 
         pythoncom.CoInitialize()
         try:
-            self.office = client.Dispatch("Word.Application")
+            self.office = client.DispatchEx("Word.Application")
             self.office.Visible = False  # 不显示 Word 界面
             self.office.DisplayAlerts = False  # 关闭所有弹窗
-            self.office.AutomationSecurity = 1  # 禁用宏和安全性弹窗（重要！）
+            self.office.AutomationSecurity = 3  # msoAutomationSecurityForceDisable
             return self
         except Exception as e:
-            pythoncom.CoUninitialize()
+            try:
+                if getattr(self, "office", None) is not None:
+                    self.office.Quit()
+            finally:
+                pythoncom.CoUninitialize()
             raise RuntimeError("不能打开Word程序，请确保安装了 Microsoft Office") from e
 
     def __exit__(self, exc_type, exc, exc_tb):
@@ -36,10 +40,12 @@ class OfficeFileConverter(BaseFileConverter):
         except ImportError:
             return
 
-        # Dispatch函数会复用已有的Word进程，多次退出会导致后面的com对象没有Quit函数
-        if self.office and hasattr(self.office, 'Quit'):
-            self.office.Quit()
-        pythoncom.CoUninitialize()
+        try:
+            if getattr(self, "office", None) is not None:
+                self.office.Quit()
+        finally:
+            self.office = None
+            pythoncom.CoUninitialize()
 
     def can_convert(self, input_file_path: Path, output_file_path: Path) -> bool:
         # 输出文件类型不在类型映射中暂不支持

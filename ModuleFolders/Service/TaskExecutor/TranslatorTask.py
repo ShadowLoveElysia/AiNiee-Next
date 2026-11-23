@@ -1,4 +1,5 @@
 import copy
+from contextlib import nullcontext
 import threading
 import re
 import time
@@ -343,6 +344,35 @@ class TranslatorTask(Base):
         if not self._prepared:
             self.prepare(self.config.target_platform)
         return self.unit_translation_task()
+
+    def _commit_translation_result(self, restored, session_id):
+        # The project lock keeps cache snapshots from separating text and memory commits.
+        if len(restored) != len(self.items):
+            raise ValueError("Translation commit requires one result per cache item")
+        scope = getattr(self, "commit_scope", nullcontext)
+        with scope():
+            before = [(item, item.model, item.translated_text, item.translation_status) for item in self.items]
+            try:
+                for item, response in zip(self.items, restored.values()):
+                    if not Base.is_task_session_active(session_id):
+                        raise RuntimeError("Task session ended before translation commit")
+                    with item.atomic_scope():
+                        item.model = self.config.model
+                        item.translated_text = response
+                        item.translation_status = TranslationStatus.TRANSLATED
+                if not Base.is_task_session_active(session_id):
+                    raise RuntimeError("Task session ended before memory commit")
+                if self._pending_consistency_update and callable(self.consistency_state_updater):
+                    self.consistency_state_updater(
+                        self._pending_consistency_update.get("story_summary", ""),
+                        self._pending_consistency_update.get("character_info", ""),
+                    )
+            except Exception:
+                for item, model, text, status in before:
+                    with item.atomic_scope():
+                        item.model, item.translated_text, item.translation_status = model, text, status
+                raise
+
 
     def _build_translation_consistency_tools(self) -> list[dict]:
         if self.config.target_language in ("chinese_simplified", "chinese_traditional"):
@@ -760,28 +790,7 @@ class TranslatorTask(Base):
         else:
             if not Base.is_task_session_active(session_id):
                 return {}
-            # 更新译文结果到缓存数据中
-            for item, response in zip(self.items, restore_response_dict.values()):
-                if not Base.is_task_session_active(session_id):
-                    return {}
-                with item.atomic_scope():
-                    if not Base.is_task_session_active(session_id):
-                        return {}
-                    item.model = self.config.model
-                    item.translated_text = response
-                    item.translation_status = TranslationStatus.TRANSLATED
-
-            if not Base.is_task_session_active(session_id):
-                return {}
-
-            if self._pending_consistency_update and callable(self.consistency_state_updater):
-                try:
-                    self.consistency_state_updater(
-                        self._pending_consistency_update.get("story_summary", ""),
-                        self._pending_consistency_update.get("character_info", ""),
-                    )
-                except Exception as e:
-                    self.warning(f"[{self.task_id}] Failed to update consistency memory: {e}")
+            self._commit_translation_result(restore_response_dict, session_id)
 
             # 打印成功日志
             if Base.work_status != Base.STATUS.STOPING and Base.is_task_session_active(session_id):

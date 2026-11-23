@@ -28,6 +28,7 @@ class GgufTranslator:
         self.family = checkpoint.family if checkpoint else family
         self.on_partial = on_partial
         self.max_new_tokens = max_new_tokens
+        self.context_size = context_size
         if not isinstance(cpu_threads, int) or cpu_threads < 1:
             raise ValueError("CPU threads must be positive")
         if not isinstance(context_size, int) or context_size < 2048:
