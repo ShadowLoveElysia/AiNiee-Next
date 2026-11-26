@@ -407,8 +407,7 @@ class CommandModeRunner:
         }
 
         if args.task == "queue":
-            self._run_queue(args)
-            return 0
+            return self._run_queue(args)
 
         if args.task in task_map:
             if not args.input_path:
@@ -464,8 +463,7 @@ class CommandModeRunner:
                     task.step_overrides.update(copy.deepcopy(args.step_overrides))
             if not manager.save_tasks():
                 return 2
-            self._run_queue(args)
-            return 0
+            return self._run_queue(args)
         payload = select_task_contract_fields(vars(args))
         payload["task_type"] = args.task
         payload["web_mode"] = bool(getattr(args, "web_mode", False))
@@ -581,30 +579,49 @@ class CommandModeRunner:
                 self.host.config[manga_key] = manga_value
 
     def _run_queue(self, args):
+        import json
+        import sys
         from ModuleFolders.Service.TaskQueue.QueueManager import QueueManager
+        from ModuleFolders.Service.TaskQueue.QueueOutcome import QUEUE_RESULT_PREFIX, summarize_queue
 
         queue_manager = QueueManager()
         if args.queue_file:
             queue_manager.load_tasks(args.queue_file)
 
+        def finish(result):
+            # The API worker consumes this bounded metadata, never translated text or credentials.
+            print(QUEUE_RESULT_PREFIX + json.dumps(result, ensure_ascii=False), file=sys.stdout, flush=True)
+            return result["exit_code"]
+
         if not queue_manager.tasks:
             console.print(f"[red]Error: Task queue is empty (File: {queue_manager.queue_file}). Cannot run queue task.[/red]")
-            return
+            return finish(summarize_queue([], error=getattr(queue_manager, "last_run_error", None) or "QUEUE_EMPTY"))
 
         console.print(f"[bold green]Running Task Queue ({len(queue_manager.tasks)} items)...[/bold green]")
         self.host._is_queue_mode = True
         self.host.start_queue_log_monitor()
-        queue_manager.start_queue(self.host)
-
         try:
+            queue_manager.start_queue(self.host)
             while queue_manager.is_running:
-                time.sleep(1)
+                time.sleep(0.1)
         except KeyboardInterrupt:
             Base.cancel_active_task_session()
             Base.work_status = Base.STATUS.STOPING
+            queue_manager.request_automation_stop()
+            # The queue runner owns workflow children and finishes their cleanup before returning.
+            queue_manager.wait_for_completion()
         finally:
             self.host.stop_queue_log_monitor()
             self.host._is_queue_mode = False
+
+        result = getattr(queue_manager, "run_result", None)
+        if result is None:
+            result = summarize_queue(
+                queue_manager.tasks,
+                stopped=Base.work_status == Base.STATUS.STOPING,
+                error=getattr(queue_manager, "last_run_error", None),
+            )
+        return finish(result)
 
     def _run_all_in_one(self, args):
         if args.input_path:

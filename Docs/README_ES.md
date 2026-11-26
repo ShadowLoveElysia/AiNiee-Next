@@ -4,7 +4,7 @@
 
 AiNiee-Next es una herramienta de traducción por lotes basada en grandes modelos de lenguaje. Permite procesar novelas, libros electrónicos, documentos, subtítulos, textos de juegos, manga y subtítulos de audio y vídeo en tiempo real.
 
-Su núcleo funciona mediante la línea de comandos y menús interactivos de terminal (CLI/TUI). También ofrece un panel web, una ventana de escritorio e interfaces MCP y Skills para clientes de IA externos. Sirve tanto para traducir rápidamente un solo archivo como para procesar series extensas y tareas por lotes de forma continuada.
+Su núcleo funciona mediante la línea de comandos y menús interactivos de terminal (CLI/TUI). También ofrece un panel web e interfaces MCP y Skills para clientes de IA externos. Sirve tanto para traducir rápidamente un solo archivo como para procesar series extensas y tareas por lotes de forma continuada.
 
 [Descargar el ZIP con el código fuente más reciente](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Descarga una copia completa del código fuente del último commit de la rama predeterminada. Descomprime el archivo primero; en Windows, abre la carpeta del proyecto extraído y ejecuta `Windows prepare.bat` y después `Windows launch.bat`.
 
@@ -48,12 +48,9 @@ En el primer inicio se abrirá el asistente de configuración. Sigue sus indicac
 4. Si se interrumpe la conexión o detienes la tarea manualmente, la próxima vez selecciona el mismo proyecto y restaura su caché para continuar desde donde se quedó. Las partes ya traducidas no se volverán a solicitar.
 5. Al terminar, puedes exportar el resultado directamente o revisarlo primero con el editor de terminal integrado o las funciones de corrección.
 
-### 4. Abrir el panel web o la aplicación de escritorio
+### 4. Abrir el panel web
 
-Si prefieres trabajar en el navegador, especialmente para consultar gráficos estadísticos, editar la caché por páginas o utilizar el editor de manga, puedes iniciar el panel web desde el menú principal de la terminal. También puedes usar los scripts de inicio de escritorio desde la línea de comandos:
-
-- **Windows**: ejecuta `Tools\TauriShell\LaunchGUI.bat`.
-- **Linux / macOS**: ejecuta `Tools/TauriShell/LaunchGUI.sh`.
+Si prefieres trabajar en el navegador, especialmente para consultar gráficos estadísticos, editar la caché por páginas o utilizar el editor de manga, puedes iniciar el panel web desde el menú principal de la terminal.
 
 ### 5. Usar manga, interpretación en tiempo real y vídeo sin conexión
 
@@ -82,7 +79,6 @@ Estos tres módulos tienen dependencias de inferencia y modelos de mayor tamaño
 | MCP | [Integración del servicio](../Tools/MCPServer/README.md) · [Guía del cliente](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
 | Skills | [Llamadas HTTP, CLI y Python](../Tools/Skills/README.md) |
 | Agent | [Guía de Headless Agent](../Tools/Agent/README.md) |
-| Escritorio | [Inicio y compilación de Tauri](../Tools/TauriShell/README.md) |
 | Desarrollo de extensiones | [Crear plugins](../PluginScripts/README.md) · [Crear Readers / Writers](../ModuleFolders/Domain/FileAccessor/README.md) |
 | Textos de juegos | [Guía de StevExtraction](../Tools/StevExtraction/使用说明.md) |
 | Actualizaciones | [Registro de cambios](update_log.md) |

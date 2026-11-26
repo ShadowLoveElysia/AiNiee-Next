@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hashlib
 import inspect
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,7 +24,11 @@ RESOURCE_ROOT = os.path.join(PROJECT_ROOT, "Resource")
 ROOT_CONFIG_FILE = os.path.join(RESOURCE_ROOT, "config.json")
 PROFILES_PATH = os.path.join(RESOURCE_ROOT, "profiles")
 
-from Tools.MCPServer.runtime import inspect_mcp_runtime
+from Tools.MCPServer.runtime import REQUIRED_MODULE_SPECS, inspect_mcp_runtime
+from Tools.MCPServer.api_transport import (
+    download_api_file, match_route, normalize_public_api_path, render_path_template,
+    route_response_kind,
+)
 from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import ensure_agent_batch_change_confirmed
 from Tools.MCPServer.agent_session import get_external_agent_session_registry
 from ModuleFolders.Service.Agent.ExternalAgentBatch import (
@@ -125,6 +131,7 @@ DEFAULT_BACKEND_PORT = int(
     )
 )
 DEFAULT_MCP_AUTH_TOKEN = os.environ.get("AINIEE_MCP_AUTH_TOKEN", "")
+RUNTIME_HEADER = "X-AiNiee-Runtime-Id"
 DEFAULT_REGISTER_ROUTE_TOOLS = (
     os.environ.get("AINIEE_MCP_REGISTER_ROUTE_TOOLS", "").strip().lower()
     in {"1", "true", "yes", "on"}
@@ -180,7 +187,20 @@ def _tf_from_host(host_cli: Any, key: str, default: str, **kwargs: Any) -> str:
         return default.format(**kwargs)
 
 
-class EmbeddedWebServerController:
+def _loaded_api_owner():
+    """Inspect an existing in-process owner without importing the API runtime."""
+    api_server = sys.modules.get("Tools.APIServer.server")
+    if api_server is None:
+        return None
+    owner = api_server.get_active_owner()
+    return (api_server, owner) if owner is not None else None
+
+
+class EmbeddedAPIController:
+    """Attach to the API owner before importing or constructing a local runtime."""
+
+    _lifecycle_lock = threading.RLock()
+
     def __init__(
         self,
         host: str,
@@ -201,32 +221,42 @@ class EmbeddedWebServerController:
         self.started_by_self = False
         self.thread = None
         self.ws_module = None
+        self.server_module = None
+        self.runtime_id: str | None = None
+        self.ready = False
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return f"http://{_normalize_client_probe_host(self.host)}:{self.port}"
 
     def start(self) -> None:
-        if self.mcp_auth_token:
-            os.environ["AINIEE_MCP_AUTH_TOKEN"] = self.mcp_auth_token
+        with self._lifecycle_lock:
+            if self.ready:
+                return
+            if self.started_by_self and not self.stop():
+                raise RuntimeError("Previous API owner shutdown is incomplete; cannot start another owner.")
+            self._start()
 
-        import Tools.WebServer.web_server as ws_module
-
-        self.ws_module = ws_module
-        if self.mcp_auth_token:
-            # WebServer may have been imported before MCP generated its bridge token.
-            ws_module.MCP_AUTH_TOKEN = self.mcp_auth_token
-        if self.host_cli is not None:
-            try:
-                self.host_cli.web_runtime_bridge._configure_web_handlers(ws_module)
-            except Exception:
-                pass
-
+    def _start(self) -> None:
+        local = _loaded_api_owner()
+        if local is not None:
+            api_server, owner = local
+            self.host, self.port = owner["host"], owner["port"]
+            self.mcp_auth_token = api_server.bind_mcp_auth_token_if_unset(self.mcp_auth_token)
+            self._verify_reused_backend_access()
+            self.ready = True
+            return
         if _is_port_open(self.host, self.port):
             self._verify_reused_backend_access()
+            self.ready = True
             return
 
-        self.thread = ws_module.run_server(
+        from Tools.APIServer import server as api_server
+
+        self.server_module = api_server
+        api_server.set_mcp_auth_token(self.mcp_auth_token)
+        self.ws_module = api_server.get_application()
+        self.thread = api_server.run_server(
             host=self.host,
             port=self.port,
             monitor_mode=False,
@@ -234,59 +264,91 @@ class EmbeddedWebServerController:
             allow_remote_access=self.allow_remote_access,
         )
         self.started_by_self = self.thread is not None
-
-        deadline = time.time() + self.startup_timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + self.startup_timeout
+        while time.monotonic() < deadline:
             if _is_port_open(self.host, self.port):
-                return
-            current_server = getattr(self.ws_module, "_current_server", None)
-            if current_server is not None and getattr(current_server, "is_running", False):
+                self._verify_reused_backend_access()
+                self.ready = True
                 return
             if self.thread is not None and not self.thread.is_alive():
                 break
-            time.sleep(0.2)
-
-        raise RuntimeError(
-            _tf_from_host(
-                self.host_cli,
-                "msg_mcp_embedded_web_start_failed",
-                "Embedded WebServer failed to start on {host}:{port}.",
-                host=self.host,
-                port=self.port,
-            )
-        )
+            time.sleep(0.1)
+        raise RuntimeError(f"Embedded API server failed to start on {self.host}:{self.port}.")
 
     def _verify_reused_backend_access(self) -> None:
-        """Verify that an already-running backend accepts this MCP bridge token."""
         import requests
 
         try:
             response = requests.get(
-                f"{self.base_url}/api/config",
+                f"{self.base_url}/api/system/runtime",
                 headers={
                     MCP_CALLER_HEADER: MCP_CALLER_VALUE,
                     MCP_AUTH_HEADER: self.mcp_auth_token,
                 },
                 timeout=min(max(self.startup_timeout, 0.5), 5.0),
+                allow_redirects=False,
             )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Unable to verify the existing WebServer MCP bridge token at {self.base_url}."
-            ) from exc
-
-        if response.status_code < 200 or response.status_code >= 300:
-            raise RuntimeError(
-                "The existing WebServer rejected the MCP bridge token. "
-                "Start both processes with the same AINIEE_MCP_AUTH_TOKEN or use a free backend port."
-            )
-
-    def stop(self) -> None:
-        if not self.started_by_self or self.ws_module is None:
-            return
+        except requests.RequestException as exc:
+            raise RuntimeError("Unable to verify the existing API owner.") from exc
         try:
-            self.ws_module.stop_server()
-        except Exception:
-            pass
+            if response.status_code != 200:
+                raise RuntimeError(
+                    "The existing API server rejected the bridge identity check. "
+                    "Use the same AINIEE_MCP_AUTH_TOKEN and a compatible API owner."
+                )
+            identity = response.json()
+            verified_runtime = response.headers.get(RUNTIME_HEADER)
+        except ValueError as exc:
+            raise RuntimeError("The existing API server returned an invalid runtime identity.") from exc
+        finally:
+            response.close()
+        normalized_root = os.path.normcase(os.path.realpath(PROJECT_ROOT))
+        expected_workspace = hashlib.sha256(normalized_root.encode("utf-8")).hexdigest()
+        if (
+            not isinstance(identity, dict)
+            or identity.get("workspace_id") != expected_workspace
+            or identity.get("api_version") != "1"
+            or not isinstance(identity.get("runtime_id"), str)
+            or not identity["runtime_id"]
+        ):
+            raise RuntimeError("The existing API owner belongs to another workspace or API version.")
+        if verified_runtime != identity["runtime_id"]:
+            raise RuntimeError("The API owner did not confirm runtime identity binding; update the owner before connecting.")
+        if self.runtime_id and identity["runtime_id"] != self.runtime_id:
+            raise RuntimeError("The API owner changed; reconnect before continuing task operations.")
+        self.runtime_id = identity["runtime_id"]
+
+    def stop(self) -> bool:
+        with self._lifecycle_lock:
+            if not self.started_by_self or self.server_module is None:
+                return True
+            stopped = self.server_module.stop_server()
+            if stopped is False or (self.thread is not None and self.thread.is_alive()):
+                return False
+            self.started_by_self = False
+            self.ready = False
+            self.thread = None
+            return True
+
+    def wait_for_shutdown(self) -> None:
+        if not self.stop():
+            _write_startup_notice("Owned API backend shutdown incomplete; retaining ownership and retrying.")
+            while True:
+                time.sleep(0.5)
+                if self.stop():
+                    return
+
+
+# Preserve launcher integrations that imported the former controller name.
+EmbeddedWebServerController = EmbeddedAPIController
+
+
+class APIRequestError(RuntimeError):
+    def __init__(self, status: int, path: str, detail: Any):
+        self.status = status
+        self.path = path
+        self.detail = detail
+        super().__init__(f"{status} {path}: {detail}")
 
 
 class AiNieeAPIClient:
@@ -294,6 +356,17 @@ class AiNieeAPIClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.mcp_auth_token = mcp_auth_token
+        self.runtime_id: str | None = None
+
+    @property
+    def headers(self) -> dict[str, str]:
+        if not self.runtime_id:
+            raise RuntimeError("API client is not bound to a verified runtime.")
+        return {
+            MCP_CALLER_HEADER: MCP_CALLER_VALUE,
+            MCP_AUTH_HEADER: self.mcp_auth_token,
+            RUNTIME_HEADER: self.runtime_id,
+        }
 
     def request(
         self,
@@ -302,31 +375,47 @@ class AiNieeAPIClient:
         *,
         params: Optional[Dict[str, Any]] = None,
         payload: Optional[Any] = None,
+        confirm_advanced_change: bool = False,
+        confirm_agent_batch_change: bool = False,
     ) -> Any:
         import requests
 
+        headers = self.headers
+        if path == "/api/config":
+            if confirm_advanced_change is True:
+                headers["X-AiNiee-Confirm-Advanced"] = "true"
+            if confirm_agent_batch_change is True:
+                headers["X-AiNiee-Confirm-Agent-Batch"] = "true"
         response = requests.request(
             method=method.upper(),
             url=f"{self.base_url}{path}",
             params=params,
             json=payload,
-            headers={
-                MCP_CALLER_HEADER: MCP_CALLER_VALUE,
-                MCP_AUTH_HEADER: self.mcp_auth_token,
-            },
+            headers=headers,
             timeout=self.timeout,
+            allow_redirects=False,
         )
-
         try:
-            data = response.json()
-        except Exception:
-            data = response.text
-
-        if response.status_code >= 400:
-            raise RuntimeError(f"{response.status_code} {path}: {data}")
-
-        # 再做一层兜底脱敏，避免未来新增接口忘记在 WebServer 里声明 MCP 侧限制。
-        return sanitize_data_for_mcp(data, path=path)
+            if 300 <= response.status_code < 400:
+                raise APIRequestError(response.status_code, path, "API redirects are not followed.")
+            header = response.headers.get("Content-Type", "")
+            media_type = header.split(";", 1)[0].lower() if isinstance(header, str) else ""
+            if media_type and media_type != "application/json" and not media_type.endswith("+json"):
+                if response.status_code >= 400:
+                    raise APIRequestError(response.status_code, path, "Non-JSON API error response.")
+                raise ValueError("This endpoint returns file or streaming content; use download_file for declared file routes.")
+            if response.status_code == 204:
+                return None
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ValueError("The API returned an invalid JSON response.") from exc
+            data = sanitize_data_for_mcp(data, path=path)
+            if response.status_code >= 400:
+                raise APIRequestError(response.status_code, path, data)
+            return data
+        finally:
+            response.close()
 
 
 def _patch_streamable_http_shutdown_for_windows() -> None:
@@ -599,20 +688,7 @@ def _try_get_reusable_mcp_service_url(transport: str, host: str, port: int, path
 
 
 def _render_path_template(path_template: str, path_params: Optional[Dict[str, Any]] = None) -> str:
-    rendered_path = path_template
-    path_params = path_params or {}
-
-    required_params = re.findall(r"{([^}]+)}", path_template)
-    missing = [name for name in required_params if name not in path_params]
-    if missing:
-        raise ValueError(
-            f"Missing path parameter(s) for {path_template}: {', '.join(missing)}"
-        )
-
-    for key, value in path_params.items():
-        rendered_path = rendered_path.replace(f"{{{key}}}", str(value))
-
-    return rendered_path
+    return render_path_template(path_template, path_params)
 
 
 def _sanitize_tool_name(method: str, path: str) -> str:
@@ -645,7 +721,7 @@ def _extract_api_routes(ws_module) -> List[Dict[str, str]]:
             continue
 
         for method in sorted(methods):
-            if method not in {"GET", "POST", "PUT", "DELETE"}:
+            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
                 continue
 
             route_key = (method, path)
@@ -658,6 +734,8 @@ def _extract_api_routes(ws_module) -> List[Dict[str, str]]:
                     "method": method,
                     "path": path,
                     "tool_name": _sanitize_tool_name(method, path),
+                    "category": (getattr(route, "tags", None) or [_route_category(path)])[0],
+                    "operation_id": getattr(route, "operation_id", None) or getattr(route, "name", ""),
                 }
             )
 
@@ -670,7 +748,7 @@ def _route_category(path: str) -> str:
     parts = stripped.split("/")
     if len(parts) < 2:
         return "misc"
-    return parts[1]
+    return parts[2] if re.fullmatch(r"v\d+", parts[1]) and len(parts) > 2 else parts[1]
 
 
 def _filter_routes_by_category(
@@ -680,7 +758,7 @@ def _filter_routes_by_category(
     normalized = (category or "all").strip().lower().replace(" ", "_")
     if normalized in {"all", "*"}:
         return routes
-    return [route for route in routes if _route_category(route["path"]) == normalized]
+    return [route for route in routes if route.get("category", _route_category(route["path"])) == normalized]
 
 
 def _build_route_index(
@@ -693,34 +771,28 @@ def _build_route_index(
         item = {
             "method": route["method"],
             "path": route["path"],
-            "category": _route_category(route["path"]),
+            "category": route.get("category", _route_category(route["path"])),
         }
-        if route_tools_exposed:
+        if route_tools_exposed and route_response_kind(route) == "json":
             item["route_tool_name"] = route["tool_name"]
         route_index.append(item)
     return route_index
 
 
 def _normalize_public_api_path(path: str) -> str:
-    normalized = path if path.startswith("/") else f"/{path}"
-    if not _is_public_api_route(normalized):
-        raise ValueError(
-            "Only public /api/* routes are available through MCP. "
-            "Internal routes and non-MCP Web UI paths are not available through this tool."
-        )
-    return normalized
+    return normalize_public_api_path(path)
 
 
-def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str, str]]) -> None:
-    # 自动把 WebServer 的 JSON API 映射成 MCP tools，尽量保持 Web 与 MCP 能力面对齐。
+def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str, Any]], ensure_backend=None) -> None:
+    # Compatibility tools share the same API owner and lifecycle as the generic proxy.
     for route_meta in routes:
-        if route_meta["path"] == "/api/files/upload":
+        if route_response_kind(route_meta) != "json":
             continue
 
         method = route_meta["method"]
         path = route_meta["path"]
         tool_name = route_meta["tool_name"]
-        route_category = _route_category(path)
+        route_category = route_meta.get("category", _route_category(path))
 
         def make_route_tool(route_method: str, route_path: str, route_tool_name: str):
             def route_tool(
@@ -739,11 +811,17 @@ def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str
                 confirm_advanced_change must be true before changing MCP advanced settings.
                 confirm_agent_batch_change requires explicit user consent for batch limit changes.
                 """
+                if ensure_backend is not None:
+                    ensure_backend()
                 _ensure_advanced_change_confirmed(route_path, body, confirm_advanced_change)
                 if route_path == "/api/config":
                     ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
                 rendered_path = _render_path_template(route_path, path_params)
-                return api.request(route_method, rendered_path, params=query, payload=body)
+                confirmations = ({
+                    "confirm_advanced_change": confirm_advanced_change,
+                    "confirm_agent_batch_change": confirm_agent_batch_change,
+                } if route_path == "/api/config" else {})
+                return api.request(route_method, rendered_path, params=query, payload=body, **confirmations)
 
             route_tool.__name__ = route_tool_name
             route_tool.__doc__ = _mcp_tool_doc(
@@ -777,59 +855,6 @@ def _ensure_advanced_change_confirmed(path: str, body: Any, confirmed: bool) -> 
             "Ask the user again, then retry with confirm_advanced_change=true. "
             "The MCP client route may also need to be updated after the change."
         )
-
-
-def _finalize_external_agent_output(ws_module: Any, task_id: str, cache_path: str) -> Dict[str, Any] | None:
-    """Export a completed cache-backed external task once all batches commit."""
-    manager = getattr(ws_module, "task_manager", None)
-    if manager is None or getattr(manager, "task_id", None) != task_id:
-        return None
-    if getattr(manager, "stats", {}).get("execution_mode") != "external_agent":
-        return None
-    input_path = getattr(manager, "external_agent_input_path", None)
-    output_path = getattr(manager, "external_agent_output_path", None)
-    if not input_path or not output_path:
-        return None
-    from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
-    from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-
-    cache_manager = ws_module.get_cache_manager()
-    cache_root = str(Path(cache_path).resolve().parent.parent)
-    cache_manager.load_from_file(cache_root, interactive_recovery=False)
-    config = ws_module._load_active_config_payload()
-    task_config = TaskConfig()
-    task_config.initialize(config)
-    output_config = {
-        "translated_suffix": config.get("output_filename_suffix", "_translated"),
-        "bilingual_suffix": "_bilingual",
-        "bilingual_order": config.get("bilingual_text_order", "source_first"),
-        "enable_bilingual_output": config.get("enable_bilingual_output", False),
-        "epub_layout_mode": config.get("epub_layout_mode", "off"),
-        "sync_metadata_title": config.get("sync_output_metadata_title", False),
-    }
-    FileOutputer().output_translated_content(
-        cache_manager.project,
-        output_path,
-        input_path,
-        output_config,
-        task_config,
-    )
-    manager.external_agent_cache_path = str(Path(cache_path).resolve())
-    manager.update_external_agent_status(
-        "committed",
-        task_id,
-        "All external-Agent batches committed; exporting final output.",
-    )
-    manager.update_external_agent_status(
-        "completed",
-        task_id,
-        "External-Agent cache committed and final output exported.",
-    )
-    return {
-        "status": "exported",
-        "output_path": output_path,
-        "cache_path": str(Path(cache_path).resolve()),
-    }
 
 
 def _export_external_agent_task(
@@ -866,13 +891,9 @@ def _export_external_agent_task(
     from ModuleFolders.Domain.FileOutputer.FileOutputer import FileOutputer
     from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
 
-    try:
-        from Tools.WebServer.web_server import _load_active_config_payload
+    from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import load_effective_config
 
-        config = _load_active_config_payload()
-    except Exception:
-        config = {}
-    cache_manager = get_external_agent_batch_service()
+    config = load_effective_config(create_missing=False)
     from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
 
     loaded_cache = CacheManager()
@@ -912,27 +933,82 @@ def _build_mcp_app(
     path: str,
     host_cli: Any = None,
     register_route_tools: bool = DEFAULT_REGISTER_ROUTE_TOOLS,
-    backend_controller: EmbeddedWebServerController | None = None,
+    backend_controller: EmbeddedAPIController | None = None,
 ):
-    routes: List[Dict[str, str]] = []
+    from Tools.APIServer.catalog import load_api_catalog
+
+    routes: List[Dict[str, Any]] = [
+        {**route, "tool_name": _sanitize_tool_name(route["method"], route["path"])}
+        for route in load_api_catalog()
+        if _is_public_api_route(route["path"])
+    ]
+    binding_lock = threading.Lock()
+    backend_ready = backend_controller is None and ws_module is not None
 
     def _ensure_backend():
-        nonlocal ws_module, routes
-        if ws_module is None:
+        nonlocal backend_ready
+        with binding_lock:
+            if backend_ready:
+                return
             if backend_controller is None:
                 raise RuntimeError("MCP backend controller is unavailable")
-            backend_controller.start()
-            ws_module = backend_controller.ws_module
+            if not backend_controller.ready:
+                backend_controller.start()
+            if not backend_controller.runtime_id:
+                raise RuntimeError("The API owner has no verified runtime identity.")
             api.base_url = backend_controller.base_url
-            routes = _extract_api_routes(ws_module)
-        return ws_module
+            api.mcp_auth_token = backend_controller.mcp_auth_token
+            api.runtime_id = backend_controller.runtime_id
+            backend_ready = True
+
+    if backend_controller is not None and backend_controller.ready:
+        _ensure_backend()
+
+    def _owner_task(task_id: str, *, start: bool = False) -> Dict[str, Any] | None:
+        nonlocal backend_ready
+        if not backend_ready:
+            if start:
+                _ensure_backend()
+            elif backend_controller is not None and (
+                _loaded_api_owner() is not None
+                or _is_port_open(backend_controller.host, backend_controller.port)
+            ):
+                # Attaching does not import a local application or construct a second manager.
+                _ensure_backend()
+            else:
+                return None
+        try:
+            task = api.request("GET", "/api/task/status", params={"task_id": task_id})
+        except APIRequestError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        if (
+            not isinstance(task, dict)
+            or task.get("task_id") != task_id
+            or not isinstance(task.get("stats"), dict)
+            or task["stats"].get("execution_mode") != "external_agent"
+        ):
+            return None
+        return task
+
+    def _sync_owner_status(task_id: str, status: str, message: str) -> None:
+        try:
+            if _owner_task(task_id) is not None:
+                api.request("POST", "/api/task/external-agent/status", payload={
+                    "task_id": task_id, "status": status, "message": message,
+                })
+        except Exception as exc:
+            # The durable ledger already owns the successful operation. A display
+            # update failure must not make callers replay a claim or commit.
+            _write_startup_notice(f"Agent task status synchronization failed ({type(exc).__name__}).")
 
     try:
         _patch_streamable_http_shutdown_for_windows()
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
         status = inspect_mcp_runtime(PROJECT_ROOT)
-        primary_install = status.get("primary_install_command") or "uv add mcp"
+        primary_install = status.get("primary_install_command") or f'uv add "{REQUIRED_MODULE_SPECS["mcp"]}"'
         raise RuntimeError(
             _tf_from_host(
                 host_cli,
@@ -952,7 +1028,11 @@ def _build_mcp_app(
     )
 
     if ws_module is not None:
-        routes = _extract_api_routes(ws_module)
+        discovered = {(route["method"], route["path"]): route for route in routes}
+        for route in _extract_api_routes(ws_module):
+            key = (route["method"], route["path"])
+            discovered[key] = {**discovered.get(key, {}), **route}
+        routes = list(discovered.values())
 
     @_mcp_tool(
         mcp,
@@ -1276,11 +1356,10 @@ def _build_mcp_app(
         except ExternalAgentBatchError as exc:
             if exc.code != "TASK_NOT_FOUND":
                 raise
-        _ensure_backend()
-        manager = getattr(ws_module, "task_manager", None)
-        if manager is None or getattr(manager, "task_id", None) != task_id:
+        task = _owner_task(task_id, start=True)
+        if task is None:
             return None
-        cache_path = getattr(manager, "external_agent_cache_path", None)
+        cache_path = task.get("external_agent_cache_path")
         if not isinstance(cache_path, str) or not cache_path:
             return None
         try:
@@ -1289,8 +1368,8 @@ def _build_mcp_app(
                 task_id,
                 session_id,
                 "external_agent",
-                input_path=getattr(manager, "external_agent_input_path", None),
-                output_path=getattr(manager, "external_agent_output_path", None),
+                input_path=task.get("external_agent_input_path"),
+                output_path=task.get("external_agent_output_path"),
             )
             _bind_external_agent_context(session_id, task_id=task_id)
             return prepared
@@ -1311,9 +1390,8 @@ def _build_mcp_app(
     ) -> Dict[str, Any]:
         _require_external_agent_mode(session_id, task_id)
         try:
-            # Direct TXT projects do not need the embedded WebServer merely to
-            # prepare their line ledger. Structured Web tasks are resolved from
-            # the Web task manager only when the durable ledger is absent.
+            # Plain TXT ledgers do not need an API owner. Only structured tasks
+            # without a durable ledger query the owner's prewarmed cache.
             result = None
             if not (isinstance(input_path, str) and input_path.lower().endswith(".txt")):
                 result = _prepare_web_task_ledger_if_needed(task_id, session_id)
@@ -1377,8 +1455,8 @@ def _build_mcp_app(
         "Export a completed external-Agent task from its committed cache.",
         (
             "Use this when all batches are committed but automatic export did not run, "
-            "for example after a WebServer restart or task status reset. It never calls "
-            "an API or translates text; it only loads the committed cache and writes the "
+            "for example after an API owner restart or task status reset. It never calls "
+            "a model or translates text; it loads the committed cache and writes the "
             "format-aware final output through AiNiee's FileOutputer."
         ),
     )
@@ -1396,6 +1474,8 @@ def _build_mcp_app(
                 input_path=input_path,
                 output_path=output_path,
             )
+            _sync_owner_status(task_id, "committed", "External-Agent cache committed.")
+            _sync_owner_status(task_id, "completed", "External-Agent final output exported.")
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except (ExternalAgentBatchError, ExternalAgentBatchWriterError, OSError, ValueError) as exc:
@@ -1412,11 +1492,7 @@ def _build_mcp_app(
         try:
             _prepare_web_task_ledger_if_needed(task_id, session_id)
             result = get_external_agent_batch_service().claim_batch(task_id, session_id, batch_id)
-            manager = getattr(ws_module, "task_manager", None)
-            if manager is not None and getattr(manager, "task_id", None) == task_id:
-                manager.update_external_agent_status(
-                    "running", task_id, "External Agent claimed a translation batch."
-                )
+            _sync_owner_status(task_id, "running", "External Agent claimed a translation batch.")
             _bind_external_agent_context(
                 session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
             )
@@ -1441,11 +1517,7 @@ def _build_mcp_app(
             result = get_external_agent_batch_service().claim_batches(
                 task_id, session_id, batch_ids, max_batches=max_batches
             )
-            manager = getattr(ws_module, "task_manager", None)
-            if manager is not None and getattr(manager, "task_id", None) == task_id:
-                manager.update_external_agent_status(
-                    "running", task_id, "External Agent claimed parallel translation batches."
-                )
+            _sync_owner_status(task_id, "running", "External Agent claimed parallel translation batches.")
             _bind_external_agent_context(session_id, task_id=task_id)
             return result
         except ExternalAgentBatchError as exc:
@@ -1461,11 +1533,7 @@ def _build_mcp_app(
         try:
             _prepare_web_task_ledger_if_needed(task_id, session_id)
             result = get_external_agent_batch_service().claim_next_batch(task_id, session_id)
-            manager = getattr(ws_module, "task_manager", None)
-            if manager is not None and getattr(manager, "task_id", None) == task_id:
-                manager.update_external_agent_status(
-                    "running", task_id, "External Agent refilled an available translation worker slot."
-                )
+            _sync_owner_status(task_id, "running", "External Agent refilled an available translation worker slot.")
             _bind_external_agent_context(
                 session_id, task_id=task_id, batch_id=result.get("batch", {}).get("batch_id")
             )
@@ -1481,17 +1549,15 @@ def _build_mcp_app(
 
     def _export_after_commit(result, task_id, session_id):
         if result.get("progress", {}).get("status") == "completed" and not result.get("replayed"):
+            _sync_owner_status(task_id, "committed", "All external-Agent batches committed; exporting final output.")
             try:
-                cache_path = get_external_agent_batch_service().cache_path_for_writer(task_id, session_id)
-                manager = getattr(ws_module, "task_manager", None) if ws_module is not None else None
-                exported = (
-                    _finalize_external_agent_output(ws_module, task_id, cache_path)
-                    if manager is not None and getattr(manager, "task_id", None) == task_id
-                    else _export_external_agent_task(task_id, session_id)
-                )
-                result["export"] = exported or {"status": "required", "next_action": "agent_export_task"}
+                exported = _export_external_agent_task(task_id, session_id)
             except Exception:
                 result["export"] = {"status": "failed", "next_action": "agent_export_task"}
+            else:
+                result["export"] = exported
+                if exported.get("status") == "exported":
+                    _sync_owner_status(task_id, "completed", "External-Agent cache committed and final output exported.")
             if result["export"].get("status") != "exported":
                 result["next_action"] = "agent_export_task"
         return result
@@ -1650,7 +1716,6 @@ def _build_mcp_app(
         ),
     )
     def list_web_api_routes(category: str = "all") -> List[Dict[str, str]]:
-        _ensure_backend()
         filtered_routes = _filter_routes_by_category(routes, category)
         return _build_route_index(
             filtered_routes,
@@ -1676,13 +1741,40 @@ def _build_mcp_app(
         confirm_advanced_change: bool = False,
         confirm_agent_batch_change: bool = False,
     ) -> Any:
-        _ensure_backend()
         normalized_path = _normalize_public_api_path(path)
+        rendered_path = _render_path_template(normalized_path, path_params)
+        route = match_route(routes, method, rendered_path)
+        if route is not None and route_response_kind(route) != "json":
+            tool = "upload_file" if route_response_kind(route) == "multipart" else "download_file"
+            raise ValueError(f"This route requires the dedicated {tool} tool.")
+        _ensure_backend()
         _ensure_advanced_change_confirmed(normalized_path, body, confirm_advanced_change)
         if normalized_path == "/api/config":
             ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
-        rendered_path = _render_path_template(normalized_path, path_params)
-        return api.request(method.upper(), rendered_path, params=query, payload=body)
+        confirmations = ({
+            "confirm_advanced_change": confirm_advanced_change,
+            "confirm_agent_batch_change": confirm_agent_batch_change,
+        } if normalized_path == "/api/config" else {})
+        return api.request(method.upper(), rendered_path, params=query, payload=body, **confirmations)
+
+    @_mcp_tool(
+        mcp,
+        "Download one declared API file into a unique project-local artifact.",
+        "Use a GET route marked as file content in the catalog. Only the configured API owner is contacted; "
+        "redirects are rejected. Files are limited to 32 MiB, saved under tmp/mcp-downloads without overwriting, "
+        "and returned as local path, media type, byte count and SHA-256. This does not authorize new source processing.",
+    )
+    def download_file(
+        path: str,
+        path_params: Optional[Dict[str, Any]] = None,
+        query: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        rendered_path = _render_path_template(_normalize_public_api_path(path), path_params)
+        route = match_route(routes, "GET", rendered_path)
+        if route is None or route_response_kind(route) != "file":
+            raise ValueError("Only catalog-declared file GET routes are available through download_file.")
+        _ensure_backend()
+        return download_api_file(api, rendered_path, query, PROJECT_ROOT)
 
     @_mcp_tool(
         mcp,
@@ -1703,25 +1795,27 @@ def _build_mcp_app(
                 f"{api.base_url}/api/files/upload",
                 params={"policy": policy},
                 files={"file": (source.name, handle)},
-                headers={
-                    MCP_CALLER_HEADER: MCP_CALLER_VALUE,
-                    MCP_AUTH_HEADER: api.mcp_auth_token,
-                },
+                headers=api.headers,
                 timeout=api.timeout,
+                allow_redirects=False,
             )
 
         try:
-            data = response.json()
-        except Exception:
-            data = response.text
-
-        if response.status_code >= 400:
-            raise RuntimeError(f"{response.status_code} /api/files/upload: {data}")
-
-        return sanitize_data_for_mcp(data, path="/api/files/upload")
+            if 300 <= response.status_code < 400:
+                raise APIRequestError(response.status_code, "/api/files/upload", "API redirects are not followed.")
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise APIRequestError(response.status_code, "/api/files/upload", "Invalid upload API response.") from exc
+            data = sanitize_data_for_mcp(data, path="/api/files/upload")
+            if response.status_code >= 400:
+                raise APIRequestError(response.status_code, "/api/files/upload", data)
+            return data
+        finally:
+            response.close()
 
     if register_route_tools:
-        _register_route_proxy_tools(mcp, api, routes)
+        _register_route_proxy_tools(mcp, api, routes, _ensure_backend)
 
     return mcp
 
@@ -1770,7 +1864,7 @@ def run_mcp_server(
 ) -> Any:
     status = inspect_mcp_runtime(PROJECT_ROOT)
     if not status.get("available"):
-        primary_install = status.get("primary_install_command") or "uv add mcp"
+        primary_install = status.get("primary_install_command") or f'uv add "{REQUIRED_MODULE_SPECS["mcp"]}"'
         raise RuntimeError(
             _tf_from_host(
                 host_cli,
@@ -1794,7 +1888,7 @@ def run_mcp_server(
             return anyio.run(_run_stdio_proxy_to_existing_mcp, reusable_url)
 
     mcp_auth_token = DEFAULT_MCP_AUTH_TOKEN or secrets.token_urlsafe(32)
-    backend = EmbeddedWebServerController(
+    backend = EmbeddedAPIController(
         host=backend_host,
         port=backend_port,
         host_cli=host_cli,
@@ -1803,26 +1897,20 @@ def run_mcp_server(
         allow_remote_access=allow_remote_access,
     )
     # Stdio must reach initialize/tool discovery before importing the full
-    # WebServer. The backend is started lazily when a route or Web task needs it.
+    # API application. The owner starts lazily when a stateful operation needs it.
     api = AiNieeAPIClient(backend.base_url, mcp_auth_token=mcp_auth_token)
-    if transport != "stdio":
-        backend.start()
-    atexit.register(backend.stop)
-    mcp_app = _build_mcp_app(
-        api,
-        backend.ws_module,
-        host,
-        port,
-        path,
-        host_cli=host_cli,
-        register_route_tools=register_route_tools,
-        backend_controller=backend,
-    )
-
+    atexit.register(backend.wait_for_shutdown)
     try:
+        if transport != "stdio":
+            backend.start()
+        mcp_app = _build_mcp_app(
+            api, backend.ws_module, host, port, path, host_cli=host_cli,
+            register_route_tools=register_route_tools, backend_controller=backend,
+        )
         return _invoke_fastmcp_run(mcp_app, transport, host, port, path)
     finally:
-        backend.stop()
+        backend.wait_for_shutdown()
+        atexit.unregister(backend.wait_for_shutdown)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

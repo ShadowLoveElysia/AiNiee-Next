@@ -134,8 +134,9 @@ batch_id/source_hash/revision 必须来自 claim，译文字段是 translation�
 为提交时的权威批次 ID。并行批次共享准备阶段的源 revision，允许乱序领取和提交；缓存正式写回仍由
 writer lease 串行执行，并在每批写回时重新校验 cache revision、source hash 和 current line hash。
 
-stdio 首次连接只完成 MCP initialize 和工具发现，嵌入式 WebServer 在需要 Web/API 或结构化任务上下文时才延迟启动；
-普通 TXT 的 `agent_prepare_project` 不会启动 WebServer。已有缓存账本存在时，重连应优先使用 `agent_recover_task`，不会重新预热。
+stdio 首次连接只完成 MCP initialize 和工具发现；首次并发请求共享一次 API owner 初始化。普通 TXT 的 `agent_prepare_project` 不启动 API owner。
+桥接通过受保护的 `GET /api/system/runtime` 核验工作区、协议版本和运行实例；身份响应必须带与正文一致的 `X-AiNiee-Runtime-Id`。旧 owner 不支持该协议时需先升级。之后的 JSON、上传和下载请求均自动携带已绑定的实例 ID；若 owner 更换，HTTP 409 不会触发自动改绑或重放。重新连接后用 `agent_recover_task` 核对账本，再决定是否操作。
+任务状态通知是派生信息：通知失败不会撤销已成功的领取、提交或导出。以返回的收据为准，不要因显示滞后重复领取。
 
 `agent_claim_batches` 省略 `max_batches` 时读取当前 Profile 的 `external_agent_max_batches`，默认 8；服务端同时统计当前 `claimed`/`submitted` 批次数，不能超过这个动态上限。
 用户可在 TUI“设置 → 项目通用设置 → Agent 单次领取批次数”输入任意正整数，包括大于 8 的值；
@@ -192,6 +193,8 @@ source/cache fingerprint，重新绑定 claimed 批次并复用已经预热的�
 
 ## Calling Patterns
 
+详细目录中的 `request_fields_complete` 和 `response_fields_complete` 分别表示请求与响应字段是否完整枚举；Schema 已声明并不等于字段已穷举或接口已实测。
+
 AiNiee CLI MCP 默认不再把每个 Web API 路由都注册成独立 `api_*` 工具，以减少 LLM 工具发现上下文。默认调用流程是：
 
 1. `get_mcp_tool_categories()`
@@ -204,6 +207,8 @@ AiNiee CLI MCP 默认不再把每个 Web API 路由都注册成独立 `api_*` �
 - `query`: URL 查询参数
 - `body`: JSON 请求体
 - `confirm_advanced_change`: 仅配置高级 MCP 设定时才需要
+
+保存 raw 队列前先读取 `GET /api/queue/raw` 的 `content` 和 `revision`。POST 时将编辑后的 JSON 字符串放在 `body.content`，原 `revision` 放在 `query.expected_revision`；缺少 revision 返回 428，revision 过期返回 409，应重新读取并核对差异，不能盲目覆盖。
 
 典型示例：
 

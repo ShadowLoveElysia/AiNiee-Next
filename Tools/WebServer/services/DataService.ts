@@ -4,6 +4,12 @@ import { MangaDeleteRuntimeValidationHistoryResult, MangaExportFormat, MangaExpo
 
 // Base API URL
 const API_BASE = '/api';
+const queueRevisionQuery = (revision: string) => `?expected_revision=${encodeURIComponent(revision)}`;
+const queueRevision = (response: Response) => {
+    const revision = response.headers.get('X-Queue-Revision');
+    if (!revision) throw new Error('Missing queue revision; reload before editing');
+    return revision;
+};
 const AUTH_REQUIRED_HEADER = 'X-AiNiee-Auth-Required';
 const WEB_SESSION_AUTH_REQUIRED = 'web-session';
 
@@ -16,8 +22,31 @@ export class ApiRequestError extends Error {
 
 const responseError = async (response: Response, fallback: string): Promise<ApiRequestError> => {
     const payload = await response.json().catch(() => ({}));
-    return new ApiRequestError(payload.detail || fallback, response.status);
+    const detail = typeof payload.detail === 'string' ? payload.detail :
+        Array.isArray(payload.detail) ? payload.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join('; ') : '';
+    return new ApiRequestError(detail || fallback, response.status);
 };
+
+type DraftKind = 'pre_translation' | 'post_translation' | 'glossary' | 'exclusion' |
+    'characterization' | 'world_building' | 'writing_style' | 'translation_example';
+
+const saveDraft = async (kind: DraftKind, value: unknown): Promise<void> => {
+    const response = await fetch(`${API_BASE}/draft/${kind}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value),
+    });
+    if (!response.ok) throw await responseError(response, 'Failed to save draft');
+};
+
+export interface TaskPreviewResponse {
+    valid: boolean;
+    missing_prompts: string[];
+    task_type: string;
+    argv: string[];
+    steps: Record<string, unknown>;
+    request_fingerprint?: string;
+}
 
 let webSessionBootstrap: Promise<void> | null = null;
 const nativeFetch = window.fetch.bind(window);
@@ -99,21 +128,64 @@ const authenticatedApiFetch: typeof window.fetch = async (input, init) => {
     return response;
 };
 
-interface TaskStatusResponse extends TaskLifecycle {
+export interface TaskStatusCursors {
+    logs: number;
+    chart: number;
+    comparison: number;
+}
+
+export interface TaskStatusResponse extends TaskLifecycle {
     stats: TaskStats;
-    logs: LogEntry[];
+    logs: Array<Omit<LogEntry, 'id' | 'timestamp'> & { id?: string; timestamp: string | number; seq?: number }>;
     chart_data?: ChartDataPoint[];
     comparison?: {
         source: string;
         translation: string;
     } | null;
-    cursors?: {
-        logs: number;
-        chart: number;
-        comparison: number;
-    };
+    cursors?: TaskStatusCursors;
+    cursors_reset?: Partial<Record<keyof TaskStatusCursors, boolean>>;
     comparison_updated_at?: number;
 }
+
+interface TaskStatusState {
+    stats: TaskStats;
+    logs: LogEntry[];
+    chartData: ChartDataPoint[];
+    isRunning: boolean;
+    comparison?: { source: string; translation: string };
+}
+
+export const isTaskActive = (task: TaskLifecycle & { stats?: TaskStats }): boolean =>
+    task.running ?? ['starting', 'running', 'stopping', 'waiting_for_agent', 'agent_disconnected', 'committed']
+        .includes(task.status ?? task.stats?.status ?? 'idle');
+
+export const mergeTaskStatus = <T extends TaskStatusState>(
+    previous: T,
+    data: TaskStatusResponse,
+    requested: TaskStatusCursors,
+    reset = false,
+): T => {
+    const next = data.cursors ?? requested;
+    const resetLogs = reset || data.cursors_reset?.logs || next.logs < requested.logs;
+    const resetChart = reset || data.cursors_reset?.chart || next.chart < requested.chart;
+    const resetComparison = reset || data.cursors_reset?.comparison || next.comparison < requested.comparison;
+    const logs = (data.logs || []).filter(Boolean).map((entry, index): LogEntry => ({
+        id: entry.id || `backend-${data.task_id ?? 'current'}-${entry.seq ?? `${entry.timestamp}-${index}`}`,
+        timestamp: typeof entry.timestamp === 'number'
+            ? new Date(entry.timestamp * 1000).toLocaleTimeString()
+            : entry.timestamp,
+        message: String(entry.message || ''),
+        type: entry.type || 'info',
+    }));
+    return {
+        ...previous,
+        stats: data.stats,
+        logs: (resetLogs ? logs : [...previous.logs, ...logs]).slice(-500),
+        chartData: (resetChart ? data.chart_data || [] : [...previous.chartData, ...(data.chart_data || [])]).slice(-120),
+        isRunning: isTaskActive(data),
+        comparison: data.comparison ?? (resetComparison ? undefined : previous.comparison),
+    };
+};
 
 export const DataService = {
     // --- Config & System ---
@@ -161,7 +233,9 @@ export const DataService = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config)
             });
-            if (!res.ok) throw new Error('Failed to save config');
+            if (!res.ok) throw await responseError(res, 'Failed to save config');
+            const receipt = await res.json();
+            if (typeof receipt.revision === 'string') config._config_revision = receipt.revision;
         } catch (error) {
             console.error("API Error: saveConfig", error);
             throw error;
@@ -430,11 +504,7 @@ export const DataService = {
     },
 
     async savePreTranslationDraft(items: any[]): Promise<void> {
-        await fetch(`${API_BASE}/draft/pre_translation`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(items)
-        });
+        await saveDraft('pre_translation', items);
     },
 
     async getPostTranslationRules(): Promise<any[]> {
@@ -475,35 +545,15 @@ export const DataService = {
     },
 
     async savePostTranslationDraft(items: any[]): Promise<void> {
-        await fetch(`${API_BASE}/draft/post_translation`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(items)
-        });
+        await saveDraft('post_translation', items);
     },
 
     async saveGlossaryDraft(items: any[]): Promise<void> {
-        try {
-            await fetch(`${API_BASE}/draft/glossary`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(items)
-            });
-        } catch (error) {
-            console.error("API Error: saveGlossaryDraft", error);
-        }
+        await saveDraft('glossary', items);
     },
 
     async saveExclusionDraft(items: any[]): Promise<void> {
-        try {
-            await fetch(`${API_BASE}/draft/exclusion`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(items)
-            });
-        } catch (error) {
-            console.error("API Error: saveExclusionDraft", error);
-        }
+        await saveDraft('exclusion', items);
     },
 
     // --- New Features ---
@@ -532,11 +582,7 @@ export const DataService = {
     },
 
     async saveCharacterizationDraft(items: any[]): Promise<void> {
-        await fetch(`${API_BASE}/draft/characterization`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(items)
-        });
+        await saveDraft('characterization', items);
     },
 
     async getWorldBuilding(): Promise<string> {
@@ -565,11 +611,7 @@ export const DataService = {
     },
 
     async saveWorldBuildingDraft(content: string): Promise<void> {
-        await fetch(`${API_BASE}/draft/world_building`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content })
-        });
+        await saveDraft('world_building', { content });
     },
 
     async getWritingStyle(): Promise<string> {
@@ -598,11 +640,7 @@ export const DataService = {
     },
 
     async saveWritingStyleDraft(content: string): Promise<void> {
-        await fetch(`${API_BASE}/draft/writing_style`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content })
-        });
+        await saveDraft('writing_style', { content });
     },
 
     async getTranslationExample(): Promise<any[]> {
@@ -629,11 +667,7 @@ export const DataService = {
     },
 
     async saveTranslationExampleDraft(items: any[]): Promise<void> {
-        await fetch(`${API_BASE}/draft/translation_example`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(items)
-        });
+        await saveDraft('translation_example', items);
     },
 
     // --- Prompts ---
@@ -645,20 +679,20 @@ export const DataService = {
     },
 
     async listPrompts(category: string): Promise<string[]> {
-        const res = await fetch(`${API_BASE}/prompts/${category}`);
+        const res = await fetch(`${API_BASE}/prompts/${encodeURIComponent(category)}`);
         if (!res.ok) return [];
         return await res.json();
     },
 
     async getPromptContent(category: string, filename: string): Promise<string> {
-        const res = await fetch(`${API_BASE}/prompts/${category}/${filename}`);
+        const res = await fetch(`${API_BASE}/prompts/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
         if (!res.ok) throw new Error('Failed to fetch prompt content');
         const data = await res.json();
         return data.content || "";
     },
 
     async savePromptContent(category: string, filename: string, content: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/prompts/${category}/${filename}`, {
+        const res = await fetch(`${API_BASE}/prompts/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content })
@@ -1092,6 +1126,19 @@ export const DataService = {
 
     // --- Task Execution ---
 
+    async previewTask(payload: TaskPayload, signal?: AbortSignal): Promise<TaskPreviewResponse> {
+        const { api_key: _credential, ...request } = payload;
+        const response = await fetch(`${API_BASE}/task/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+            signal,
+        });
+        if (!response.ok) throw await responseError(response, 'Failed to preview task');
+        return await response.json();
+    },
+
+
     /**
      * Start a new task (Translate, Polish, or Export)
      */
@@ -1139,36 +1186,18 @@ export const DataService = {
         chartCursor = 0,
         comparisonCursor = 0,
         taskId?: string,
+        signal?: AbortSignal,
     ): Promise<TaskStatusResponse> {
-        try {
-            const params = new URLSearchParams({
-                log_cursor: String(logCursor),
-                chart_cursor: String(chartCursor),
-                comparison_cursor: String(comparisonCursor),
-                _t: String(Date.now())
-            });
-            if (taskId) params.set('task_id', taskId);
-            const res = await fetch(`${API_BASE}/task/status?${params.toString()}`);
-            if (!res.ok) throw new Error('Failed to get status');
-            return await res.json();
-        } catch (error) {
-            // Return empty/idle state on error to prevent UI crash
-            return {
-                stats: {
-                    rpm: 0,
-                    tpm: 0,
-                    totalProgress: 0, // Fixed property name
-                    completedProgress: 0, // Fixed property name
-                    totalTokens: 0,
-                    elapsedTime: 0,
-                    status: 'error',
-                    currentFile: 'Connection Lost'
-                },
-                logs: [],
-                chart_data: [],
-                comparison: null
-            };
-        }
+        const params = new URLSearchParams({
+            log_cursor: String(logCursor),
+            chart_cursor: String(chartCursor),
+            comparison_cursor: String(comparisonCursor),
+            _t: String(Date.now())
+        });
+        if (taskId) params.set('task_id', taskId);
+        const res = await fetch(`${API_BASE}/task/status?${params.toString()}`, { signal });
+        if (!res.ok) throw await responseError(res, 'Failed to get status');
+        return await res.json();
     },
 
     // --- File Management ---
@@ -1228,10 +1257,10 @@ export const DataService = {
 
     // --- Task Queue ---
 
-    async getQueue(): Promise<QueueTaskItem[]> {
+    async getQueue(): Promise<{ items: QueueTaskItem[]; revision: string }> {
         const res = await fetch(`${API_BASE}/queue`);
-        if (!res.ok) throw new Error('Failed to load queue');
-        return await res.json();
+        if (!res.ok) throw await responseError(res, 'Failed to load queue');
+        return { items: await res.json(), revision: queueRevision(res) };
     },
 
     async addToQueue(item: Partial<QueueTaskItem>): Promise<void> {
@@ -1243,21 +1272,23 @@ export const DataService = {
         if (!res.ok) throw new Error('Failed to add task');
     },
 
-    async removeFromQueue(index: number): Promise<void> {
-        await fetch(`${API_BASE}/queue/${index}`, { method: 'DELETE' });
+    async removeFromQueue(taskId: string, revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/${taskId}${queueRevisionQuery(revision)}`, { method: 'DELETE' });
+        if (!res.ok) throw await responseError(res, 'Failed to remove task');
     },
 
-    async updateQueueItem(index: number, item: Partial<QueueTaskItem>): Promise<void> {
-        const res = await fetch(`${API_BASE}/queue/${index}`, {
+    async updateQueueItem(taskId: string, item: Partial<QueueTaskItem>, revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/${taskId}${queueRevisionQuery(revision)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(item)
         });
-        if (!res.ok) throw new Error('Failed to update task');
+        if (!res.ok) throw await responseError(res, 'Failed to update task');
     },
 
-    async clearQueue(): Promise<void> {
-        await fetch(`${API_BASE}/queue/clear`, { method: 'POST' });
+    async clearQueue(revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/clear${queueRevisionQuery(revision)}`, { method: 'POST' });
+        if (!res.ok) throw await responseError(res, 'Failed to clear queue');
     },
 
     async runQueue(): Promise<void> {
@@ -1272,30 +1303,24 @@ export const DataService = {
         }
     },
 
-    async editQueueFile(): Promise<void> {
-        await fetch(`${API_BASE}/queue/edit_file`);
-    },
-
-    async getQueueRaw(): Promise<string> {
+    async getQueueRaw(): Promise<{ content: string; revision: string }> {
         const res = await fetch(`${API_BASE}/queue/raw`);
+        if (!res.ok) throw await responseError(res, 'Failed to load queue JSON');
         const data = await res.json();
-        return data.content || "[]";
+        return { content: data.content, revision: queueRevision(res) };
     },
 
-    async saveQueueRaw(content: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/queue/raw`, {
+    async saveQueueRaw(content: string, revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/raw${queueRevisionQuery(revision)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content })
         });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'Failed to save JSON');
-        }
+        if (!res.ok) throw await responseError(res, 'Failed to save JSON');
     },
 
-    async moveQueueItem(fromIndex: number, toIndex: number): Promise<void> {
-        const res = await fetch(`${API_BASE}/queue/${fromIndex}/move`, {
+    async moveQueueItem(taskId: string, toIndex: number, revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/${taskId}/move${queueRevisionQuery(revision)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ to_index: toIndex })
@@ -1306,8 +1331,8 @@ export const DataService = {
         }
     },
 
-    async reorderQueue(newOrder: number[]): Promise<void> {
-        const res = await fetch(`${API_BASE}/queue/reorder`, {
+    async reorderQueue(newOrder: string[], revision: string): Promise<void> {
+        const res = await fetch(`${API_BASE}/queue/reorder${queueRevisionQuery(revision)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ new_order: newOrder })
@@ -1327,188 +1352,10 @@ export const DataService = {
                 method: 'POST',
                 body: formData
             });
-            // Don't throw on 200 OK even if status is 'limit_reached'
-            // The component needs to handle the logic.
+            if (!res.ok) throw await responseError(res, 'Failed to upload file');
             return await res.json();
         } catch (error) {
             console.error("API Error: uploadFile", error);
-            throw error;
-        }
-    },
-
-    // --- Web Editor API ---
-
-    async getEditorFiles(): Promise<any[]> {
-        try {
-            const res = await fetch(`${API_BASE}/editor/files`);
-            if (!res.ok) throw new Error('Failed to fetch editor files');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: getEditorFiles", error);
-            throw error;
-        }
-    },
-
-    async getEditorStats(): Promise<any> {
-        try {
-            const res = await fetch(`${API_BASE}/editor/stats`);
-            if (!res.ok) throw new Error('Failed to fetch editor stats');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: getEditorStats", error);
-            throw error;
-        }
-    },
-
-    async getParallelEditorData(filePath: string, page: number = 0, pageSize: number = 15): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}?page=${page}&page_size=${pageSize}`);
-            if (!res.ok) throw new Error('Failed to fetch parallel editor data');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: getParallelEditorData", error);
-            throw error;
-        }
-    },
-
-    async updateParallelEditorItem(filePath: string, updateData: { text_index: number; new_translation: string }): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}/update`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updateData)
-            });
-            if (!res.ok) throw new Error('Failed to update editor item');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: updateParallelEditorItem", error);
-            throw error;
-        }
-    },
-
-    async searchParallelEditorFile(filePath: string, searchParams: {
-        query: string;
-        scope: string;
-        is_regex?: boolean;
-        search_flagged?: boolean;
-    }): Promise<any[]> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}/search`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(searchParams)
-            });
-            if (!res.ok) throw new Error('Failed to search in file');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: searchParallelEditorFile", error);
-            throw error;
-        }
-    },
-
-    async gotoParallelEditorLine(filePath: string, lineIndex: number, pageSize: number = 15): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}/goto/${lineIndex}?page_size=${pageSize}`);
-            if (!res.ok) throw new Error('Failed to calculate page for line');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: gotoParallelEditorLine", error);
-            throw error;
-        }
-    },
-
-    async clearFileModifications(filePath: string): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}/modifications`, {
-                method: 'DELETE'
-            });
-            if (!res.ok) throw new Error('Failed to clear file modifications');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: clearFileModifications", error);
-            throw error;
-        }
-    },
-
-    async clearAllModifications(): Promise<any> {
-        try {
-            const res = await fetch(`${API_BASE}/parallel-editor/modifications`, {
-                method: 'DELETE'
-            });
-            if (!res.ok) throw new Error('Failed to clear all modifications');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: clearAllModifications", error);
-            throw error;
-        }
-    },
-
-    async getFileModifications(filePath: string): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(filePath);
-            const res = await fetch(`${API_BASE}/parallel-editor/${encodedPath}/modifications`);
-            if (!res.ok) throw new Error('Failed to get file modifications');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: getFileModifications", error);
-            throw error;
-        }
-    },
-
-    // --- Cache File Management ---
-
-    async loadCacheFile(filePath: string): Promise<any> {
-        try {
-            const res = await fetch(`${API_BASE}/parallel-editor/load-cache`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ file_path: filePath })
-            });
-            if (!res.ok) throw new Error('Failed to load cache file');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: loadCacheFile", error);
-            throw error;
-        }
-    },
-
-    async openFileDialog(): Promise<any> {
-        try {
-            const res = await fetch(`${API_BASE}/parallel-editor/open-file-dialog`, {
-                method: 'POST'
-            });
-            if (!res.ok) throw new Error('Failed to open file dialog');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: openFileDialog", error);
-            throw error;
-        }
-    },
-
-    async getCacheStatus(): Promise<any> {
-        try {
-            const res = await fetch(`${API_BASE}/parallel-editor/upload-status`);
-            if (!res.ok) throw new Error('Failed to get cache status');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: getCacheStatus", error);
-            throw error;
-        }
-    },
-
-    async browseDirectory(path: string = '.'): Promise<any> {
-        try {
-            const encodedPath = encodeURIComponent(path);
-            const res = await fetch(`${API_BASE}/parallel-editor/browse-directory?path=${encodedPath}`);
-            if (!res.ok) throw new Error('Failed to browse directory');
-            return await res.json();
-        } catch (error) {
-            console.error("API Error: browseDirectory", error);
             throw error;
         }
     },

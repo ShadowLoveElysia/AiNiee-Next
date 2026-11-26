@@ -1,6 +1,9 @@
 import copy
+import hashlib
 import os
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 
 try:
     import rapidjson as json
@@ -10,6 +13,7 @@ except ModuleNotFoundError:
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.default_config import DEFAULT_CONFIG
 from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import AGENT_MAX_BATCHES_KEY, validate_agent_max_batches
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import _interprocess_lock
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -62,6 +66,75 @@ ROOT_ONLY_KEYS = {
 }
 
 _CONFIG_LOCK = threading.RLock()
+_TRANSACTION = threading.local()
+
+
+@contextmanager
+def config_transaction():
+    """Lock the root, settings and rules as one unit, including nested calls."""
+    with _CONFIG_LOCK:
+        if getattr(_TRANSACTION, "active", False):
+            yield
+            return
+        lock_target = Path(ROOT_CONFIG_FILE).resolve().parent / "automation_progress" / "config"
+        with _interprocess_lock(lock_target):
+            _TRANSACTION.active = True
+            try:
+                yield
+            finally:
+                _TRANSACTION.active = False
+
+
+class ConfigConflictError(ValueError):
+    def __init__(self):
+        super().__init__("Configuration changed. Reload it before saving.")
+
+
+def config_revision(root: dict) -> str:
+    profile, _ = resolve_profile_path(PROFILES_PATH, get_active_profile_name(root))
+    rules, _ = resolve_profile_path(RULES_PROFILES_PATH, get_active_rules_profile_name(root), allow_none=True)
+    tokens = []
+    paths = [ROOT_CONFIG_FILE, PRESET_PATH, profile, rules]
+    for selected, directory in ((profile, PROFILES_PATH), (rules, RULES_PROFILES_PATH)):
+        if selected and not os.path.exists(selected):
+            paths.append(resolve_profile_path(directory, "default")[0])
+    for path in paths:
+        if not path:
+            continue
+        try:
+            stat = os.stat(path)
+            tokens.append((path, stat.st_ino, stat.st_mtime_ns, stat.st_size))
+        except FileNotFoundError:
+            tokens.append((path, None))
+    return hashlib.sha256(repr(tokens).encode()).hexdigest()
+
+
+class _ConfigSnapshot(dict):
+    """Remember the caller's baseline without exporting metadata as settings."""
+    def __init__(self, data):
+        super().__init__(data)
+        self.baseline = copy.deepcopy(data)
+
+
+_ABSENT = object()
+
+
+def _apply_edits(current: dict, before: dict, edited: dict) -> dict:
+    result = current.copy()
+    for key in before.keys() | edited.keys():
+        old, new = before.get(key, _ABSENT), edited.get(key, _ABSENT)
+        if old == new:
+            continue
+        latest = current.get(key, _ABSENT)
+        if isinstance(new, dict) and isinstance(latest, dict) and (old is _ABSENT or isinstance(old, dict)):
+            result[key] = _apply_edits(latest, {} if old is _ABSENT else old, new)
+        elif latest != old and latest != new:
+            raise ConfigConflictError()
+        elif new is _ABSENT:
+            result.pop(key, None)
+        else:
+            result[key] = new
+    return result
 
 
 def profile_origin_for_new_profile(config: dict | None) -> str:
@@ -139,21 +212,29 @@ def resolve_profile_path(base_dir: str, name: str, *, allow_none: bool = False) 
     return path, profile_name
 
 
-def load_root_config() -> dict:
+def load_root_config(*, strict=False) -> dict:
     try:
         root_config = load_json_file(ROOT_CONFIG_FILE, {})
     except Exception:
+        if strict:
+            raise
         root_config = {}
 
     if "active_profile" not in root_config:
         root_config["active_profile"] = "default"
     if "active_rules_profile" not in root_config:
         root_config["active_rules_profile"] = "default"
-    return root_config
+    return _ConfigSnapshot(root_config)
 
 
 def save_root_config(root_config: dict) -> None:
-    atomic_write_json(ROOT_CONFIG_FILE, root_config or {})
+    with config_transaction():
+        if isinstance(root_config, _ConfigSnapshot):
+            merged = _apply_edits(load_root_config(strict=True), root_config.baseline, root_config)
+            atomic_write_json(ROOT_CONFIG_FILE, merged)
+            root_config.baseline = copy.deepcopy(dict(root_config))
+        else:
+            atomic_write_json(ROOT_CONFIG_FILE, root_config or {})
 
 
 def get_config_mode() -> tuple[str, dict]:
@@ -254,6 +335,8 @@ def split_effective_config(config: dict, *, prefer_sdk_request_mode: bool = Fals
     rules = {}
     root_updates = {}
     for key, value in (config or {}).items():
+        if key == "_config_revision":
+            continue
         if key.startswith("_task_runtime") or key.startswith("_runtime_") or key.startswith("_workflow_"):
             continue
         if key in PROFILE_METADATA_KEYS:
@@ -275,7 +358,7 @@ def load_effective_config(
     create_missing: bool = False,
     interface_language: str | None = None,
 ) -> dict:
-    with _CONFIG_LOCK:
+    with config_transaction():
         root_config = copy.deepcopy(root_config) if isinstance(root_config, dict) else load_root_config()
         profile_name = sanitize_profile_name(active_profile_name or get_active_profile_name(root_config))
         rules_profile_name = sanitize_profile_name(
@@ -351,7 +434,7 @@ def load_effective_config(
             effective,
             prefer_sdk_request_mode=isinstance(profile_config, dict) and "sdk_request_mode" in profile_config,
         )
-        return effective
+        return _ConfigSnapshot(effective)
 
 
 def save_effective_config(
@@ -363,14 +446,30 @@ def save_effective_config(
     write_root: bool = True,
     prefer_sdk_request_mode: bool = False,
 ) -> dict:
-    with _CONFIG_LOCK:
-        root_config = copy.deepcopy(root_config) if isinstance(root_config, dict) else load_root_config()
+    with config_transaction():
+        root = load_root_config(strict=True)
+        if isinstance(root_config, _ConfigSnapshot):
+            for key in ("active_profile", "active_rules_profile"):
+                if root[key] != root_config.baseline[key] and root[key] != root_config[key]:
+                    raise ConfigConflictError()
+            merged_root = _apply_edits(root, root_config.baseline, root_config)
+            root.clear()
+            root.update(merged_root)
+        elif root_config is not None:
+            root.update(root_config)
+        root_config = root
         profile_name = sanitize_profile_name(active_profile_name or config.get("active_profile") or get_active_profile_name(root_config))
         rules_profile_name = sanitize_profile_name(
             active_rules_profile_name or config.get("active_rules_profile") or get_active_rules_profile_name(root_config),
             allow_none=True,
         )
 
+        snapshot = config if isinstance(config, _ConfigSnapshot) else None
+        if snapshot is not None:
+            current = load_effective_config(active_profile_name=profile_name, active_rules_profile_name=rules_profile_name)
+            if current["active_profile"] != profile_name or current["active_rules_profile"] != rules_profile_name:
+                raise ConfigConflictError()
+            config = _apply_edits(current, snapshot.baseline, snapshot)
         settings_updates, rules_updates, root_updates = split_effective_config(
             config,
             prefer_sdk_request_mode=prefer_sdk_request_mode,
@@ -396,22 +495,49 @@ def save_effective_config(
             current_rules = normalize_rules_payload(current_rules, infer_missing_switches=False)
             atomic_write_json(rules_path, current_rules)
 
-        root_config.update(root_updates)
-        root_config["active_profile"] = profile_name
-        root_config["active_rules_profile"] = rules_profile_name
+        for key, value in root_updates.items():
+            if key not in ("active_profile", "active_rules_profile") and (
+                snapshot is None or snapshot.get(key) != snapshot.baseline.get(key)
+            ):
+                root_config[key] = value
+        for key, selected in (("active_profile", profile_name), ("active_rules_profile", rules_profile_name)):
+            if snapshot is None or selected != snapshot.baseline.get(key) or not write_root:
+                root_config[key] = selected
         if write_root:
             save_root_config(root_config)
+        if snapshot is not None:
+            for key in snapshot.keys() | snapshot.baseline.keys():
+                if not write_root and key in ROOT_ONLY_KEYS:
+                    continue
+                if key in snapshot:
+                    snapshot.baseline[key] = copy.deepcopy(snapshot[key])
+                else:
+                    snapshot.baseline.pop(key, None)
         return root_config
 
 
+@config_transaction()
+def patch_effective_config(changes: dict, *, prepare=None, expected_revision=None, merge_nested=False) -> dict:
+    current = load_effective_config()
+    if expected_revision is not None and expected_revision != config_revision(current):
+        raise ConfigConflictError()
+    if isinstance(changes, _ConfigSnapshot) and prepare is None:
+        if changes != changes.baseline:
+            save_effective_config(changes, prefer_sdk_request_mode="sdk_request_mode" in changes)
+        return changes
+    if prepare is not None:
+        changes = prepare(current, changes)
+    updated = deep_merge(dict(current), changes) if merge_nested else {**current, **changes}
+    if updated != current:
+        save_effective_config(updated, prefer_sdk_request_mode="sdk_request_mode" in changes)
+    return updated
+
+
 def save_setting_value(key: str, value) -> None:
-    config = load_effective_config(create_missing=True)
-    config[key] = value
-    if key in ("sdk_request_mode", "use_openai_sdk"):
-        sync_sdk_request_mode_config(config, prefer_sdk_request_mode=key == "sdk_request_mode")
-    save_effective_config(config, prefer_sdk_request_mode=key == "sdk_request_mode")
+    patch_effective_config({key: value})
 
 
+@config_transaction()
 def save_rule_value(key: str, value) -> None:
     if key not in RULE_PROFILE_KEYS:
         raise KeyError(f"{key} is not a rules profile key")

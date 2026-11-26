@@ -4,7 +4,7 @@
 
 AiNiee-Next は、大規模言語モデルを利用した一括翻訳ツールです。小説、電子書籍、文書、字幕、ゲームテキスト、漫画、リアルタイムの音声・映像字幕を処理できます。
 
-コマンドラインと対話式ターミナルメニュー（CLI/TUI）を中心に動作し、Web ダッシュボード、デスクトップウィンドウ、外部 AI クライアント向けの MCP・Skills インターフェースも提供します。単一ファイルを手軽に翻訳する用途から、長編シリーズや一括タスクを継続的に処理する用途まで対応します。
+コマンドラインと対話式ターミナルメニュー（CLI/TUI）を中心に動作し、Web ダッシュボード、外部 AI クライアント向けの MCP・Skills インターフェースも提供します。単一ファイルを手軽に翻訳する用途から、長編シリーズや一括タスクを継続的に処理する用途まで対応します。
 
 [最新ソースコード ZIP をダウンロード](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — デフォルトブランチの最新コミットのソースコード一式をダウンロードします。まず展開し、Windows では展開先のプロジェクトフォルダーで `Windows prepare.bat`、`Windows launch.bat` の順に実行してください。
 
@@ -48,12 +48,9 @@ Python 3.12 とパッケージマネージャー `uv` が必要です。リポ�
 4. 通信が切れたり手動で停止したりした場合は、次回同じプロジェクトを選んでキャッシュを復元すると途中から再開できます。翻訳済みの部分は再リクエストされません。
 5. 翻訳完了後はそのまま書き出すか、内蔵ターミナルエディターや校正機能で確認してから書き出せます。
 
-### 4. Web ダッシュボードまたはデスクトップ版を起動
+### 4. Web ダッシュボードを起動
 
-ブラウザーでの操作に慣れている場合、特に統計グラフの確認、キャッシュのページ単位の編集、漫画エディターの利用には、ターミナルのメインメニューから Web ダッシュボードを起動できます。コマンドラインからデスクトップ版の起動スクリプトを使うこともできます。
-
-- **Windows**：`Tools\TauriShell\LaunchGUI.bat` を実行します。
-- **Linux / macOS**：`Tools/TauriShell/LaunchGUI.sh` を実行します。
+ブラウザーでの操作に慣れている場合、特に統計グラフの確認、キャッシュのページ単位の編集、漫画エディターの利用には、ターミナルのメインメニューから Web ダッシュボードを起動できます。
 
 ### 5. 漫画・リアルタイム通訳・オフライン動画機能を利用
 
@@ -82,7 +79,6 @@ Python 3.12 とパッケージマネージャー `uv` が必要です。リポ�
 | MCP | [サービス接続](../Tools/MCPServer/README.md) · [クライアント利用ガイド](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
 | Skills | [HTTP・CLI・Python からの呼び出し](../Tools/Skills/README.md) |
 | Agent | [Headless Agent 利用ガイド](../Tools/Agent/README.md) |
-| デスクトップ版 | [Tauri の起動とビルド](../Tools/TauriShell/README.md) |
 | 拡張開発 | [プラグインの作成](../PluginScripts/README.md) · [Reader / Writer の作成](../ModuleFolders/Domain/FileAccessor/README.md) |
 | ゲームテキスト | [StevExtraction 利用ガイド](../Tools/StevExtraction/使用说明.md) |
 | 更新 | [更新履歴](update_log.md) |

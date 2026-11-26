@@ -9,7 +9,7 @@ class LocalLLMRequester(Base):
 
     # 发起请求
     def request_LocalLLM(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         try:
@@ -91,7 +91,7 @@ class LocalLLMRequester(Base):
                 response_content = message.content
 
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
             else:
                 self.error(f"请求任务错误 ... {e}", e if self.is_debug() else None)

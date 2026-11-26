@@ -41,7 +41,7 @@ class AmazonbedrockRequester(Base):
 
     # 发起请求
     def request_amazonbedrock(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         model_name = platform_config.get("model_name")
@@ -52,7 +52,7 @@ class AmazonbedrockRequester(Base):
 
     # 发起请求
     def request_amazonbedrock_anthropic(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         model_name: str = platform_config.get("model_name")
@@ -87,7 +87,7 @@ class AmazonbedrockRequester(Base):
                 return True, "STOPPED", "Task stopped by user", 0, 0
             response_content = response.content[0].text
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
             # 如果启用了缓存且是缓存相关错误，尝试禁用缓存重试
             if use_cache and self._is_cache_error(e):
@@ -109,7 +109,7 @@ class AmazonbedrockRequester(Base):
                         return True, "STOPPED", "Task stopped by user", 0, 0
                     response_content = response.content[0].text
                 except Exception as retry_e:
-                    if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                    if Base.request_stopped():
                         return True, "STOPPED", "Task stopped by user", 0, 0
                     self.error(f"请求任务错误 ... {retry_e}", retry_e if self.is_debug() else None)
                     return True, None, None, None, None
@@ -133,7 +133,7 @@ class AmazonbedrockRequester(Base):
 
     # 发起请求
     def request_amazonbedrock_boto3(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         try:
@@ -166,7 +166,7 @@ class AmazonbedrockRequester(Base):
             # 提取回复的文本内容
             response_content = response["output"]["message"]["content"][0]["text"]
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
             self.error(f"请求任务错误 ... {e}", e if self.is_debug() else None)
             return True, None, None, None, None

@@ -149,6 +149,7 @@ class ProofreadSuggestionStore:
         model: str = "",
         archive_limit: int = 20,
         suggestion_mode: str = "proofread",
+        source_cache_hash: str = "",
     ) -> Path | None:
         normalized_mode = str(mode or "archive").strip().lower()
         if normalized_mode not in {"archive", "overwrite"}:
@@ -167,6 +168,7 @@ class ProofreadSuggestionStore:
             model=model,
             suggestion_mode=suggestion_mode,
         )
+        self.run["source_cache_hash"] = source_cache_hash
         self.storage_path = self.path
         self.is_archive = False
         self.save()
@@ -278,7 +280,12 @@ class ProofreadSuggestionStore:
             self.save()
 
     def mark_generation_completed(self) -> None:
-        self.run["generation_status"] = "completed"
+        self.mark_generation_finished("completed")
+
+    def mark_generation_finished(self, status: str) -> None:
+        if status not in {"completed", "stopped", "failed"}:
+            raise ValueError("Unsupported proofread terminal status")
+        self.run["generation_status"] = status
         self.run["completed_at"] = self._now()
         self.save()
 
@@ -321,7 +328,7 @@ class ProofreadSuggestionStore:
             if suggestion.status == ProofreadSuggestionStatus.PENDING
         ]
 
-    def refresh_conflicts(self, project) -> int:
+    def refresh_conflicts(self, project, *, save: bool = True) -> int:
         completed = self.complete_manually_edited_lines(project, client="sync", save=False)
         marked = 0
         for suggestion in self.pending():
@@ -336,7 +343,7 @@ class ProofreadSuggestionStore:
             if current_hash != suggestion.line_hash:
                 suggestion.status = ProofreadSuggestionStatus.CONFLICT
                 marked += 1
-        if completed or marked:
+        if save and (completed or marked):
             self.save()
         return marked
 

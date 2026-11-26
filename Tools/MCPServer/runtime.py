@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from importlib import metadata
 import os
 import shlex
 from typing import Callable, Dict, List, Optional
@@ -10,10 +11,11 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 MCP_SERVER_ROOT = os.path.join(PROJECT_ROOT, "Tools", "MCPServer")
 
 REQUIRED_MODULE_SPECS = {
-    "mcp": "mcp",
+    "mcp": "mcp>=1.27,<2",
     "fastapi": "fastapi",
     "uvicorn": "uvicorn[standard]",
     "requests": "requests",
+    "psutil": "psutil",
 }
 
 REQUIRED_COMPONENT_FILES = (
@@ -22,13 +24,41 @@ REQUIRED_COMPONENT_FILES = (
     "runtime.py",
     "security.py",
     "server.py",
+    "api_transport.py",
+    "agent_session.py",
     "file_tools.py",
     "language_worker.py",
 )
 
+REQUIRED_API_COMPONENT_FILES = (
+    "Tools/APIServer/application.py",
+    "Tools/APIServer/server.py",
+    "Tools/APIServer/contracts.py",
+    "Tools/APIServer/responses.py",
+    "Tools/APIServer/catalog.py",
+    "ModuleFolders/Infrastructure/ApiSecurity.py",
+    "ModuleFolders/Infrastructure/Cache/CachePersistence.py",
+    "ModuleFolders/Service/TaskRuntime/cache_editing.py",
+    "ModuleFolders/Service/TaskQueue/QueueOutcome.py",
+    "ModuleFolders/Service/TaskRuntime/configuration.py",
+    "ModuleFolders/Service/TaskRuntime/events.py",
+    "ModuleFolders/Service/TaskRuntime/manager.py",
+    "ModuleFolders/Service/TaskRuntime/operations.py",
+    "ModuleFolders/Service/TaskRuntime/preflight.py",
+    "ModuleFolders/Service/TaskRuntime/processes.py",
+)
+
 
 def _module_exists(name: str) -> bool:
-    return importlib.util.find_spec(name) is not None
+    if importlib.util.find_spec(name) is None:
+        return False
+    if name == "mcp":
+        try:
+            major, minor, *_ = metadata.version(name).split(".")
+            return int(major) == 1 and int(minor) >= 27
+        except (metadata.PackageNotFoundError, ValueError):
+            return False
+    return True
 
 
 def _quote_cmd_arg(value: str) -> str:
@@ -117,6 +147,11 @@ def inspect_mcp_runtime(project_root: str | None = None) -> Dict[str, object]:
         for filename in REQUIRED_COMPONENT_FILES
         if not os.path.exists(os.path.join(component_root, filename))
     ]
+    missing_files.extend(
+        os.path.join(resolved_root, filename)
+        for filename in REQUIRED_API_COMPONENT_FILES
+        if not os.path.exists(os.path.join(resolved_root, filename))
+    )
 
     missing_modules = [
         module_name

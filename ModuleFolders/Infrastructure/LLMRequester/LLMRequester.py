@@ -72,7 +72,7 @@ class LLMRequester:
         completion_tokens = 0
 
         while current_retry < max_retries:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
 
             target_platform = platform_config.get("target_platform")
@@ -173,7 +173,7 @@ class LLMRequester:
             effective_max_retries = max(1, min(max_retries, policy_max_retries))
 
             if current_retry < effective_max_retries:
-                if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                if Base.request_stopped():
                     return True, "STOPPED", "Task stopped by user", 0, 0
 
                 import time

@@ -15,6 +15,9 @@ import {
 
 interface CacheItem {
   id: number;
+  project_path: string;
+  project_id: string;
+  revision: string;
   file_path: string;
   text_index: number;
   source: string;
@@ -166,7 +169,13 @@ export const CacheEditor: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState(() => savedState?.projectPath || '');
+  const cacheRequestSeq = useRef(0);
+  const cacheLoadSeq = useRef(0);
+  const loadedCachePath = useRef('');
+  const currentProjectPath = useRef(projectPath);
+  currentProjectPath.current = projectPath;
   const [cacheBackups, setCacheBackups] = useState<CacheBackup[]>([]);
+  const cacheBackupPath = useRef('');
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupRestoring, setBackupRestoring] = useState<string | null>(null);
   const [showBackups, setShowBackups] = useState(false);
@@ -314,25 +323,30 @@ export const CacheEditor: React.FC = () => {
     file && file !== 'ProofreadSuggestions.json' ? file : '';
 
   const loadProofreadReport = async (file = activeProofreadReport, path = projectPath) => {
+    const sequence = cacheLoadSeq.current;
     if (!path.trim()) return;
     const params = new URLSearchParams({ project_path: path });
     const reportFile = reportQueryFile(file);
     if (reportFile) params.set('report_file', reportFile);
     const response = await fetch(`/api/proofread/suggestions?${params}`);
+    if (sequence !== cacheLoadSeq.current) return;
     if (response.status === 404) {
       setProofreadSuggestions([]);
       setProofreadSummary({});
       return;
     }
     if (!response.ok) throw new Error(t('cache_editor_proofread_report_load_failed'));
-    applyProofreadReport(await response.json());
+    const report = await response.json();
+    if (sequence === cacheLoadSeq.current) applyProofreadReport(report);
   };
 
   const loadProofreadReports = async (path = projectPath, preserveSelection = true) => {
+    const sequence = cacheLoadSeq.current;
     if (!path.trim()) return;
     const response = await fetch(`/api/proofread/reports?project_path=${encodeURIComponent(path)}`);
     if (!response.ok) throw new Error(t('cache_editor_proofread_report_load_failed'));
     const data = await response.json();
+    if (sequence !== cacheLoadSeq.current) return;
     const options: ProofreadReportOption[] = [];
     if (data.current) {
       options.push({
@@ -382,6 +396,11 @@ export const CacheEditor: React.FC = () => {
     suggestionId: string,
     action: 'accept' | 'reject' | 'ignore' | 'restore' | 'delete'
   ) => {
+    const sequence = cacheLoadSeq.current;
+    if (currentProjectPath.current !== loadedCachePath.current) {
+      setError(t('cache_editor_proofread_action_failed'));
+      return;
+    }
     const previousFilter = proofreadFilter;
     const previousSuggestion = proofreadSuggestions.find(
       (suggestion) => suggestion.suggestion_id === suggestionId
@@ -407,10 +426,12 @@ export const CacheEditor: React.FC = () => {
         }),
       });
       const data = await response.json();
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       const report = data.report as ProofreadReportPayload | undefined;
       if (report) applyProofreadReport(report);
       if (!response.ok) throw new Error(data.message || t('cache_editor_proofread_action_failed'));
-      if (action === 'accept') await loadCacheItems(currentPage, searchQuery);
+      if (action === 'accept') await loadCacheItems(currentPage, searchQuery, projectPath, sequence);
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
 
       if (report) {
         const nextFilter = String(report.review_state?.active_filter || previousFilter);
@@ -459,13 +480,20 @@ export const CacheEditor: React.FC = () => {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_proofread_action_failed'));
+      if (sequence === cacheLoadSeq.current && currentProjectPath.current === projectPath) {
+        setError(err instanceof Error ? err.message : t('cache_editor_proofread_action_failed'));
+      }
     } finally {
-      setProofreadActionBusy(false);
+      if (sequence === cacheLoadSeq.current) setProofreadActionBusy(false);
     }
   };
 
   const undoProofreadAction = async () => {
+    const sequence = cacheLoadSeq.current;
+    if (currentProjectPath.current !== loadedCachePath.current) {
+      setError(t('cache_editor_proofread_nothing_to_undo'));
+      return;
+    }
     setProofreadActionBusy(true);
     try {
       const response = await fetch('/api/proofread/undo', {
@@ -477,13 +505,16 @@ export const CacheEditor: React.FC = () => {
         }),
       });
       const data = await response.json();
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       if (data.report) applyProofreadReport(data.report);
       if (!response.ok) throw new Error(data.message || t('cache_editor_proofread_nothing_to_undo'));
-      await loadCacheItems(currentPage, searchQuery);
+      await loadCacheItems(currentPage, searchQuery, projectPath, sequence);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_proofread_nothing_to_undo'));
+      if (sequence === cacheLoadSeq.current && currentProjectPath.current === projectPath) {
+        setError(err instanceof Error ? err.message : t('cache_editor_proofread_nothing_to_undo'));
+      }
     } finally {
-      setProofreadActionBusy(false);
+      if (sequence === cacheLoadSeq.current) setProofreadActionBusy(false);
     }
   };
 
@@ -642,13 +673,26 @@ export const CacheEditor: React.FC = () => {
     }
   };
 
-  const checkCacheStatus = async () => {
-    const response = await fetch('/api/cache/status');
+  const checkCacheStatus = async (path = loadedCachePath.current || projectPath) => {
+    const sequence = cacheLoadSeq.current;
+    const response = await fetch(`/api/cache/status?${new URLSearchParams({ project_path: path })}`);
     if (!response.ok) {
       throw new Error('Backend not available');
     }
     const status = await response.json();
+    if (sequence !== cacheLoadSeq.current) return;
     setCacheStatus(status);
+  };
+
+  const beginCacheLoad = (path: string) => {
+    cacheRequestSeq.current += 1;
+    loadedCachePath.current = path;
+    setCacheItems([]);
+    setEditingItem(null);
+    setEditingText('');
+    setProofreadActionBusy(false);
+    setBackupRestoring(null);
+    return ++cacheLoadSeq.current;
   };
 
   const loadCacheFromPath = async () => {
@@ -657,6 +701,7 @@ export const CacheEditor: React.FC = () => {
       return;
     }
 
+    const sequence = beginCacheLoad(projectPath);
     setLoading(true);
     setError(null);
 
@@ -669,8 +714,10 @@ export const CacheEditor: React.FC = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
+        if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
         if (response.status === 409) {
           const detail = errorData.detail || {};
+          cacheBackupPath.current = projectPath;
           setCacheBackups(detail.backups || []);
           setShowBackups(true);
           setBackupMessage(t('cache_editor_backup_select_after_corruption'));
@@ -680,7 +727,11 @@ export const CacheEditor: React.FC = () => {
       }
 
       await response.json();
-      await checkCacheStatus(); // Refresh status
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
+      await checkCacheStatus(projectPath);
+      if (sequence !== cacheLoadSeq.current) return;
+      await loadCacheItems(1, '', projectPath, sequence);
+      if (sequence !== cacheLoadSeq.current) return;
       setProofreadPath(projectPath);
       await loadProofreadReports(projectPath, false);
       setError(null);
@@ -696,6 +747,7 @@ export const CacheEditor: React.FC = () => {
   };
 
   const loadCacheFromSavedPath = async (path: string) => {
+    const sequence = beginCacheLoad(path);
     const response = await fetch('/api/cache/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -704,8 +756,10 @@ export const CacheEditor: React.FC = () => {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      if (sequence !== cacheLoadSeq.current) return { needsBackupRestore: false };
       if (response.status === 409) {
         const detail = errorData.detail || {};
+        cacheBackupPath.current = path;
         setCacheBackups(typeof detail === 'object' ? detail.backups || [] : []);
         setShowBackups(true);
         setBackupMessage(t('cache_editor_backup_select_after_corruption'));
@@ -715,7 +769,11 @@ export const CacheEditor: React.FC = () => {
       throw new Error(errorData.detail || 'Failed to load cache from saved path');
     }
 
-    await checkCacheStatus(); // Refresh status
+    if (sequence !== cacheLoadSeq.current) return { needsBackupRestore: false };
+    await checkCacheStatus(path);
+    if (sequence !== cacheLoadSeq.current) return { needsBackupRestore: false };
+    await loadCacheItems(1, '', path, sequence);
+    if (sequence !== cacheLoadSeq.current) return { needsBackupRestore: false };
     setProofreadPath(path);
     await loadProofreadReports(path, false);
     console.log('Cache restored from saved path:', path);
@@ -723,6 +781,7 @@ export const CacheEditor: React.FC = () => {
   };
 
   const loadCacheBackups = async (path = projectPath) => {
+    const sequence = cacheLoadSeq.current;
     if (!path.trim()) {
       setError(t('cache_editor_enter_project_path'));
       return;
@@ -742,12 +801,16 @@ export const CacheEditor: React.FC = () => {
       }
 
       const data = await response.json();
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== path) return;
+      cacheBackupPath.current = path;
       setCacheBackups(data.backups || []);
       setShowBackups(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_backups_load_failed'));
+      if (sequence === cacheLoadSeq.current && currentProjectPath.current === path) {
+        setError(err instanceof Error ? err.message : t('cache_editor_backups_load_failed'));
+      }
     } finally {
-      setBackupLoading(false);
+      if (sequence === cacheLoadSeq.current) setBackupLoading(false);
     }
   };
 
@@ -756,12 +819,17 @@ export const CacheEditor: React.FC = () => {
       setError(t('cache_editor_enter_project_path'));
       return;
     }
+    if (cacheBackupPath.current !== projectPath) {
+      setError(t('cache_editor_backups_load_failed'));
+      return;
+    }
 
     const confirmed = window.confirm(t('cache_editor_backup_restore_confirm', backup.file));
     if (!confirmed) {
       return;
     }
 
+    const sequence = beginCacheLoad(projectPath);
     setBackupRestoring(backup.file);
     setError(null);
     setBackupMessage(null);
@@ -775,36 +843,46 @@ export const CacheEditor: React.FC = () => {
           backup_file: backup.file
         })
       });
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || t('cache_editor_backup_restore_failed'));
       }
 
-      await checkCacheStatus();
+      await checkCacheStatus(projectPath);
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       setCurrentPage(1);
-      await loadCacheItems(1);
+      await loadCacheItems(1, searchQuery, projectPath, sequence);
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       if (activeProofreadReport) {
         await loadProofreadReport(activeProofreadReport, projectPath);
       }
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       setShowBackups(false);
       setCacheBackups([]);
       setError(null);
       setBackupMessage(t('cache_editor_backup_restored', backup.file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_backup_restore_failed'));
+      if (sequence === cacheLoadSeq.current && currentProjectPath.current === projectPath) {
+        setError(err instanceof Error ? err.message : t('cache_editor_backup_restore_failed'));
+      }
     } finally {
-      setBackupRestoring(null);
+      if (sequence === cacheLoadSeq.current) setBackupRestoring(null);
     }
   };
 
-  const loadCacheItems = async (page = currentPage, search = searchQuery) => {
+  const loadCacheItems = async (page = currentPage, search = searchQuery, path = loadedCachePath.current || projectPath, expectedLoadSeq = cacheLoadSeq.current) => {
+    if (expectedLoadSeq !== cacheLoadSeq.current) return;
+    const sequence = ++cacheRequestSeq.current;
+    const loadSequence = cacheLoadSeq.current;
     setLoading(true);
     setCurrentLine(0);
     try {
       const params = new URLSearchParams({
         page: page.toString(),
-        page_size: pageSize.toString()
+        page_size: pageSize.toString(),
+        project_path: path,
       });
 
       if (search) {
@@ -818,24 +896,38 @@ export const CacheEditor: React.FC = () => {
       }
 
       const data = await response.json();
+      if (sequence !== cacheRequestSeq.current || loadSequence !== cacheLoadSeq.current) return;
       setCacheItems(data.items);
       setPagination(data.pagination);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_failed_load_cache'));
+      if (sequence === cacheRequestSeq.current && loadSequence === cacheLoadSeq.current) {
+        setError(err instanceof Error ? err.message : t('cache_editor_failed_load_cache'));
+      }
     } finally {
-      setLoading(false);
+      if (sequence === cacheRequestSeq.current) setLoading(false);
     }
   };
 
   const updateCacheItem = async (itemId: number, newTranslation: string) => {
+    const sequence = cacheLoadSeq.current;
+    const itemsSequence = cacheRequestSeq.current;
     try {
+      if (currentProjectPath.current !== loadedCachePath.current) {
+        throw new Error(t('cache_editor_failed_update_item'));
+      }
+      const editedItem = cacheItems.find(item => item.id === itemId);
+      if (!editedItem) return;
       const response = await fetch(`/api/cache/items/${itemId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           item_id: itemId,
           translation: newTranslation,
-          project_path: projectPath,
+          project_path: editedItem.project_path,
+          project_id: editedItem.project_id,
+          file_path: editedItem.file_path,
+          text_index: editedItem.text_index,
+          expected_revision: editedItem.revision,
           report_file: reportQueryFile() || null,
         })
       });
@@ -845,13 +937,14 @@ export const CacheEditor: React.FC = () => {
       }
 
       const data = await response.json();
+      if (sequence !== cacheLoadSeq.current || itemsSequence !== cacheRequestSeq.current) return;
 
       // Update local state
       setCacheItems(items =>
         items.map(item =>
-          item.id === itemId
-            ? { ...item, translation: newTranslation, modified: true }
-            : item
+          item.project_path === editedItem.project_path && item.id === itemId
+            ? { ...item, translation: newTranslation, modified: true, revision: data.revision }
+            : { ...item, revision: data.revision }
         )
       );
 
@@ -1039,6 +1132,8 @@ export const CacheEditor: React.FC = () => {
     filter = proofreadFilter,
     suggestionId?: string,
   ) => {
+    const sequence = cacheLoadSeq.current;
+    if (currentProjectPath.current !== loadedCachePath.current) return;
     setCurrentProofreadIndex(index);
     setExpandedProofreadItemId(group.item_id);
     const activeSuggestion = group.suggestions.find((item) => item.suggestion_id === suggestionId)
@@ -1062,6 +1157,7 @@ export const CacheEditor: React.FC = () => {
       const response = await fetch(`/api/proofread/locate?${params}`);
       if (!response.ok) throw new Error(t('cache_editor_proofread_locate_failed'));
       const location = await response.json();
+      if (sequence !== cacheLoadSeq.current || currentProjectPath.current !== projectPath) return;
       pendingProofreadTarget.current = {
         filePath: group.file_path,
         textIndex: group.text_index,
@@ -1069,14 +1165,16 @@ export const CacheEditor: React.FC = () => {
       if (searchQuery) setSearchQuery('');
       if (currentPage !== location.page || searchQuery) {
         setCurrentPage(location.page);
-        await loadCacheItems(location.page, '');
+        await loadCacheItems(location.page, '', projectPath, sequence);
       } else {
         setCurrentLine(location.row_index);
         alignRowsInBothPanes(location.row_index);
         pendingProofreadTarget.current = null;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('cache_editor_proofread_locate_failed'));
+      if (sequence === cacheLoadSeq.current && currentProjectPath.current === projectPath) {
+        setError(err instanceof Error ? err.message : t('cache_editor_proofread_locate_failed'));
+      }
     }
   };
 

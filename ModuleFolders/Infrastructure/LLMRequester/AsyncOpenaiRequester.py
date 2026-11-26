@@ -14,7 +14,6 @@
 
 import asyncio
 import contextvars
-import hashlib
 import json
 from typing import Optional, Dict, Any, Tuple
 
@@ -22,13 +21,13 @@ import aiohttp
 
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
-from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint, FeatureSupport
+from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint, FeatureSupport, StreamSupportCache
 from ModuleFolders.Infrastructure.LLMRequester.AsyncSignalHub import get_signal_hub
 from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import is_openai_sdk_mode
 
 
-class AsyncOpenaiRequester(Base):
+class AsyncOpenaiRequester(StreamSupportCache, Base):
     """异步 OpenAI 请求器"""
 
     # 类级别的连接池（全局复用）
@@ -110,27 +109,6 @@ class AsyncOpenaiRequester(Base):
         if cls._session and not cls._session.closed:
             await cls._session.close()
             cls._session = None
-
-    def _get_api_cache_key(self, api_url: str, model_name: str) -> str:
-        """生成API缓存键"""
-        key_str = f"{api_url}:{model_name}"
-        return hashlib.md5(key_str.encode()).hexdigest()[:16]
-
-    def _get_stream_support_status(self, api_url: str, model_name: str) -> Optional[bool]:
-        """获取API的流式支持状态"""
-        config = self.load_config()
-        cache = config.get("stream_api_cache", {})
-        cache_key = self._get_api_cache_key(api_url, model_name)
-        return cache.get(cache_key)
-
-    def _set_stream_support_status(self, api_url: str, model_name: str, supports_stream: bool) -> None:
-        """设置API的流式支持状态"""
-        config = self.load_config()
-        cache = config.get("stream_api_cache", {})
-        cache_key = self._get_api_cache_key(api_url, model_name)
-        cache[cache_key] = supports_stream
-        config["stream_api_cache"] = cache
-        self.save_config(config)
 
     def _parse_sse_response(self, raw_text: str) -> Tuple[str, str, int, int]:
         """解析SSE格式响应"""

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List
 
 from Tools.MCPServer.security import MCP_SECURITY_NOTICE_FIELD, MCP_SECRET_PLACEHOLDER
+from Tools.MCPServer.api_transport import route_response_kind
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 GUIDE_PATH = os.path.join(PROJECT_ROOT, "Tools", "MCPServer", "MCP_CLIENT_GUIDE.md")
@@ -41,7 +43,7 @@ Recommended first steps for any LLM client:
 2. Call `get_mcp_security_policy`
 3. Call `get_mcp_tool_categories`
 4. Call `get_mcp_tool_catalog(category="<needed-category>")`
-5. Then use `call_web_api` or `upload_file`
+5. Then use the recommended `call_web_api`, `upload_file`, or `download_file` tool
 
 External Agent clients should then call `agent_register` and keep the returned
 lease alive with `agent_heartbeat`. The default connection lease is 120 seconds;
@@ -424,7 +426,7 @@ def build_tool_category_index(
             # external-Agent category is a separate MCP-tool catalog and its
             # entries are already described in ``core_tools``.
             "endpoint_count": sum(item["endpoint_count"] for item in categories if item["category"] != "external_agent"),
-            "route_tool_count": sum(item["endpoint_count"] for item in categories if item["category"] != "external_agent")
+            "route_tool_count": sum(route_response_kind(route) == "json" for route in routes)
             if route_tools_exposed
             else 0,
             "categories": categories,
@@ -532,7 +534,7 @@ def build_tool_catalog(
     result.update(
         {
             "usage": (
-                "Use the listed route with call_web_api. For templated paths, "
+                "Use each endpoint's recommended_tool. For JSON or download paths, "
                 "fill path_params or pass a fully rendered path."
             ),
             "warning": (
@@ -543,7 +545,10 @@ def build_tool_catalog(
             else "",
             "category_count": len(categories),
             "endpoint_count": sum(category_item["endpoint_count"] for category_item in categories),
-            "route_tool_count": sum(category_item["endpoint_count"] for category_item in categories)
+            "route_tool_count": sum(
+                "route_tool_name" in endpoint
+                for category_item in categories for endpoint in category_item["endpoints"]
+            )
             if route_tools_exposed
             else 0,
             "categories": categories,
@@ -556,6 +561,8 @@ def _build_catalog_header(*, catalog_mode: str, route_tools_exposed: bool) -> Di
     return {
         "catalog_mode": catalog_mode,
         "route_tools_exposed": route_tools_exposed,
+        "runtime_availability": "not_probed",
+        "catalog_note": "Declared API contracts do not prove optional runtime dependencies are ready. Discovery does not start the API owner.",
         "recommended_first_calls": [
             "get_mcp_usage_manual",
             "get_mcp_security_policy",
@@ -658,7 +665,7 @@ def _parse_markdown_sections(content: str) -> List[tuple[str, str]]:
 def _group_routes(routes: List[Dict[str, str]]) -> Dict[str, List[Dict[str, str]]]:
     groups: Dict[str, List[Dict[str, str]]] = {}
     for route in routes:
-        category = _route_category(route["path"])
+        category = route.get("category") or _route_category(route["path"])
         groups.setdefault(category, []).append(route)
 
     return dict(sorted(groups.items(), key=lambda item: item[0]))
@@ -669,7 +676,7 @@ def _route_category(path: str) -> str:
     parts = stripped.split("/")
     if len(parts) < 2:
         return "misc"
-    return parts[1]
+    return parts[2] if parts[1].startswith("v") and parts[1][1:].isdigit() and len(parts) > 2 else parts[1]
 
 
 def _describe_route(path: str, method: str) -> str:
@@ -717,6 +724,10 @@ def _build_core_tool_descriptions(route_tools_exposed: bool) -> List[Dict[str, s
             "tool_name": "upload_file",
             "purpose": "Upload a local file through the multipart file endpoint.",
         },
+        {
+            "tool_name": "download_file",
+            "purpose": "Download a declared file endpoint into a unique local staging file; returns path, size and SHA-256.",
+        },
     ]
 
     if route_tools_exposed:
@@ -747,44 +758,72 @@ def _build_category_index_item(group_name: str, routes: List[Dict[str, str]]) ->
     }
 
 
+def _recommended_api_tool(route: Dict[str, Any]) -> str:
+    kind = route_response_kind(route)
+    if kind == "multipart":
+        return "upload_file"
+    if kind == "file":
+        return "download_file"
+    return "call_web_api"
+
+
 def _build_endpoint_entry(
-    route: Dict[str, str],
+    route: Dict[str, Any],
     *,
     include_examples: bool,
     route_tools_exposed: bool,
 ) -> Dict[str, Any]:
     method = route["method"].upper()
     path = route["path"]
+    tool = _recommended_api_tool(route)
     entry: Dict[str, Any] = {
         "route": f"{method} {path}",
         "method": method,
         "path": path,
         "purpose": _describe_route(path, method),
-        "recommended_tool": "call_web_api",
+        "recommended_tool": tool,
         "how_to_call": _build_call_pattern(route),
         "notes": _build_route_notes(path),
     }
-    if route_tools_exposed:
+    for key in (
+        "operation_id", "parameters", "request_body", "responses", "schemas",
+        "schema_complete", "request_fields_complete", "response_fields_complete",
+        "schema_status", "availability", "transport_metadata",
+        "optional_module", "validation_note",
+    ):
+        if key in route:
+            entry[key] = route[key]
+    if route_tools_exposed and tool == "call_web_api":
         entry["route_tool_name"] = route["tool_name"]
     if include_examples:
-        entry["example_arguments"] = _build_example_args(route)
-        entry["call_web_api_example"] = _build_call_web_api_example(route)
+        args = _build_example_args(route)
+        entry["example_arguments"] = args
+        tool_args = _build_call_web_api_example(route) if tool == "call_web_api" else args
+        entry["tool_example"] = {"tool_name": tool, "arguments": tool_args}
+        if tool == "call_web_api":
+            entry["call_web_api_example"] = tool_args
 
     return entry
 
 
-def _build_call_pattern(route: Dict[str, str]) -> Dict[str, Any]:
+def _build_call_pattern(route: Dict[str, Any]) -> Dict[str, Any]:
     path = route["path"]
-    method = route["method"].upper()
-    has_path_params = "{" in path and "}" in path
-    uses_body = method in {"POST", "PUT", "DELETE"}
-
+    tool = _recommended_api_tool(route)
+    if tool == "upload_file":
+        return {
+            "file_path": "required local input file path; sent using multipart/form-data",
+            "policy": "optional upload capacity policy; inspect the endpoint schema",
+        }
+    query = [item["name"] for item in route.get("parameters", []) if item.get("in") == "query" and item.get("required")]
+    body = route.get("request_body")
     pattern: Dict[str, Any] = {
-        "path_params": "required when the route path contains {...}" if has_path_params else "not required",
-        "query": "optional URL query parameters",
-        "body": "JSON body object" if uses_body else "usually omitted",
+        "path_params": "required when the route path contains {...}" if _extract_path_params(path) else "not required",
+        "query": f"required URL query parameters: {', '.join(query)}" if query else "optional URL query parameters",
     }
-
+    if tool == "download_file":
+        pattern["result"] = "unique local staging path, name, media_type, size and sha256; no overwrite"
+    else:
+        pattern["body"] = "JSON request body; see request_body schema" if body else "omitted; this route declares no request body"
     if path == "/api/config":
         pattern["confirm_agent_batch_change"] = (
             "set true only with explicit user consent to change external_agent_max_batches"
@@ -792,34 +831,61 @@ def _build_call_pattern(route: Dict[str, str]) -> Dict[str, Any]:
         pattern["confirm_advanced_change"] = (
             "set to true only after the user explicitly confirms MCP host/port changes"
         )
-
     return pattern
 
 
-def _build_call_web_api_example(route: Dict[str, str]) -> Dict[str, Any]:
-    method = route["method"].upper()
-    path = route["path"]
-    example: Dict[str, Any] = {
-        "method": method,
-        "path": path,
-    }
-
-    path_params = _extract_path_params(path)
-    if path_params:
-        example["path_params"] = {name: "<value>" for name in path_params}
-
-    if method in {"POST", "PUT", "DELETE"}:
-        example["body"] = _build_example_body(path)
-
-    return example
+def _build_call_web_api_example(route: Dict[str, Any]) -> Dict[str, Any]:
+    return {"method": route["method"].upper(), "path": route["path"], **_build_example_args(route)}
 
 
 def _extract_path_params(path: str) -> List[str]:
-    return [
-        part.strip("{}")
-        for part in path.split("/")
-        if part.startswith("{") and part.endswith("}")
-    ]
+    return [item.split(":", 1)[0] for item in re.findall(r"{([^}]+)}", path)]
+
+
+def _schema_example(schema: Dict[str, Any], root: Dict[str, Any] | None = None, depth: int = 0) -> Any:
+    """Construct a small example from declared constraints, not from HTTP verbs."""
+    if not isinstance(schema, dict) or depth > 8:
+        return None
+    root = schema if root is None else root
+    reference = schema.get("$ref", "")
+    if reference.startswith("#/"):
+        resolved = root
+        for part in reference[2:].split("/"):
+            resolved = resolved.get(part.replace("~1", "/").replace("~0", "~"), {})
+        return _schema_example(resolved, root, depth + 1)
+    if "const" in schema:
+        return schema["const"]
+    if schema.get("default") is not None:
+        return schema["default"]
+    if schema.get("enum"):
+        return next((item for item in schema["enum"] if item is not None), None)
+    choices = schema.get("anyOf") or schema.get("oneOf")
+    if choices:
+        choice = next((item for item in choices if item.get("type") != "null"), choices[0])
+        return _schema_example(choice, root, depth + 1)
+    if schema.get("allOf"):
+        values = [_schema_example(item, root, depth + 1) for item in schema["allOf"]]
+        if all(isinstance(item, dict) for item in values):
+            return {key: value for item in values for key, value in item.items()}
+        return next((item for item in values if item is not None), None)
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = next((item for item in kind if item != "null"), "null")
+    if kind == "object" or "properties" in schema:
+        fields = schema.get("properties", {})
+        return {name: _schema_example(fields.get(name, {}), root, depth + 1) for name in schema.get("required", [])}
+    if kind == "array":
+        return [_schema_example(schema.get("items", {}), root, depth + 1)]
+    if kind == "boolean":
+        return False
+    if kind in {"integer", "number"}:
+        minimum = schema.get("minimum", 1)
+        if "exclusiveMinimum" in schema:
+            minimum = max(minimum, schema["exclusiveMinimum"] + 1)
+        return min(minimum, schema.get("maximum", minimum))
+    if kind == "null":
+        return None
+    return "<value>"
 
 
 def _build_route_notes(path: str) -> List[str]:
@@ -833,21 +899,46 @@ def _build_route_notes(path: str) -> List[str]:
         notes.append("Queue API keys are redacted for MCP reads.")
     if path == "/api/queue/raw":
         notes.append("This route returns serialized JSON text; secret fields inside it are still redacted for MCP.")
+        notes.append("Pass the revision from the last GET in query.expected_revision when saving; on conflict reload and review changes first.")
 
     return notes
 
 
-def _build_example_args(route: Dict[str, str]) -> Dict[str, Any]:
-    path = route["path"]
-    method = route["method"].upper()
-    example: Dict[str, Any] = {}
-
-    if "{" in path and "}" in path:
-        example["path_params"] = {name: "<value>" for name in _extract_path_params(path)}
-
-    if method in {"POST", "PUT", "DELETE"}:
-        example["body"] = _build_example_body(path)
-
+def _build_example_args(route: Dict[str, Any]) -> Dict[str, Any]:
+    tool = _recommended_api_tool(route)
+    if tool == "upload_file":
+        return {"file_path": "/abs/path/input.txt", "policy": "default"}
+    example: Dict[str, Any] = {"path": route["path"]} if tool == "download_file" else {}
+    parameters = route.get("parameters", [])
+    path_params = {
+        name: _schema_example(next((item.get("schema", {}) for item in parameters if item.get("in") == "path" and item.get("name") == name), {"type": "string"}))
+        for name in _extract_path_params(route["path"])
+    }
+    if path_params:
+        example["path_params"] = path_params
+    query = {
+        item["name"]: _schema_example(item.get("schema", {}))
+        for item in parameters if item.get("in") == "query" and item.get("required")
+    }
+    if route["path"].startswith("/api/queue") and any(
+        item.get("in") == "query" and item.get("name") == "expected_revision" for item in parameters
+    ):
+        query["expected_revision"] = "<revision from the queue read>"
+    if query:
+        example["query"] = query
+    body = route.get("request_body")
+    if tool == "call_web_api" and body:
+        content = body.get("content", {})
+        media = next((value for key, value in content.items() if key == "application/json" or key.endswith("+json")), None)
+        if media is not None:
+            generated = _schema_example(media.get("schema", {}))
+            semantic = _build_example_body(route["path"])
+            example["body"] = {**generated, **semantic} if isinstance(generated, dict) else generated
+    elif tool == "call_web_api" and "request_body" not in route:
+        # A legacy route-only listing has no schema; retain known examples only.
+        semantic = _build_example_body(route["path"])
+        if semantic and route["method"].upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            example["body"] = semantic
     return example
 
 
@@ -866,10 +957,11 @@ def _build_example_body(path: str) -> Any:
             "platform": "openai",
             "model": "gpt-4o-mini",
         }
-    if path == "/api/task/run":
+    if path in {"/api/task/run", "/api/task/preview", "/api/task/external-agent-mode"}:
         return {
-            "task": "translate",
+            "task_type": "translate",
             "input_path": "/abs/path/input.txt",
             "output_path": "/abs/path/output",
+            **({"user_confirmed_external_processing": False} if path.endswith("/external-agent-mode") else {}),
         }
-    return {"example": "fill in the JSON body required by this route"}
+    return {}

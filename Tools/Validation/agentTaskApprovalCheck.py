@@ -122,21 +122,24 @@ class StructuredTaskApprovalTests(unittest.TestCase):
     def setUpClass(cls):
         from ModuleFolders.Infrastructure.TaskContract import TaskSpec
 
-        # Execute the real payload and endpoint without WebServer startup/import side effects.
-        tree = ast.parse((ROOT / "Tools/WebServer/web_server.py").read_text(encoding="utf-8"))
+        # Load DTOs and the isolated endpoint without starting an API runtime.
+        from Tools.APIServer.contracts import TaskPayload, ExternalAgentTaskPayload
+        tree = ast.parse((ROOT / "Tools/APIServer/application.py").read_text(encoding="utf-8"))
         names = {"TaskPayload", "ExternalAgentTaskPayload", "request_external_agent_mode"}
         nodes = [node for node in tree.body if getattr(node, "name", None) in names]
         for node in nodes:
             node.decorator_list = []
         cls.namespace = {
             **globals(), "TaskSpec": TaskSpec,
-            "is_mcp_request": lambda request: request.authorized,
+            "TaskPayload": TaskPayload, "ExternalAgentTaskPayload": ExternalAgentTaskPayload,
+            "_has_valid_mcp_auth": lambda request: request.authorized,
+            "_caller_context": lambda request: "authenticated-mcp-fixture",
         }
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / "Tools/WebServer/web_server.py"), "exec"), cls.namespace)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / "Tools/APIServer/application.py"), "exec"), cls.namespace)
 
     def setUp(self):
-        self.run = AsyncMock(return_value={"task_id": "generated-task"})
-        self.namespace["run_task"] = self.run
+        self.run = Mock(return_value={"task_id": "generated-task"})
+        self.namespace["_task_call"] = self.run
         self.payload = self.namespace["ExternalAgentTaskPayload"]
         self.endpoint = self.namespace["request_external_agent_mode"]
 
@@ -160,10 +163,11 @@ class StructuredTaskApprovalTests(unittest.TestCase):
         self.assertEqual(result["mode_scope"], "task")
         self.assertFalse(result["config_changed"])
         self.assertIsNone(payload.execution_mode)
-        forwarded = self.run.call_args.args[0]
+        forwarded = self.run.call_args.args[1]
         self.assertEqual(forwarded.execution_mode, "external_agent")
-        self.assertNotIn("user_confirmed_external_processing", forwarded.model_dump())
-        self.assertEqual(forwarded.to_task_spec().execution_mode, "external_agent")
+        self.assertNotIn("user_confirmed_external_processing", forwarded.to_mapping())
+        self.assertIs(self.run.call_args.kwargs["user_confirmed_external_processing"], True)
+        self.assertEqual(self.run.call_args.kwargs["caller"], "authenticated-mcp-fixture")
 
     def test_confirmation_requires_a_json_boolean(self):
         for value in (None, 1, "true"):

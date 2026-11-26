@@ -8,9 +8,11 @@ import shutil
 import tempfile
 import uuid
 from collections import Counter
+from functools import wraps
 import rapidjson as json
 from datetime import datetime, timedelta
 from ModuleFolders.Base.Base import Base
+from ModuleFolders.Service.TaskQueue.QueueOutcome import summarize_queue
 from ModuleFolders.Infrastructure.SensitiveData import (
     contains_sensitive_data,
     sanitize_sensitive_data,
@@ -35,6 +37,36 @@ except ImportError:  # pragma: no cover - POSIX has no msvcrt
 
 _QUEUE_THREAD_LOCKS = {}
 _QUEUE_THREAD_LOCKS_GUARD = threading.Lock()
+_HELD_QUEUE_FILES = threading.local()
+
+
+def _serialized(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.state_lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
+def _worker_update(method):
+    @wraps(method)
+    def update(self, task_id, *args, **kwargs):
+        with self.state_lock, _queue_file_lock(self.queue_file):
+            if not isinstance(task_id, str):
+                return False
+            if self._queue_revision != _queue_file_revision(self.queue_file):
+                if not self.hot_reload_queue(quiet=True, preserve_local_locks=False):
+                    return False
+            index = self.resolve_index(task_id)
+            if index < 0:
+                return False
+            task = self.tasks[index]
+            claim = getattr(self, "_worker_claim", None)
+            if claim != (task.task_id, task.process_start_time) or not task.is_processing or not task.locked:
+                return False
+            self.current_task_index = index
+            return method(self, index, *args, **kwargs)
+    return update
 
 
 def _queue_thread_lock(queue_path):
@@ -51,6 +83,10 @@ def _queue_thread_lock(queue_path):
 def _queue_file_lock(queue_path):
     """Serialize queue file transactions across threads/processes."""
     normalized_path = os.path.abspath(queue_path)
+    held = getattr(_HELD_QUEUE_FILES, "paths", ())
+    if normalized_path in held:
+        yield
+        return
     lock_key = hashlib.sha256(
         os.path.normcase(normalized_path).encode("utf-8")
     ).hexdigest()
@@ -87,8 +123,10 @@ def _queue_file_lock(queue_path):
                     handle.seek(0)
                     msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
                     locked = True
+                _HELD_QUEUE_FILES.paths = (*held, normalized_path)
                 yield
             finally:
+                _HELD_QUEUE_FILES.paths = held
                 if locked:
                     try:
                         if fcntl is not None:
@@ -280,15 +318,26 @@ class QueueTaskItem:
 class QueueManager(Base):
     _instance = None
     _lock = threading.Lock()
+    state_lock = threading.RLock()
 
-    def __new__(cls):
+    @property
+    def revision(self):
+        return self._queue_revision or "missing"
+
+    def resolve_index(self, target):
+        if isinstance(target, int):
+            return target if 0 <= target < len(self.tasks) else -1
+        return next((index for index, task in enumerate(self.tasks) if task.task_id == str(target)), -1)
+
+    def __new__(cls, *, read_only=False):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super(QueueManager, cls).__new__(cls)
                 cls._instance._initialized = False
             return cls._instance
 
-    def __init__(self):
+    @_serialized
+    def __init__(self, *, read_only=False):
         if self._initialized: return
         super().__init__()
         # 使用绝对路径确保跨目录一致性
@@ -304,9 +353,19 @@ class QueueManager(Base):
         self.tasks = []
         self.last_save_error = None
         self.is_running = False
+        self.run_result = None
+        self.last_run_error = None
+        self._run_done = threading.Event()
+        self._run_done.set()
         self._automation_stop_requested = False
         self.current_task_index = -1
-        self.load_tasks()
+        self._queue_revision = None
+        self._queue_revision_path = self.queue_file
+        if read_only:
+            if os.path.exists(self.queue_file):
+                self.hot_reload_queue(quiet=True, preserve_local_locks=False)
+        else:
+            self.load_tasks()
         self._initialized = True
 
     def _log_queue_operation(self, message):
@@ -362,6 +421,7 @@ class QueueManager(Base):
             self.warning(f"Failed to clear queue log: {e}")
         return False
 
+    @_serialized
     def load_tasks(self, custom_path=None):
         if custom_path:
             self.queue_file = custom_path
@@ -383,14 +443,13 @@ class QueueManager(Base):
                     self._queue_revision = None
                     self._queue_revision_path = queue_path
         except Exception as e:
+            self.last_run_error = "QUEUE_LOAD_FAILED"
             self.error(f"Failed to load queue tasks: {e}")
             self.tasks = []
-            try:
-                self._queue_revision = _queue_file_revision(queue_path)
-            except OSError:
-                self._queue_revision = None
+            self._queue_revision = None
             self._queue_revision_path = queue_path
 
+    @_serialized
     def save_tasks(self):
         """Atomically persist the queue without exposing a partial JSON file."""
         queue_path = os.path.abspath(self.queue_file)
@@ -407,6 +466,8 @@ class QueueManager(Base):
                 current_revision = _queue_file_revision(queue_path)
                 if current_revision != expected_revision:
                     self.last_save_error = "conflict"
+                    if self.is_running:
+                        self.last_run_error = "QUEUE_SAVE_FAILED"
                     self.error(
                         "Queue changed since it was loaded; refusing to overwrite "
                         f"{queue_path}"
@@ -415,6 +476,8 @@ class QueueManager(Base):
                 return self._save_tasks_locked(queue_path)
         except Exception as e:
             self.last_save_error = str(e)
+            if self.is_running:
+                self.last_run_error = "QUEUE_SAVE_FAILED"
             self.error(f"Failed to save queue tasks: {e}")
             return False
 
@@ -465,6 +528,8 @@ class QueueManager(Base):
             return True
         except Exception as e:
             self.last_save_error = str(e)
+            if self.is_running:
+                self.last_run_error = "QUEUE_SAVE_FAILED"
             self.error(f"Failed to save queue tasks: {e}")
             if temporary_path:
                 try:
@@ -495,21 +560,7 @@ class QueueManager(Base):
     @staticmethod
     def _restore_runtime_api_keys(old_tasks, new_tasks):
         runtime_credentials = QueueManager._runtime_credentials_by_task_id(old_tasks)
-        incoming_id_counts = Counter(task.task_id for task in new_tasks)
-        duplicate_ids = {
-            task_id for task_id, count in incoming_id_counts.items() if count > 1
-        }
-        used_ids = {
-            task.task_id for task in new_tasks if task.task_id not in duplicate_ids
-        }
-
         for task in new_tasks:
-            if task.task_id in duplicate_ids:
-                task.task_id = QueueTaskItem.normalize_task_id(None)
-                while task.task_id in used_ids:
-                    task.task_id = QueueTaskItem.normalize_task_id(None)
-                used_ids.add(task.task_id)
-                continue
             credential_context, api_key = runtime_credentials.get(
                 task.task_id,
                 (None, None),
@@ -520,7 +571,7 @@ class QueueManager(Base):
             ):
                 task.api_key = api_key
 
-    def _replace_tasks_from_data(self, data):
+    def _replace_tasks_from_data(self, data, *, recover_runtime_state=True):
         if not isinstance(data, list):
             raise ValueError("Queue data must be an array")
         old_tasks = self.tasks
@@ -534,7 +585,8 @@ class QueueManager(Base):
                 # it to a durable waiting state instead of blocking the queue
                 # until the generic five-minute stale-lock timeout.
                 if (
-                    str(getattr(task, "execution_mode", "default_api") or "default_api").strip().lower()
+                    recover_runtime_state
+                    and str(getattr(task, "execution_mode", "default_api") or "default_api").strip().lower()
                     == "external_agent"
                     and (
                         getattr(task, "status", "")
@@ -573,7 +625,25 @@ class QueueManager(Base):
             fallback.status = "error"
             fallback.extra["task_contract_error"] = "Queue task item must be an object"
             new_tasks.append(fallback)
-        self._restore_runtime_api_keys(old_tasks, new_tasks)
+        id_counts = Counter(task.task_id for task in new_tasks)
+        used = set(id_counts)
+        identified = []
+        for index, (item, task) in enumerate(zip(data, new_tasks)):
+            try:
+                original = str(uuid.UUID(str(item.get("task_id"))))
+            except (ValueError, AttributeError):
+                original = None
+            if original == task.task_id and id_counts[original] == 1:
+                identified.append(task)
+                continue
+            source = os.path.abspath(getattr(self, "queue_file", ""))
+            seed = f"{source}:{index}:{json.dumps(sanitize_sensitive_data(item), sort_keys=True)}"
+            candidate = str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+            while candidate in used:
+                candidate = str(uuid.uuid5(uuid.NAMESPACE_URL, candidate))
+            task.task_id = candidate
+            used.add(candidate)
+        self._restore_runtime_api_keys(old_tasks, identified)
         task_ids_changed = any(
             not isinstance(item, dict) or item.get("task_id") != task.task_id
             for item, task in zip(data, new_tasks)
@@ -581,22 +651,30 @@ class QueueManager(Base):
         self.tasks = new_tasks
         return task_ids_changed or runtime_state_changed
 
+    @_serialized
     def add_task(self, task_item):
+        if self.resolve_index(task_item.task_id) >= 0:
+            self.last_save_error = "conflict"
+            return False
         self.tasks.append(task_item)
         if not self.save_tasks():
             self.tasks.pop()
             return False
         return True
 
+    @_serialized
     def remove_task(self, index):
+        index = self.resolve_index(index)
         if 0 <= index < len(self.tasks):
+            if any(not self.can_modify_task(pos) for pos in range(index, len(self.tasks))):
+                self.last_save_error = "locked"
+                return False
             task_name = os.path.basename(self.tasks[index].input_path)
             removed_task = self.tasks.pop(index)
             if not self.save_tasks():
                 self.tasks.insert(index, removed_task)
                 return False
-            self.hot_reload_queue(quiet=True)  # 静默热刷新队列
-            self._log_queue_operation(Base.i18n.get('msg_task_removed').format(task_name))
+            self._log_queue_operation(self.tra('msg_task_removed').format(task_name))
             return True
         return False
 
@@ -637,20 +715,20 @@ class QueueManager(Base):
                     old_display = self._mask_sensitive_value(old_value)
                     new_display = self._mask_sensitive_value(new_value)
                     if old_value is None and new_value is not None:
-                        changes.append(Base.i18n.get('param_added').format(Base.i18n.get(i18n_key), new_display))
+                        changes.append(self.tra('param_added').format(self.tra(i18n_key), new_display))
                     elif old_value is not None and new_value is None:
-                        changes.append(Base.i18n.get('param_removed').format(Base.i18n.get(i18n_key)))
+                        changes.append(self.tra('param_removed').format(self.tra(i18n_key)))
                     elif old_value != new_value:
-                        changes.append(Base.i18n.get('param_changed').format(Base.i18n.get(i18n_key), old_display, new_display))
+                        changes.append(self.tra('param_changed').format(self.tra(i18n_key), old_display, new_display))
             else:
                 # 普通参数的处理
                 if old_value != new_value:
                     if old_value is None and new_value is not None:
-                        changes.append(Base.i18n.get('param_added').format(Base.i18n.get(i18n_key), new_value))
+                        changes.append(self.tra('param_added').format(self.tra(i18n_key), new_value))
                     elif old_value is not None and new_value is None:
-                        changes.append(Base.i18n.get('param_removed').format(Base.i18n.get(i18n_key)))
+                        changes.append(self.tra('param_removed').format(self.tra(i18n_key)))
                     elif old_value != new_value:
-                        changes.append(Base.i18n.get('param_changed').format(Base.i18n.get(i18n_key), old_value, new_value))
+                        changes.append(self.tra('param_changed').format(self.tra(i18n_key), old_value, new_value))
 
         return changes
 
@@ -663,8 +741,16 @@ class QueueManager(Base):
         else:
             return str(value)[:4] + "****" + str(value)[-4:]
 
-    def update_task(self, index, task_item):
+    @_serialized
+    def update_task(self, index, task_item, *, expected_revision=None):
+        index = self.resolve_index(index)
         if 0 <= index < len(self.tasks):
+            if task_item.task_id != self.tasks[index].task_id or (expected_revision is not None and expected_revision != self.revision):
+                self.last_save_error = "conflict"
+                return False
+            if not self.can_modify_task(index):
+                self.last_save_error = "locked"
+                return False
             try:
                 if task_item.runtime_overrides or task_item.step_overrides:
                     if not task_item.workflow_steps:
@@ -681,28 +767,19 @@ class QueueManager(Base):
                 changes = self.detect_parameter_changes(old_task, task_item)
 
                 # 更新任务
-                previous_tasks = copy.deepcopy(self.tasks)
                 self.tasks[index] = task_item
                 if not self.save_tasks():
-                    # The caller may have mutated the task object in-place
-                    # before invoking this method (the Web endpoint does so
-                    # for PATCH-like updates). Reload the disk revision rather
-                    # than restoring that already-mutated object snapshot.
-                    try:
-                        self.load_tasks(self.queue_file)
-                    except Exception:
-                        self.tasks = previous_tasks
+                    self.tasks[index] = old_task
                     return False
-                self.hot_reload_queue(quiet=True)
 
                 # 打印详细的变更日志
                 if changes:
-                    self._log_queue_operation(Base.i18n.get('msg_task_updated').format(task_name))
+                    self._log_queue_operation(self.tra('msg_task_updated').format(task_name))
                     for change in changes:
                         self._log_queue_operation(change)
                 else:
                     # 如果没有参数变更，只是简单的更新
-                    self._log_queue_operation(f"[INFO] {Base.i18n.get('msg_task_updated').format(task_name)} {Base.i18n.get('msg_no_config_changes')}")
+                    self._log_queue_operation(f"[INFO] {self.tra('msg_task_updated').format(task_name)} {self.tra('msg_no_config_changes')}")
 
             except Exception as e:
                 self._log_queue_operation(f"[ERROR] Failed to update task: {e}")
@@ -711,7 +788,11 @@ class QueueManager(Base):
             return True
         return False
 
+    @_serialized
     def clear_tasks(self):
+        if any(not self.can_modify_task(index) for index in range(len(self.tasks))):
+            self.last_save_error = "locked"
+            return False
         previous_tasks = self.tasks
         self.tasks = []
         if not self.save_tasks():
@@ -719,6 +800,7 @@ class QueueManager(Base):
             return False
         return True
 
+    @_serialized
     def lock_task(self, index):
         """锁定任务（正在执行中）"""
         if 0 <= index < len(self.tasks):
@@ -730,6 +812,7 @@ class QueueManager(Base):
             return True
         return False
 
+    @_serialized
     def unlock_task(self, index):
         """解锁任务"""
         if 0 <= index < len(self.tasks):
@@ -744,11 +827,15 @@ class QueueManager(Base):
     def can_modify_task(self, index):
         """检查任务是否可以被修改（未锁定）"""
         if 0 <= index < len(self.tasks):
-            return not self.tasks[index].locked
+            task = self.tasks[index]
+            return not (task.locked or task.is_processing or task.status in (
+                "starting", "running", "stopping", "translating", "polishing", "workflow", "staging", "committed",
+            ))
         return False
 
     # ================ 智能处理状态管理 ================
 
+    @_worker_update
     def update_task_activity(self, index):
         """更新任务活动时间（心跳机制）"""
         if 0 <= index < len(self.tasks):
@@ -761,6 +848,7 @@ class QueueManager(Base):
             return True
         return False
 
+    @_serialized
     def start_task_processing(self, index):
         """开始处理任务 - 设置处理状态和时间戳"""
         if 0 <= index < len(self.tasks):
@@ -787,6 +875,7 @@ class QueueManager(Base):
             return True
         return False
 
+    @_serialized
     def stop_task_processing(self, index):
         """停止处理任务 - 清除处理状态"""
         if 0 <= index < len(self.tasks):
@@ -852,6 +941,7 @@ class QueueManager(Base):
             self.warning(f"Invalid activity time format for task {index+1}: {e}")
             return False
 
+    @_serialized
     def cleanup_stale_locks(self, timeout_minutes=5):
         """
         清理过期的锁定状态
@@ -874,7 +964,7 @@ class QueueManager(Base):
                 task.last_activity_time = None
 
                 # 重置状态到合适的值
-                if task.status in ["translating", "polishing"]:
+                if task.status in ["translating", "polishing", "workflow"]:
                     task.status = "waiting"
 
                 cleaned_count += 1
@@ -924,46 +1014,23 @@ class QueueManager(Base):
         return status_info
 
     def move_task_up(self, index):
-        """将指定索引的任务向上移动一位"""
-        if (1 <= index < len(self.tasks) and
-            self.can_modify_task(index) and self.can_modify_task(index - 1)):
-            task_name = os.path.basename(self.tasks[index].input_path)
-            previous_tasks = list(self.tasks)
-            self.tasks[index], self.tasks[index - 1] = self.tasks[index - 1], self.tasks[index]
-            if not self.save_tasks():
-                self.tasks = previous_tasks
-                return False
-            self.hot_reload_queue(quiet=True)  # 静默热刷新队列
-            self._log_queue_operation(Base.i18n.get('msg_task_moved_up').format(task_name, index+1, index))
-            return True
-        return False
+        return self.move_task(index, index - 1)
 
     def move_task_down(self, index):
-        """将指定索引的任务向下移动一位"""
-        if (0 <= index < len(self.tasks) - 1 and
-            self.can_modify_task(index) and self.can_modify_task(index + 1)):
-            task_name = os.path.basename(self.tasks[index].input_path)
-            previous_tasks = list(self.tasks)
-            self.tasks[index], self.tasks[index + 1] = self.tasks[index + 1], self.tasks[index]
-            if not self.save_tasks():
-                self.tasks = previous_tasks
-                return False
-            self.hot_reload_queue(quiet=True)  # 静默热刷新队列
-            self._log_queue_operation(Base.i18n.get('msg_task_moved_down').format(task_name, index+1, index+2))
-            return True
-        return False
+        return self.move_task(index, index + 1)
 
+    @_serialized
     def move_task(self, from_index, to_index):
         """将任务从from_index移动到to_index位置"""
         if (0 <= from_index < len(self.tasks) and
             0 <= to_index < len(self.tasks) and
-            from_index != to_index and
-            self.can_modify_task(from_index)):
+            from_index != to_index):
 
             # 检查移动路径上是否有锁定的任务
             start, end = min(from_index, to_index), max(from_index, to_index)
             for i in range(start, end + 1):
-                if i != from_index and not self.can_modify_task(i):
+                if not self.can_modify_task(i):
+                    self.last_save_error = "locked"
                     return False
 
             # 移除任务
@@ -975,11 +1042,11 @@ class QueueManager(Base):
             if not self.save_tasks():
                 self.tasks = previous_tasks
                 return False
-            self.hot_reload_queue(quiet=True)  # 静默热刷新队列
-            self._log_queue_operation(Base.i18n.get('msg_task_moved').format(task_name, from_index+1, to_index+1))
+            self._log_queue_operation(self.tra('msg_task_moved').format(task_name, from_index+1, to_index+1))
             return True
         return False
 
+    @_serialized
     def reorder_tasks(self, new_order):
         """根据新的索引顺序重新排列任务
 
@@ -988,8 +1055,18 @@ class QueueManager(Base):
         """
         if (len(new_order) == len(self.tasks) and
             set(new_order) == set(range(len(self.tasks)))):
-
-            # 重新排序任务
+            segment = 0
+            segments = []
+            for index in range(len(self.tasks)):
+                if not self.can_modify_task(index):
+                    if new_order[index] != index:
+                        self.last_save_error = "locked"
+                        return False
+                    segment += 1
+                segments.append(segment)
+            if any(segments[index] != segments[previous] for index, previous in enumerate(new_order)):
+                self.last_save_error = "locked"
+                return False
             previous_tasks = list(self.tasks)
             self.tasks = [self.tasks[i] for i in new_order]
             if not self.save_tasks():
@@ -998,11 +1075,13 @@ class QueueManager(Base):
             return True
         return False
 
-    def hot_reload_queue(self, quiet=False):
+    @_serialized
+    def hot_reload_queue(self, quiet=False, *, preserve_local_locks=True):
         """热重载队列：在不影响锁定任务的情况下重新加载队列
 
         Args:
             quiet (bool): 如果为True，不打印成功日志。用于操作后的静默刷新。
+            preserve_local_locks (bool): False observes the file without recovery or writeback.
         """
         queue_path = os.path.abspath(self.queue_file)
         if not os.path.exists(queue_path):
@@ -1016,13 +1095,15 @@ class QueueManager(Base):
                 # 保存当前锁定状态
                 locked_states = {}
                 for task in self.tasks:
-                    if task.locked and not self._is_external_agent_task(task):
+                    if preserve_local_locks and task.locked and not self._is_external_agent_task(task):
                         locked_states[task.task_id] = task.status
 
                 # 重新加载任务
                 with open(queue_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                task_ids_changed = self._replace_tasks_from_data(data)
+                task_ids_changed = self._replace_tasks_from_data(
+                    data, recover_runtime_state=preserve_local_locks
+                )
 
                 # 恢复锁定状态（通过持久化任务 ID 匹配）
                 for new_task in self.tasks:
@@ -1032,7 +1113,7 @@ class QueueManager(Base):
 
                 self._queue_revision = _queue_file_revision(queue_path)
                 self._queue_revision_path = queue_path
-                if contains_sensitive_data(data) or task_ids_changed:
+                if preserve_local_locks and (contains_sensitive_data(data) or task_ids_changed):
                     if not self._save_tasks_locked(queue_path):
                         self.tasks = previous_tasks
                         self._queue_revision = previous_revision
@@ -1045,6 +1126,8 @@ class QueueManager(Base):
             return True
 
         except Exception as e:
+            if self.is_running:
+                self.last_run_error = "QUEUE_LOAD_FAILED"
             self.tasks = previous_tasks
             self._queue_revision = previous_revision
             self._queue_revision_path = previous_revision_path
@@ -1059,21 +1142,34 @@ class QueueManager(Base):
             ensure_ascii=False,
         )
 
-    def load_from_json(self, content):
+    @_serialized
+    def load_from_json(self, content, *, expected_revision=None):
         """Load a raw queue document while ensuring its persisted form is sanitized."""
-        data = json.loads(content)
-        if not isinstance(data, list):
-            raise ValueError("Queue JSON must be an array")
+        data = json.loads(content, allow_nan=False)
+        if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+            raise ValueError("Queue JSON must be an array of task objects")
+        supplied_ids = [str(uuid.UUID(str(row["task_id"]))) for row in data if "task_id" in row]
+        if len(supplied_ids) != len(set(supplied_ids)):
+            raise ValueError("Duplicate queue task ID")
 
         queue_path = os.path.abspath(self.queue_file)
         with _queue_file_lock(queue_path):
-            expected_revision = _queue_file_revision(queue_path)
-            known_revision = getattr(self, "_queue_revision", expected_revision)
-            if expected_revision != known_revision:
+            if (expected_revision is not None and expected_revision != self.revision) or _queue_file_revision(queue_path) != self._queue_revision:
                 self.last_save_error = "conflict"
                 return False
+            if any(not self.can_modify_task(index) for index in range(len(self.tasks))):
+                self.last_save_error = "locked"
+                return False
             previous_tasks = self.tasks
-            self._replace_tasks_from_data(data)
+            self._replace_tasks_from_data(data, recover_runtime_state=False)
+            if any(task.extra.get("task_contract_error") or not isinstance(task.status, str)
+                   or type(task.locked) is not bool or type(task.is_processing) is not bool
+                   for task in self.tasks):
+                self.tasks = previous_tasks
+                raise ValueError("Queue contains an invalid task")
+            if any(not self.can_modify_task(index) for index in range(len(self.tasks))):
+                self.tasks = previous_tasks
+                raise ValueError("Raw editing cannot claim a running task")
             if not self._save_tasks_locked(queue_path):
                 self.tasks = previous_tasks
                 return False
@@ -1083,6 +1179,7 @@ class QueueManager(Base):
     def _is_external_agent_task(task):
         return str(getattr(task, "execution_mode", "default_api") or "default_api").strip().lower() == "external_agent"
 
+    @_serialized
     def _set_external_agent_status(self, index, status):
         """Persist a queue-side external-Agent lifecycle transition.
 
@@ -1127,6 +1224,7 @@ class QueueManager(Base):
             return False
         return True
 
+    @_serialized
     def mark_external_agent_disconnected(self, task_id: str = "", input_path: str = ""):
         """Mark an external-Agent queue item as disconnected and unlock it."""
         target_input = os.path.abspath(input_path) if input_path else ""
@@ -1137,6 +1235,7 @@ class QueueManager(Base):
                 return self._set_external_agent_status(index, "agent_disconnected")
         return False
 
+    @_serialized
     def sync_external_agent_status(self, task_id: str, status: str) -> bool:
         """Apply a batch-protocol status to the matching queue item.
 
@@ -1160,6 +1259,7 @@ class QueueManager(Base):
                 return self._set_external_agent_status(index, status)
         return False
 
+    @_serialized
     def resume_external_agent_task(self, task_id: str = "", input_path: str = ""):
         """Return a disconnected external-Agent item to the waiting state."""
         target_input = os.path.abspath(input_path) if input_path else ""
@@ -1175,6 +1275,7 @@ class QueueManager(Base):
                 return self._set_external_agent_status(index, "waiting_for_agent")
         return False
 
+    @_serialized
     def get_next_unlocked_task(self, start_index=0, statuses=None):
         """获取下一个未锁定的待执行任务"""
         allowed_statuses = set(statuses or {"waiting", "translated"})
@@ -1188,14 +1289,17 @@ class QueueManager(Base):
                 continue
             if self._task_has_workflow(task):
                 continue
-            if not task.locked and task.status in allowed_statuses:
+            if self.can_modify_task(i) and task.status in allowed_statuses:
                 return i, task
         return None, None
 
-    def mark_task_executing(self, index):
+    @_serialized
+    def mark_task_executing(self, task):
         """标记任务为执行中并锁定 - 使用智能处理状态管理"""
-        if 0 <= index < len(self.tasks):
-            task = self.tasks[index]
+        if getattr(self, "_worker_claim", None) is not None:
+            return False
+        index = self.resolve_index(task.task_id)
+        if self.can_modify_task(index) and self.tasks[index] is task:
 
             if self._is_external_agent_task(task):
                 self._set_external_agent_status(index, "waiting_for_agent")
@@ -1208,7 +1312,9 @@ class QueueManager(Base):
                 task.process_start_time,
                 task.last_activity_time,
             )
-            if task.status == "waiting":
+            if self._task_has_workflow(task):
+                task.status = "workflow"
+            elif task.status == "waiting":
                 task.status = "translating"
             elif task.status == "translated":
                 task.status = "polishing"
@@ -1231,9 +1337,11 @@ class QueueManager(Base):
                 ) = previous
                 return False
             self.current_task_index = index
+            self._worker_claim = (task.task_id, now)
             return True
         return False
 
+    @_worker_update
     def mark_task_completed(self, index, final_status="completed", final_state: dict = None):
         """标记任务完成并解锁 - 使用智能处理状态管理"""
         if 0 <= index < len(self.tasks):
@@ -1253,17 +1361,28 @@ class QueueManager(Base):
             task.last_activity_time = None
             task.locked = False
             task.status = final_status
-            if final_status == "partial" and isinstance(final_state, dict):
+            skip = (getattr(self, "_deferred_skip", None) == self._worker_claim
+                    and final_status not in {"stopped", "error"}
+                    and all(self.can_modify_task(pos) for pos in range(index + 1, len(self.tasks))))
+            if skip:
+                self.tasks.append(self.tasks.pop(index))
+                task.status = "waiting"
+            if task.status == "partial" and isinstance(final_state, dict):
                 task.extra = getattr(task, "extra", {}) or {}
                 task.extra["partial_step_type"] = final_state.get("step_type") or ""
                 task.extra["partial_step_id"] = final_state.get("step_id") or ""
                 task.extra["partial_step_index"] = final_state.get("step_index") or 0
                 task.extra["partial_message"] = final_state.get("message") or ""
-            if final_status == "completed":
-                self._collect_completed_automation_outputs(task)
             if self.save_tasks() is not False:
+                self._worker_claim = None
+                self._deferred_skip = None
+                self.current_task_index = -1
+                if task.status == "completed":
+                    self._collect_completed_automation_outputs(task)
                 return True
 
+            if skip:
+                self.tasks.insert(index, self.tasks.pop())
             (
                 task.status,
                 task.locked,
@@ -1307,6 +1426,7 @@ class QueueManager(Base):
         except Exception as e:
             self._log_queue_operation(f"Automation output collection failed: {e}")
 
+    @_serialized
     def mark_automation_interrupted(self, run_id: str, final_status: str = "stopped") -> bool:
         if not run_id:
             return False
@@ -1326,6 +1446,7 @@ class QueueManager(Base):
                 return False
         return updated
 
+    @_serialized
     def continue_partial_task(self, run_id: str = "", input_path: str = "") -> bool:
         target_input = os.path.abspath(input_path) if input_path else ""
         for task in self.tasks:
@@ -1358,6 +1479,7 @@ class QueueManager(Base):
             return True
         return False
 
+    @_serialized
     def resume_stopped_task(self, run_id: str = "", input_path: str = "") -> bool:
         target_input = os.path.abspath(input_path) if input_path else ""
         for task in self.tasks:
@@ -1441,58 +1563,66 @@ class QueueManager(Base):
                 return i, task
         return None, None
 
+    @_serialized
     def skip_task_to_end(self, file_path):
-        """跳过任务并移动到队列末尾"""
-        try:
-            task_index, task = self.find_task_by_file_path(file_path)
-            if task_index is None:
-                return False, "Task not found in queue"
+        """Keep the claim until its worker exits; only then may the row move."""
+        claim = getattr(self, "_worker_claim", None)
+        index = self.resolve_index(claim[0]) if claim else -1
+        if index < 0 or not file_path:
+            return False, "No owned task to skip"
+        task = self.tasks[index]
+        if os.path.normpath(task.input_path) != os.path.normpath(file_path) or not task.locked:
+            return False, "Task is not the current worker's claim"
+        if any(not self.can_modify_task(pos) for pos in range(index + 1, len(self.tasks))):
+            return False, "Cannot move another protected task"
+        self._deferred_skip = claim
+        return True, f"Task will move to position {len(self.tasks)}"
 
-            if not task.locked:
-                return False, "Task is not currently locked"
-
-            previous_tasks = copy.deepcopy(self.tasks)
-
-            # 解锁任务并重置状态
-            task.locked = False
-            task.status = "waiting"
-
-            # 移动到队列末尾
-            moved_task = self.tasks.pop(task_index)
-            self.tasks.append(moved_task)
-
-            # 保存队列
-            if self.save_tasks() is False:
-                self.tasks = previous_tasks
-                return False, "Failed to persist queue changes"
-
-            file_name = os.path.basename(file_path)
-            self.info(f"Task [{file_name}] skipped and moved to end of queue")
-            return True, f"Task moved to position {len(self.tasks)}"
-
-        except Exception as e:
-            self.error(f"Failed to skip task: {e}")
-            return False, str(e)
-
+    @_serialized
     def start_queue(self, cli_menu, automation_background=False):
-        if self.is_running: return
+        if self.is_running:
+            return
         self.is_running = True
+        self.run_result = None
+        self.last_run_error = None
+        self._worker_claim = None
+        self._run_done.clear()
         self._automation_stop_requested = False
         threading.Thread(target=self._process_queue, args=(cli_menu, automation_background), daemon=True).start()
+
+    def wait_for_completion(self, timeout=None):
+        return self._run_done.wait(timeout)
+
+    def _process_queue(self, cli_menu, automation_background=False):
+        try:
+            completed = self._process_queue_steps(cli_menu, automation_background)
+            if completed is not True and not self._automation_stop_requested and Base.work_status != Base.STATUS.STOPING:
+                self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
+        except Exception as exc:
+            self.last_run_error = "QUEUE_EXECUTION_FAILED"
+            self.error(f"Queue execution failed: {type(exc).__name__}")
+        finally:
+            with self.state_lock:
+                self.run_result = summarize_queue(
+                    self.tasks,
+                    stopped=self._automation_stop_requested or Base.work_status == Base.STATUS.STOPING,
+                    error=self.last_run_error,
+                )
+                self._worker_claim = None
+                self.is_running = False
+                self._run_done.set()
 
     def request_automation_stop(self):
         self._automation_stop_requested = True
 
-    def _process_queue(self, cli_menu, automation_background=False):
+    def _process_queue_steps(self, cli_menu, automation_background=False):
         self.info("Starting task queue processing with full API overrides...")
 
         if automation_background:
-            self._process_background_queue(cli_menu)
-            return
+            return self._process_background_queue(cli_menu)
 
         # Phase 0: Custom automation workflows
         if self._process_workflow_tasks(cli_menu) is False:
-            self.is_running = False
             return
 
         # Phase 1: Translation
@@ -1502,19 +1632,16 @@ class QueueManager(Base):
             # 热重载队列
             if not self.hot_reload_queue(quiet=True):
                 self.error("Failed to reload queue state; stopping queue processing.")
-                self.is_running = False
                 return
 
             # 清理过期的锁定状态
             if not self._cleanup_stale_locks_or_fail():
                 self.error("Failed to persist stale queue-lock cleanup; stopping queue processing.")
-                self.is_running = False
                 return
 
             # 优先处理运行期间新加入的自动化工作流任务
             if self._process_workflow_tasks(cli_menu) is False:
                 self.error("Workflow queue state could not be persisted; stopping queue processing.")
-                self.is_running = False
                 return
 
             # 查找下一个需要翻译的任务
@@ -1522,25 +1649,21 @@ class QueueManager(Base):
             if index is None:
                 break  # 没有更多翻译任务
 
+            if self.mark_task_executing(task) is False:
+                self.error("Failed to persist queue task execution state.")
+                return
+
             if task.task_type == TaskType.POLISH:
-                if self.mark_task_completed(index, "translated") is False:
+                if self.mark_task_completed(task.task_id, "translated") is False:
                     self.error("Failed to persist polish-only queue task state.")
-                    self.is_running = False
                     return
                 continue
 
             if task.task_type not in [TaskType.TRANSLATION, TaskType.TRANSLATE_AND_POLISH]:
-                if self.mark_task_completed(index, "error") is False:
+                if self.mark_task_completed(task.task_id, "error") is False:
                     self.error("Failed to persist invalid queue task state.")
-                    self.is_running = False
                     return
                 continue
-
-            # 标记任务为执行中
-            if self.mark_task_executing(index) is False:
-                self.error("Failed to persist queue task execution state.")
-                self.is_running = False
-                return
 
             if self._run_single_step(
                 cli_menu,
@@ -1549,21 +1672,18 @@ class QueueManager(Base):
                 resume=bool(getattr(task, "resume", False)),
             ):
                 if Base.work_status == Base.STATUS.STOPING:
-                    if self.mark_task_completed(index, "stopped") is False:
+                    if self.mark_task_completed(task.task_id, "stopped") is False:
                         self.error("Failed to persist stopped queue task state.")
-                        self.is_running = False
                         return
                     break
                 # 完成后标记状态
                 if task.task_type == TaskType.TRANSLATE_AND_POLISH:
-                    if self.mark_task_completed(index, "translated") is False:
+                    if self.mark_task_completed(task.task_id, "translated") is False:
                         self.error("Failed to persist translated queue task state.")
-                        self.is_running = False
                         return
                 else:
-                    if self.mark_task_completed(index, "completed") is False:
+                    if self.mark_task_completed(task.task_id, "completed") is False:
                         self.error("Failed to persist completed queue task state.")
-                        self.is_running = False
                         return
             else:
                 if self._is_external_agent_task(task):
@@ -1572,15 +1692,13 @@ class QueueManager(Base):
                     # waiting state for the Agent batch protocol to advance.
                     continue
                 if self.mark_task_completed(
-                    index,
+                    task.task_id,
                     "stopped" if Base.work_status == Base.STATUS.STOPING else "error",
                 ) is False:
                     self.error("Failed to persist failed queue task state.")
-                    self.is_running = False
                     return
 
         if Base.work_status == Base.STATUS.STOPING:
-            self.is_running = False
             self.info("Task queue processing stopped.")
             return
 
@@ -1592,19 +1710,16 @@ class QueueManager(Base):
                 # 热重载队列
                 if not self.hot_reload_queue():
                     self.error("Failed to reload queue state; stopping queue processing.")
-                    self.is_running = False
                     return
 
                 # 清理过期的锁定状态
                 if not self._cleanup_stale_locks_or_fail():
                     self.error("Failed to persist stale queue-lock cleanup; stopping queue processing.")
-                    self.is_running = False
                     return
 
                 # 优先处理运行期间新加入的自动化工作流任务
                 if self._process_workflow_tasks(cli_menu) is False:
                     self.error("Workflow queue state could not be persisted; stopping queue processing.")
-                    self.is_running = False
                     return
 
                 # 查找下一个需要润色的任务
@@ -1618,37 +1733,33 @@ class QueueManager(Base):
                         task.task_type in [TaskType.POLISH, TaskType.TRANSLATE_AND_POLISH]):
 
                         found_task = True
-                        if self.mark_task_executing(i) is False:
+                        if self.mark_task_executing(task) is False:
                             self.error("Failed to persist polishing queue task state.")
-                            self.is_running = False
                             return
 
                         if self._run_single_step(cli_menu, task, TaskType.POLISH, resume=True):
                             if Base.work_status == Base.STATUS.STOPING:
-                                if self.mark_task_completed(i, "stopped") is False:
+                                if self.mark_task_completed(task.task_id, "stopped") is False:
                                     self.error("Failed to persist stopped polishing task state.")
-                                    self.is_running = False
                                     return
                                 break
-                            if self.mark_task_completed(i, "completed") is False:
+                            if self.mark_task_completed(task.task_id, "completed") is False:
                                 self.error("Failed to persist completed polishing task state.")
-                                self.is_running = False
                                 return
                         else:
                             if self.mark_task_completed(
-                                i,
+                                task.task_id,
                                 "stopped" if Base.work_status == Base.STATUS.STOPING else "error",
                             ) is False:
                                 self.error("Failed to persist failed polishing task state.")
-                                self.is_running = False
                                 return
                         break
 
                 if not found_task:
                     break  # 没有更多润色任务
 
-        self.is_running = False
         self.info("Task queue processing finished.")
+        return True
 
     def _process_background_queue(self, cli_menu):
         try:
@@ -1658,17 +1769,22 @@ class QueueManager(Base):
                     break
 
                 if not self.hot_reload_queue(quiet=True):
+                    self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
                     self.error("Failed to reload background queue state; stopping queue processing.")
                     break
                 if not self._cleanup_stale_locks_or_fail():
+                    self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
                     self.error("Failed to persist stale queue-lock cleanup; stopping background queue processing.")
                     break
                 if self._ensure_background_workflow_tasks() is False:
+                    self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
                     break
                 if self._process_workflow_tasks(cli_menu) is False:
+                    self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
                     break
 
                 if not self.hot_reload_queue(quiet=True):
+                    self.last_run_error = self.last_run_error or "QUEUE_EXECUTION_FAILED"
                     self.error("Failed to reload background queue state; stopping queue processing.")
                     break
                 if self._has_background_pending_tasks():
@@ -1680,10 +1796,11 @@ class QueueManager(Base):
                     break
                 time.sleep(0.5)
         finally:
-            self._automation_stop_requested = False
-            self.is_running = False
             self.info("Background task queue processing finished.")
 
+        return self.last_run_error is None
+
+    @_serialized
     def _ensure_background_workflow_tasks(self):
         previous_tasks = copy.deepcopy(self.tasks)
         changed = False
@@ -1758,72 +1875,77 @@ class QueueManager(Base):
             if index is None:
                 break
 
-            previous_status = task.status
-            if self.mark_task_executing(index) is False:
-                return False
-            task.status = "workflow"
-            if self.save_tasks() is False:
-                task.status = previous_status
-                if self.stop_task_processing(index) is False:
-                    self.warning("Failed to roll back an unpersisted workflow task state.")
+            if self.mark_task_executing(task) is False:
                 return False
 
             workflow_status = self._run_workflow_task(cli_menu, task)
             if workflow_status in {"completed", "partial", "enqueued"}:
                 completed = self.mark_task_completed(
-                    index,
+                    task.task_id,
                     workflow_status,
                     getattr(task, "_automation_final_state", None),
                 )
             else:
                 completed = self.mark_task_completed(
-                    index,
+                    task.task_id,
                     "stopped" if workflow_status == "interrupted" else "error",
                 )
             if completed is False:
                 return False
         return True
 
+    @_worker_update
+    def _record_workflow_run(self, index, run_info):
+        task = self.tasks[index]
+        previous = task.automation_run_id, task.automation_progress_file, task.automation_worker_pid
+        task.automation_run_id, task.automation_progress_file, task.automation_worker_pid = (
+            run_info.get("run_id"), run_info.get("progress_file"), run_info.get("pid"))
+        if self.save_tasks():
+            return True
+        task.automation_run_id, task.automation_progress_file, task.automation_worker_pid = previous
+        return False
+
     def _run_workflow_task(self, cli_menu, task):
         try:
             from ModuleFolders.Infrastructure.Automation.AutomationProcessRunner import AutomationProcessRunner
 
             task_config = task.to_runtime_dict()
+            if os.environ.get("AINIEE_BACKEND_WORKER") == "1":
+                task_config["web_mode"] = True
             run_info = AutomationProcessRunner.start(
                 task_config,
                 project_root=getattr(cli_menu, "PROJECT_ROOT", None),
             )
-            task.automation_run_id = run_info.get("run_id")
-            task.automation_progress_file = run_info.get("progress_file")
-            task.automation_worker_pid = run_info.get("pid")
-            if self.save_tasks() is False:
+            run_id = run_info.get("run_id")
+            if not self._record_workflow_run(task.task_id, run_info):
                 try:
                     from ModuleFolders.Infrastructure.Automation.AutomationProcessRunner import (
                         AutomationProcessRunner,
                     )
                     AutomationProcessRunner.terminate(
-                        task.automation_run_id,
+                        run_id,
                         "Automation workflow state could not be persisted",
                     )
                 except Exception as terminate_error:
                     self.warning(
                         f"Failed to terminate unpersisted workflow task: {terminate_error}"
                     )
-                task.automation_run_id = None
-                task.automation_progress_file = None
-                task.automation_worker_pid = None
                 return "error"
 
-            process = AutomationProcessRunner.get_process(task.automation_run_id)
+            process = AutomationProcessRunner.get_process(run_id)
             while process and process.poll() is None:
                 if self._automation_stop_requested or Base.work_status == Base.STATUS.STOPING:
-                    AutomationProcessRunner.terminate(task.automation_run_id, "Automation workflow interrupted by user")
-                    return "interrupted"
-                self.update_task_activity(self.current_task_index)
+                    if AutomationProcessRunner.terminate(run_id, "Automation workflow interrupted by user"):
+                        return "interrupted"
+                    self.warning("Automation worker cancellation is still pending.")
+                if not self.update_task_activity(task.task_id):
+                    if AutomationProcessRunner.terminate(run_id, "Queue claim lost"):
+                        return "error"
+                    self.warning("Automation worker cancellation is still pending.")
                 time.sleep(0.5)
             from ModuleFolders.Infrastructure.Automation.AutomationProgress import read_progress_file
 
-            state = read_progress_file(task.automation_progress_file)
+            state = read_progress_file(run_info["progress_file"])
             task._automation_final_state = state
             status = state.get("status")
             if status in {"completed", "partial", "interrupted", "enqueued"}:
@@ -1834,7 +1956,6 @@ class QueueManager(Base):
             return "completed" if process and process.returncode == 0 else "error"
         except Exception as e:
             self.error(f"Workflow Task Error: {e}")
-            task.status = "error"
             return "error"
 
     @staticmethod
@@ -1942,8 +2063,8 @@ class QueueManager(Base):
 
             # 3. Execute
             # 更新活动时间（心跳）
-            if self.current_task_index >= 0:
-                self.update_task_activity(self.current_task_index)
+            if self.current_task_index >= 0 and not self.update_task_activity(task.task_id):
+                return False
 
             skip_prompt_validation = False
             if step_type == TaskType.TRANSLATION and task.task_type == TaskType.TRANSLATE_AND_POLISH:
@@ -1961,6 +2082,7 @@ class QueueManager(Base):
                 target_path=task.input_path,
                 continue_status=resume,
                 non_interactive=True,
+                web_mode=os.environ.get("AINIEE_BACKEND_WORKER") == "1",
                 from_queue=True,
                 skip_prompt_validation=skip_prompt_validation,
                 save_runtime_config=False,
@@ -1972,20 +2094,11 @@ class QueueManager(Base):
                     return False
                 raise RuntimeError("Task blocked before start.")
             
-            if Base.work_status != Base.STATUS.STOPING:
-                if step_type == TaskType.TRANSLATION and task.task_type == TaskType.TRANSLATE_AND_POLISH:
-                    task.status = "translated"
-                else:
-                    task.status = "completed"
-                return True
-            return False
+            return Base.work_status != Base.STATUS.STOPING
         except Exception as e:
             self.error(f"Task Error: {e}")
-            task.status = "error"
             return False
         finally:
-            if self.save_tasks() is False:
-                self.warning("Failed to persist queue state while finalizing a task step.")
             cli_menu.active_profile_name = original_active_profile
             cli_menu.active_rules_profile_name = original_rules_profile
             cli_menu.root_config = original_root_config

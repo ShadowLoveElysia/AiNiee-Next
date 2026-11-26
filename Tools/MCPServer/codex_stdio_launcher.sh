@@ -44,5 +44,5 @@ if [[ "$PYTHON_BIN" == "$PROJECT_ROOT/.venv/bin/python" ]]; then
 fi
 
 exec uv run --python "$PYTHON_BIN" --isolated --no-project --quiet \
-    --with mcp --with fastapi --with "uvicorn[standard]" --with requests \
+    --with 'mcp>=1.27,<2' --with fastapi --with "uvicorn[standard]" --with requests --with psutil \
     python "$SERVER_PATH" --transport stdio

@@ -4,7 +4,7 @@ import sys
 import time
 
 from rich.console import Console
-from Tools.MCPServer.security import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
+from ModuleFolders.Infrastructure.ApiSecurity import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
 
 
 class WebLogger:
@@ -24,7 +24,10 @@ class WebLogger:
 
             httpx.post(
                 f"{internal_api_url}/api/internal/update_comparison",
-                json={"source": source, "translation": translation},
+                json={
+                    "source": source, "translation": translation,
+                    "task_id": os.environ.get("AINIEE_WEB_TASK_ID") or None,
+                },
                 headers={INTERNAL_AUTH_HEADER: os.environ.get(INTERNAL_AUTH_ENV, "")},
                 timeout=1.0,
             )

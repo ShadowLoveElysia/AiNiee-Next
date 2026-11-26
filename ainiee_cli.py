@@ -104,6 +104,8 @@ def _consume_web_task_api_key(args, environ=None):
 
 class CLIMenu:
     def __init__(self):
+        # API workers use task-local configuration; persistent preferences belong to the host.
+        self._runtime_task_active = os.environ.get("AINIEE_BACKEND_WORKER") == "1"
         self.root_config_path = os.path.join(PROJECT_ROOT, "Resource", "config.json")
         self.profiles_dir = os.path.join(PROJECT_ROOT, "Resource", "profiles")
         self.rules_profiles_dir = os.path.join(PROJECT_ROOT, "Resource", "rules_profiles")
@@ -478,15 +480,15 @@ class CLIMenu:
 
     def _check_web_server_dist(self):
         """检查 WebServer 编译产物是否存在"""
+        self._last_queue_log_size = 0
+        self._queue_log_monitor_thread = None
+        self._queue_log_monitor_running = False
+        if os.environ.get("AINIEE_BACKEND_WORKER") == "1":
+            return
         dist_path = os.path.join(PROJECT_ROOT, "Tools", "WebServer", "dist", "index.html")
         if not os.path.exists(dist_path):
             self.display_banner()
             self.update_manager.setup_web_server()
-
-        # 队列日志监控相关
-        self._last_queue_log_size = 0
-        self._queue_log_monitor_thread = None
-        self._queue_log_monitor_running = False
 
     def handle_monitor_shortcut(self):
         self.web_runtime_bridge.handle_monitor_shortcut()
@@ -615,7 +617,8 @@ class CLIMenu:
             self.active_rules_profile_name = rules_profile_name
         self._migrate_and_load_profiles()
         self._after_config_loaded()
-        save_root_config(self.root_config)
+        if not getattr(self, "_runtime_task_active", False):
+            save_root_config(self.root_config)
 
     def switch_active_profile(self, profile_name):
         self.switch_active_profiles(profile_name=profile_name)
@@ -655,7 +658,8 @@ class CLIMenu:
         pinned = [item for item in kept_recent if item.get("pinned")]
         normal = [item for item in kept_recent if not item.get("pinned")]
         self.root_config["recent_projects"] = pinned + normal[: max(0, 10 - len(pinned))]
-        save_root_config(self.root_config)
+        if not getattr(self, "_runtime_task_active", False):
+            save_root_config(self.root_config)
 
     def _auto_merge_batch_ebooks(self, merge_input_dir, merge_output_dir, merge_name, allow_non_series_prompt=True):
         """Merge the current batch outputs with the configured ebook naming rule."""

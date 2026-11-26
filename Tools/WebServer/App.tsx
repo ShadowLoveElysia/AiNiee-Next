@@ -325,7 +325,9 @@ const MainLayout: React.FC = () => {
     setLanguage(code);
     if (config) {
         // Force sync back to config so it persists
-        DataService.saveConfig({ ...config, interface_language: code })
+        const updatedConfig = { ...config, interface_language: code };
+        DataService.saveConfig(updatedConfig)
+          .then(() => Object.assign(config, updatedConfig))
           .catch(err => console.error("Failed to persist language change", err));
     }
   };

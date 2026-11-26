@@ -10,11 +10,12 @@ import { QueueTaskItem, TaskType } from '../types';
 export const TaskQueue: React.FC = () => {
   const { t } = useI18n();
   const { config, profiles, rulesProfiles, activeTheme } = useGlobal();
-  const [queue, setQueue] = useState<QueueTaskItem[]>([]);
+  const [{ items: queue, revision }, setQueue] = useState({ items: [] as QueueTaskItem[], revision: '' });
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editIndex, setEditIndex] = useState<number | null>(null);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<{ taskId: string; revision: string } | null>(null);
+  const [dragged, setDragged] = useState<typeof editTarget>(null);
+  const [raw, setRaw] = useState<{ content: string; revision: string } | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   // Task Form State
@@ -60,7 +61,7 @@ export const TaskQueue: React.FC = () => {
   }, []);
 
   const openAddModal = () => {
-    setEditIndex(null);
+    setEditTarget(null);
     setTaskForm({
         task_type: TaskType.TRANSLATE,
         input_path: '',
@@ -90,12 +91,13 @@ export const TaskQueue: React.FC = () => {
   };
 
   const openEditModal = (index: number) => {
-    setEditIndex(index);
     // Ensure all fields are explicitly set, even if undefined in original task
     const taskToEdit = queue[index];
+    setEditTarget({ taskId: taskToEdit.task_id, revision });
     setTaskForm({
-      runtime_overrides: taskToEdit.runtime_overrides || {},
-      step_overrides: taskToEdit.step_overrides || {},
+      runtime_overrides: taskToEdit.runtime_overrides,
+      step_overrides: taskToEdit.step_overrides,
+      execution_mode: taskToEdit.execution_mode,
       task_type: taskToEdit.task_type,
       input_path: taskToEdit.input_path,
       output_path: taskToEdit.output_path || '',
@@ -138,11 +140,11 @@ export const TaskQueue: React.FC = () => {
     } else if (payload.lines_limit !== undefined && payload.lines_limit !== null) {
       payload.lines_limit = Math.max(1, Math.min(100, Number(payload.lines_limit) || 1));
       payload.tokens_limit = null;
-    } else if (editIndex !== null) {
+    } else if (editTarget !== null) {
       payload.lines_limit = null;
       payload.tokens_limit = null;
     }
-    if (editIndex !== null) {
+    if (editTarget !== null) {
       payload.output_path ||= null;
       payload.profile ||= null;
       payload.rules_profile ||= null;
@@ -166,35 +168,36 @@ export const TaskQueue: React.FC = () => {
       }
     }
     try {
-      if (editIndex !== null) {
-          await DataService.updateQueueItem(editIndex, payload);
+      if (editTarget !== null) {
+          await DataService.updateQueueItem(editTarget.taskId, payload, editTarget.revision);
       } else {
           await DataService.addToQueue(payload);
       }
       setShowModal(false);
       fetchQueue();
     } catch (error) {
-      alert(t('msg_operation_failed'));
+      alert(error instanceof Error ? error.message : t('msg_operation_failed'));
     }
   };
 
   const handleRemoveTask = async (index: number) => {
+    const taskId = queue[index].task_id;
     if (!(await nativeConfirm(t('msg_profile_delete_confirm').replace('{}', `Task #${index + 1}`)))) return;
     try {
-      await DataService.removeFromQueue(index);
+      await DataService.removeFromQueue(taskId, revision);
       fetchQueue();
     } catch (error) {
-      alert(t('msg_failed_remove_task'));
+      alert(error instanceof Error ? error.message : t('msg_failed_remove_task'));
     }
   };
 
   const handleClearQueue = async () => {
     if (!(await nativeConfirm(t('menu_clear_data') + "?"))) return;
     try {
-      await DataService.clearQueue();
+      await DataService.clearQueue(revision);
       fetchQueue();
     } catch (error) {
-      alert(t('msg_failed_clear_queue'));
+      alert(error instanceof Error ? error.message : t('msg_failed_clear_queue'));
     }
   };
 
@@ -207,7 +210,7 @@ export const TaskQueue: React.FC = () => {
       showLockedTaskAlert(task);
       return;
     }
-    setDraggedIndex(index);
+    setDragged({ taskId: task.task_id, revision });
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/html', e.currentTarget.outerHTML);
   };
@@ -231,8 +234,8 @@ export const TaskQueue: React.FC = () => {
   const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
 
-    if (draggedIndex === null || draggedIndex === dropIndex) {
-      setDraggedIndex(null);
+    if (!dragged || dragged.taskId === queue[dropIndex].task_id || dragged.revision !== revision) {
+      setDragged(null);
       setDragOverIndex(null);
       return;
     }
@@ -241,25 +244,25 @@ export const TaskQueue: React.FC = () => {
     // 检查目标位置是否真正被锁定
     if (isTaskActuallyLocked(targetTask)) {
       showLockedTaskAlert(targetTask);
-      setDraggedIndex(null);
+      setDragged(null);
       setDragOverIndex(null);
       return;
     }
 
     try {
       // 调用API重新排序
-      await DataService.moveQueueItem(draggedIndex, dropIndex);
+      await DataService.moveQueueItem(dragged.taskId, dropIndex, dragged.revision);
       fetchQueue();
     } catch (error: any) {
-      alert(t('msg_operation_failed'));
+      alert(error.message || t('msg_operation_failed'));
     }
 
-    setDraggedIndex(null);
+    setDragged(null);
     setDragOverIndex(null);
   };
 
   const handleDragEnd = () => {
-    setDraggedIndex(null);
+    setDragged(null);
     setDragOverIndex(null);
   };
 
@@ -273,14 +276,7 @@ export const TaskQueue: React.FC = () => {
   };
 
   // 检查任务是否真正被锁定
-  const isTaskActuallyLocked = (task: any) => {
-    // 优先使用准确的处理状态检测
-    if (task.is_actually_processing !== undefined) {
-      return task.is_actually_processing;
-    }
-    // 降级到传统的locked状态
-    return task.locked || false;
-  };
+  const isTaskActuallyLocked = (task: QueueTaskItem) => task.protected;
 
   // 显示锁定任务提示
   const showLockedTaskAlert = (task: any) => {
@@ -348,7 +344,8 @@ export const TaskQueue: React.FC = () => {
           
           <button
             onClick={async () => {
-                await DataService.editQueueFile();
+                try { setRaw(await DataService.getQueueRaw()); }
+                catch (error) { alert(error instanceof Error ? error.message : t('msg_operation_failed')); }
             }}
             className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-200 rounded-lg font-bold hover:bg-slate-700 transition-all border border-slate-700"
           >
@@ -357,6 +354,18 @@ export const TaskQueue: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {raw && <section className="space-y-3 rounded-xl border border-slate-700 p-4">
+        <label className="block">{t('menu_queue_edit_json')}
+          <textarea className="mt-2 h-72 w-full bg-slate-950 p-3 font-mono" value={raw.content}
+            onChange={event => setRaw({ ...raw, content: event.target.value })} />
+        </label>
+        <button className="mr-4" onClick={() => setRaw(null)}>{t('btn_cancel')}</button>
+        <button onClick={async () => {
+          try { await DataService.saveQueueRaw(raw.content, raw.revision); setRaw(null); await fetchQueue(); }
+          catch (error) { alert(error instanceof Error ? error.message : t('msg_operation_failed')); }
+        }}>{t('btn_save_changes')}</button>
+      </section>}
 
       {/* TUI Real-time Guidance */}
       <div className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-4">
@@ -400,7 +409,7 @@ export const TaskQueue: React.FC = () => {
         ) : (
           queue.map((task, idx) => (
             <div
-              key={idx}
+              key={task.task_id}
               draggable={!isTaskActuallyLocked(task)}
               onDragStart={(e) => handleDragStart(e, idx)}
               onDragOver={(e) => handleDragOver(e, idx)}
@@ -410,9 +419,9 @@ export const TaskQueue: React.FC = () => {
               className={`group relative rounded-xl p-5 transition-all backdrop-blur-sm ${
                 isTaskActuallyLocked(task) ? 'cursor-not-allowed' : 'cursor-move'
               } ${
-                draggedIndex === idx ? 'opacity-50 scale-95' : ''
+                dragged?.taskId === task.task_id ? 'opacity-50 scale-95' : ''
               } ${
-                dragOverIndex === idx && draggedIndex !== idx && !isTaskActuallyLocked(task) ? 'border-primary border-2 bg-primary/10' :
+                dragOverIndex === idx && dragged?.taskId !== task.task_id && !isTaskActuallyLocked(task) ? 'border-primary border-2 bg-primary/10' :
                 isTaskActuallyLocked(task) ? 'bg-slate-900/20 border border-amber-500/30 shadow-amber-500/10 shadow-md' :
                 'bg-slate-900/40 border border-slate-800 hover:border-slate-700'
               }`}
@@ -501,6 +510,7 @@ export const TaskQueue: React.FC = () => {
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 p-2 rounded-2xl shadow-2xl z-50 animate-in fade-in zoom-in duration-300">
            <button
             onClick={handleClearQueue}
+            disabled={queue.some(isTaskActuallyLocked)}
             className="px-6 py-3 text-red-400 font-bold hover:bg-red-400/10 rounded-xl transition-all"
            >
              {t('menu_queue_clear')}
@@ -523,8 +533,8 @@ export const TaskQueue: React.FC = () => {
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
                 <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-800/20">
                     <h2 className="text-xl font-black text-white uppercase flex items-center gap-3 tracking-tighter">
-                        {editIndex !== null ? <Edit3 className="text-primary"/> : <Plus className="text-primary"/>}
-                        {editIndex !== null ? t('modal_modify_queue_task') : t('menu_queue_add')}
+                        {editTarget !== null ? <Edit3 className="text-primary"/> : <Plus className="text-primary"/>}
+                        {editTarget !== null ? t('modal_modify_queue_task') : t('menu_queue_add')}
                     </h2>
                     <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white transition-colors"><X size={24}/></button>
                 </div>
@@ -840,7 +850,7 @@ export const TaskQueue: React.FC = () => {
                             isElysia ? 'bg-pink-500 text-white hover:bg-pink-400' : 'bg-primary text-slate-900 hover:bg-cyan-300'
                         }`}
                     >
-                        {editIndex !== null ? t('btn_save_changes') : t('btn_add_to_queue')}
+                        {editTarget !== null ? t('btn_save_changes') : t('btn_add_to_queue')}
                     </button>
                 </div>
             </div>

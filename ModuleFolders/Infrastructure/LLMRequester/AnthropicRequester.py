@@ -132,7 +132,7 @@ class AnthropicRequester(Base):
 
     # 发起请求
     def request_anthropic(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         enable_caching = platform_config.get("enable_prompt_caching", False)
@@ -153,7 +153,7 @@ class AnthropicRequester(Base):
         try:
             return request_func(base_params.copy(), platform_config)
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
 
             error_str = str(e)
@@ -168,7 +168,7 @@ class AnthropicRequester(Base):
                 try:
                     return request_func(base_params.copy(), platform_config)
                 except Exception as retry_e:
-                    if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+                    if Base.request_stopped():
                         return True, "STOPPED", "Task stopped by user", 0, 0
                     error_type, _ = ErrorClassifier.classify(str(retry_e))
                     self.error(f"Request error ({error_type.value}) ... {retry_e}", retry_e if self.is_debug() else None)

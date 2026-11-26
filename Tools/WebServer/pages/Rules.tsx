@@ -542,18 +542,23 @@ export const Rules: React.FC = () => {
     const triggerDraftSave = () => {
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
         draftTimerRef.current = setTimeout(async () => {
-            const latest = latestRulesRef.current;
-            switch (activeTab) {
-                case 'glossary': await DataService.saveGlossaryDraft(latest.glossary); break;
-                case 'pre_translation': await DataService.savePreTranslationDraft(latest.preTranslationRules); break;
-                case 'post_translation': await DataService.savePostTranslationDraft(latest.postTranslationRules); break;
-                case 'exclusion': await DataService.saveExclusionDraft(latest.exclusion); break;
-                case 'characterization': await DataService.saveCharacterizationDraft(latest.characterization); break;
-                case 'world': await DataService.saveWorldBuildingDraft(latest.worldBuilding); break;
-                case 'style': await DataService.saveWritingStyleDraft(latest.writingStyle); break;
-                case 'example': await DataService.saveTranslationExampleDraft(latest.translationExample); break;
+            try {
+                const latest = latestRulesRef.current;
+                switch (activeTab) {
+                    case 'glossary': await DataService.saveGlossaryDraft(latest.glossary); break;
+                    case 'pre_translation': await DataService.savePreTranslationDraft(latest.preTranslationRules); break;
+                    case 'post_translation': await DataService.savePostTranslationDraft(latest.postTranslationRules); break;
+                    case 'exclusion': await DataService.saveExclusionDraft(latest.exclusion); break;
+                    case 'characterization': await DataService.saveCharacterizationDraft(latest.characterization); break;
+                    case 'world': await DataService.saveWorldBuildingDraft(latest.worldBuilding); break;
+                    case 'style': await DataService.saveWritingStyleDraft(latest.writingStyle); break;
+                    case 'example': await DataService.saveTranslationExampleDraft(latest.translationExample); break;
+                }
+                setHasDraft(true);
+            } catch (error) {
+                console.error("Failed to save draft", error);
+                alert(error instanceof Error ? error.message : "Save failed.");
             }
-            setHasDraft(true);
         }, 2000); // 2s debounce
     };
 

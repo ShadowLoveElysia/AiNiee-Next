@@ -5,6 +5,7 @@ from typing import Any, Dict
 from ModuleFolders.Infrastructure.TaskConfig.AgentBatchSettings import (
     AGENT_MAX_BATCHES_KEY, DEFAULT_AGENT_MAX_BATCHES, ensure_agent_batch_change_confirmed,
 )
+from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import config_transaction, load_json_file
 
 from Tools.Skills.skill_base import (
     Skill,
@@ -15,7 +16,6 @@ from Tools.Skills.skill_base import (
     reject_unknown_skill_fields,
 )
 from Tools.Skills.skills.common import (
-    active_profile_name,
     atomic_write_json,
     load_dict_json,
     load_root_config,
@@ -160,24 +160,18 @@ class ConfigSkill(Skill):
             except ValueError as exc:
                 return SkillResult.fail(str(exc), "INVALID_ARGUMENTS")
             try:
-                profile_arg = (
-                    args.get("profile")
-                    if "profile" in args
-                    else active_profile_name()
-                )
-                path, profile = resolve_config_profile_path(profile_arg)
-            except ValueError as e:
-                return SkillResult.fail(str(e), "INVALID_PROFILE")
-
-            cfg = load_dict_json(path)
-            try:
-                value = prepare_config_value_for_save(args["value"], cfg.get(key), key)
-            except ValueError as e:
-                return SkillResult.fail(str(e), "REDACTED_SECRET")
-
-            cfg[key] = value
-            try:
-                atomic_write_json(path, cfg)
+                with config_transaction():
+                    try:
+                        path, profile = resolve_config_profile_path(args.get("profile"))
+                    except ValueError as e:
+                        return SkillResult.fail(str(e), "INVALID_PROFILE")
+                    cfg = load_json_file(path)
+                    try:
+                        value = prepare_config_value_for_save(args["value"], cfg.get(key), key)
+                    except ValueError as e:
+                        return SkillResult.fail(str(e), "REDACTED_SECRET")
+                    cfg[key] = value
+                    atomic_write_json(path, cfg)
                 return SkillResult.ok({
                     "profile": profile,
                     "key": key,

@@ -29,7 +29,7 @@ class GoogleRequester(Base):
 
     def _get_or_create_cache(self, client, model_name: str, system_prompt: str, platform_config: dict):
         """获取或创建缓存内容"""
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return None
 
         import hashlib
@@ -60,7 +60,7 @@ class GoogleRequester(Base):
             self._cached_content_store[cache_key] = cached_content
             return cached_content
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return None
             # 缓存创建失败，禁用此API的缓存功能
             self._disable_cache_for_api(platform_config)
@@ -69,7 +69,7 @@ class GoogleRequester(Base):
 
     # 发起请求
     def request_google(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         try:
@@ -175,7 +175,7 @@ class GoogleRequester(Base):
                 response_content = response.text
 
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
             self.error(f"请求任务错误 ... {e}", e if self.is_debug() else None)
             return True, None, None, None, None

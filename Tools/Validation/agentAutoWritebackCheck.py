@@ -257,7 +257,7 @@ class AutoWritebackTests(unittest.TestCase):
              patch.object(server, "get_external_agent_batch_service", return_value=self.batches), \
              patch.object(server, "get_external_agent_batch_result_service", return_value=self.results), \
              patch.object(server, "get_external_agent_writer_lease_registry", return_value=self.leases), \
-             patch.object(server, "_finalize_external_agent_output", return_value={"status": "exported"}) as export:
+             patch.object(server, "_export_external_agent_task", return_value={"status": "exported"}) as export:
             b = self.claims[0]
             result = app.tools["agent_submit_translation_batch"]("task", "session", b["batch_id"], b["source_hash"], b["revision"], "a", self.items(b))
             self.assertEqual(result["status"], "committed")

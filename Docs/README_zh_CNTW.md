@@ -4,7 +4,7 @@
 
 AiNiee-Next 是一個基於大型語言模型的批次翻譯工具，支援小說、電子書、文件、字幕、遊戲文字、漫畫以及即時音視訊字幕的處理。
 
-程式核心執行於命令列與終端互動選單（CLI/TUI）中，同時提供網頁控制台、桌面端視窗，以及供外部 AI 用戶端呼叫的 MCP 和 Skills 介面，既可以拿來快速翻譯單本檔案，也適合長篇系列和批次任務的長期處理。
+程式核心執行於命令列與終端互動選單（CLI/TUI）中，同時提供網頁控制台，以及供外部 AI 用戶端呼叫的 MCP 和 Skills 介面，既可以拿來快速翻譯單本檔案，也適合長篇系列和批次任務的長期處理。
 
 [點此下載最新原始碼 ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 下載預設分支目前最新提交的完整原始碼副本。下載後先解壓縮，Windows 使用者進入解壓縮後的專案目錄，依序執行 `Windows prepare.bat` 和 `Windows launch.bat`。
 
@@ -48,12 +48,9 @@ AiNiee-Next 是一個基於大型語言模型的批次翻譯工具，支援小�
 4. 如果中途斷線或手動停止，下次選擇同一個專案並選擇還原快取即可接續處理，已經翻好的部分不會重複請求。
 5. 翻譯完成後，可以直接匯出成品，也可以先用內建的終端編輯器或校對功能檢查一遍再匯出。
 
-### 4. 啟動網頁控制台或桌面端
+### 4. 啟動網頁控制台
 
-如果你更習慣用瀏覽器操作（尤其是查看統計圖表、分頁編輯快取，或使用漫畫編輯器），可以在終端主選單裡直接啟動 Web 控制台，或在命令列使用桌面端啟動指令碼：
-
-- **Windows**：執行 `Tools\TauriShell\LaunchGUI.bat`
-- **Linux / macOS**：執行 `Tools/TauriShell/LaunchGUI.sh`
+如果你更習慣用瀏覽器操作（尤其是查看統計圖表、分頁編輯快取，或使用漫畫編輯器），可以在終端主選單裡直接啟動 Web 控制台。
 
 ### 5. 使用漫畫、即時口譯與離線影片功能
 
@@ -82,7 +79,6 @@ AiNiee-Next 是一個基於大型語言模型的批次翻譯工具，支援小�
 | MCP | [服務接入](../Tools/MCPServer/README.md) · [用戶端使用指南](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
 | Skills | [HTTP、CLI 與 Python 呼叫](../Tools/Skills/README.md) |
 | Agent | [Headless Agent 使用說明](../Tools/Agent/README.md) |
-| 桌面端 | [Tauri 啟動與建置](../Tools/TauriShell/README.md) |
 | 擴充開發 | [外掛編寫](../PluginScripts/README.md) · [Reader / Writer 編寫](../ModuleFolders/Domain/FileAccessor/README.md) |
 | 遊戲文字 | [StevExtraction 使用說明](../Tools/StevExtraction/使用说明.md) |
 | 更新 | [更新日誌](update_log.md) |

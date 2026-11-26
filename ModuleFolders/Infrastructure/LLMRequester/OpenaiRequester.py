@@ -1,14 +1,13 @@
-import hashlib
 import json
 from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.LLMRequester.LLMClientFactory import LLMClientFactory
 from ModuleFolders.Infrastructure.LLMRequester.ErrorClassifier import ErrorClassifier, ErrorType
-from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint
+from ModuleFolders.Infrastructure.LLMRequester.ProviderFingerprint import ProviderFingerprint, StreamSupportCache
 from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import is_openai_sdk_mode
 
 
 # 接口请求器
-class OpenaiRequester(Base):
+class OpenaiRequester(StreamSupportCache, Base):
     def __init__(self) -> None:
         pass
 
@@ -55,27 +54,6 @@ class OpenaiRequester(Base):
 
         if tool_mode:
             request_body.pop("tool_choice", None)
-
-    def _get_api_cache_key(self, api_url: str, model_name: str) -> str:
-        """生成API缓存键，基于URL和模型名"""
-        key_str = f"{api_url}:{model_name}"
-        return hashlib.md5(key_str.encode()).hexdigest()[:16]
-
-    def _get_stream_support_status(self, api_url: str, model_name: str) -> bool | None:
-        """获取API的流式支持状态，None表示未知"""
-        config = self.load_config()
-        cache = config.get("stream_api_cache", {})
-        cache_key = self._get_api_cache_key(api_url, model_name)
-        return cache.get(cache_key)
-
-    def _set_stream_support_status(self, api_url: str, model_name: str, supports_stream: bool) -> None:
-        """设置API的流式支持状态"""
-        config = self.load_config()
-        cache = config.get("stream_api_cache", {})
-        cache_key = self._get_api_cache_key(api_url, model_name)
-        cache[cache_key] = supports_stream
-        config["stream_api_cache"] = cache
-        self.save_config(config)
 
     def _parse_sse_response(self, raw_text: str) -> tuple[str, str, int, int]:
         """解析SSE格式响应"""
@@ -132,7 +110,7 @@ class OpenaiRequester(Base):
         """执行实际的HTTP请求"""
         import httpx
 
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         request_body["stream"] = use_stream
@@ -168,7 +146,7 @@ class OpenaiRequester(Base):
     def _do_request_sdk(self, client, request_body: dict,
                         request_timeout: int) -> tuple[bool, str, str, int, int]:
         """通过 OpenAI SDK 执行请求"""
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         response = client.chat.completions.create(
@@ -269,7 +247,7 @@ class OpenaiRequester(Base):
     ) -> tuple[bool, str, dict, int, int]:
         import httpx
 
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", {}, 0, 0
 
         auth_headers = {
@@ -296,7 +274,7 @@ class OpenaiRequester(Base):
 
     # 发起请求
     def request_openai(self, messages, system_prompt, platform_config) -> tuple[bool, str, str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         try:
@@ -405,7 +383,7 @@ class OpenaiRequester(Base):
                     return self._do_request(api_url, api_key, request_body, request_timeout, False)
 
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
 
             error_str = str(e)
@@ -424,7 +402,7 @@ class OpenaiRequester(Base):
             else:
                 error_type = "UNKNOWN_ERROR"
 
-            if Base.work_status != Base.STATUS.STOPING:
+            if not Base.request_stopped():
                 api_url = platform_config.get("api_url", "Unknown URL")
                 model_name = platform_config.get("model_name", "Unknown Model")
                 self.error(f"Request error ({error_type}) [URL: {api_url}, Model: {model_name}] ... {e}",
@@ -440,7 +418,7 @@ class OpenaiRequester(Base):
         tools: list[dict],
         tool_name: str,
     ) -> tuple[bool, str, dict | str, int, int]:
-        if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+        if Base.request_stopped():
             return True, "STOPPED", "Task stopped by user", 0, 0
 
         try:
@@ -520,7 +498,7 @@ class OpenaiRequester(Base):
             return self._do_tool_call_request(api_url, api_key, request_body, request_timeout, tool_name)
 
         except Exception as e:
-            if Base.work_status == Base.STATUS.STOPING or not Base.is_task_session_active():
+            if Base.request_stopped():
                 return True, "STOPPED", "Task stopped by user", 0, 0
 
             error_str = str(e)
@@ -532,7 +510,7 @@ class OpenaiRequester(Base):
             else:
                 error_type = "TOOL_CALL_FAIL"
 
-            if Base.work_status != Base.STATUS.STOPING:
+            if not Base.request_stopped():
                 api_url = platform_config.get("api_url", "Unknown URL")
                 model_name = platform_config.get("model_name", "Unknown Model")
                 self.error(

@@ -4,7 +4,7 @@
 
 AiNiee-Next is a large language model–based batch translation tool for novels, ebooks, documents, subtitles, game text, manga, and real-time audio and video subtitles.
 
-Its core runs through the command line and interactive terminal menus (CLI/TUI). It also provides a web dashboard, a desktop window, and MCP and Skills interfaces for external AI clients. It works for quickly translating a single file as well as ongoing work on long series and batch tasks.
+Its core runs through the command line and interactive terminal menus (CLI/TUI). It also provides a web dashboard and MCP and Skills interfaces for external AI clients. It works for quickly translating a single file as well as ongoing work on long series and batch tasks.
 
 [Download the latest source ZIP](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — Download a complete source snapshot of the default branch's latest commit. Extract it first; Windows users should open the extracted project folder and run `Windows prepare.bat`, followed by `Windows launch.bat`.
 
@@ -48,12 +48,9 @@ On the first launch, the setup wizard guides you through two steps:
 4. If the connection drops or you stop the task manually, select the same project next time and restore its cache to resume. Already translated content will not be requested again.
 5. When translation finishes, export the result directly or review it first using the built-in terminal editor or proofreading tools.
 
-### 4. Open the Web Dashboard or Desktop App
+### 4. Open the Web Dashboard
 
-If you prefer working in a browser—especially for viewing statistics, editing paginated cache entries, or using the manga editor—you can start the web dashboard from the terminal main menu, or use the desktop launch scripts from the command line:
-
-- **Windows**: Run `Tools\TauriShell\LaunchGUI.bat`.
-- **Linux / macOS**: Run `Tools/TauriShell/LaunchGUI.sh`.
+If you prefer working in a browser—especially for viewing statistics, editing paginated cache entries, or using the manga editor—you can start the web dashboard from the terminal main menu.
 
 ### 5. Use Manga, Live Translation, and Offline Video Features
 
@@ -82,7 +79,6 @@ These three modules have larger inference dependencies and models. Before first 
 | MCP | [Service Integration](../Tools/MCPServer/README.md) · [Client Guide](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
 | Skills | [HTTP, CLI, and Python Calls](../Tools/Skills/README.md) |
 | Agent | [Headless Agent Guide](../Tools/Agent/README.md) |
-| Desktop | [Tauri Launch and Build](../Tools/TauriShell/README.md) |
 | Extension development | [Writing Plugins](../PluginScripts/README.md) · [Writing Readers / Writers](../ModuleFolders/Domain/FileAccessor/README.md) |
 | Game text | [StevExtraction Guide](../Tools/StevExtraction/使用说明.md) |
 | Updates | [Changelog](update_log.md) |

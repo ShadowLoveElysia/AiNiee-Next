@@ -4,7 +4,7 @@
 
 AiNiee-Next는 대규모 언어 모델을 기반으로 하는 일괄 번역 도구로, 소설, 전자책, 문서, 자막, 게임 텍스트, 만화 및 실시간 오디오·비디오 자막을 처리할 수 있습니다.
 
-명령줄과 대화형 터미널 메뉴(CLI/TUI)를 중심으로 실행되며, 웹 대시보드, 데스크톱 창, 외부 AI 클라이언트가 호출할 수 있는 MCP 및 Skills 인터페이스도 제공합니다. 단일 파일을 빠르게 번역하는 데에도, 장편 시리즈와 일괄 작업을 장기간 처리하는 데에도 사용할 수 있습니다.
+명령줄과 대화형 터미널 메뉴(CLI/TUI)를 중심으로 실행되며, 웹 대시보드, 외부 AI 클라이언트가 호출할 수 있는 MCP 및 Skills 인터페이스도 제공합니다. 단일 파일을 빠르게 번역하는 데에도, 장편 시리즈와 일괄 작업을 장기간 처리하는 데에도 사용할 수 있습니다.
 
 [최신 소스 코드 ZIP 다운로드](https://github.com/ShadowLoveElysia/AiNiee-Next/archive/HEAD.zip) — 기본 브랜치의 최신 커밋에 해당하는 전체 소스 코드를 다운로드합니다. 먼저 압축을 푼 뒤, Windows 사용자는 압축을 푼 프로젝트 폴더에서 `Windows prepare.bat`, `Windows launch.bat` 순서로 실행하세요.
 
@@ -48,12 +48,9 @@ AiNiee-Next는 대규모 언어 모델을 기반으로 하는 일괄 번역 도�
 4. 연결이 끊기거나 수동으로 중지한 경우, 다음에 같은 프로젝트를 선택하고 캐시를 복원하면 중단한 지점부터 재개할 수 있습니다. 이미 번역된 부분은 다시 요청하지 않습니다.
 5. 번역이 완료되면 바로 내보내거나, 내장 터미널 편집기 또는 교정 기능으로 확인한 후 내보낼 수 있습니다.
 
-### 4. 웹 대시보드 또는 데스크톱 앱 실행
+### 4. 웹 대시보드 실행
 
-브라우저 사용이 더 익숙하다면, 특히 통계 차트 확인, 페이지별 캐시 편집, 만화 편집기 사용 시 터미널 메인 메뉴에서 웹 대시보드를 바로 실행할 수 있습니다. 명령줄에서 데스크톱 실행 스크립트를 사용해도 됩니다.
-
-- **Windows**: `Tools\TauriShell\LaunchGUI.bat`를 실행합니다.
-- **Linux / macOS**: `Tools/TauriShell/LaunchGUI.sh`를 실행합니다.
+브라우저 사용이 더 익숙하다면, 특히 통계 차트 확인, 페이지별 캐시 편집, 만화 편집기 사용 시 터미널 메인 메뉴에서 웹 대시보드를 바로 실행할 수 있습니다.
 
 ### 5. 만화, 실시간 통역 및 오프라인 동영상 기능 사용
 
@@ -82,7 +79,6 @@ AiNiee-Next는 대규모 언어 모델을 기반으로 하는 일괄 번역 도�
 | MCP | [서비스 연동](../Tools/MCPServer/README.md) · [클라이언트 사용 가이드](../Tools/MCPServer/MCP_CLIENT_GUIDE.md) |
 | Skills | [HTTP, CLI 및 Python 호출](../Tools/Skills/README.md) |
 | Agent | [Headless Agent 사용 안내](../Tools/Agent/README.md) |
-| 데스크톱 | [Tauri 실행 및 빌드](../Tools/TauriShell/README.md) |
 | 확장 개발 | [플러그인 작성](../PluginScripts/README.md) · [Reader / Writer 작성](../ModuleFolders/Domain/FileAccessor/README.md) |
 | 게임 텍스트 | [StevExtraction 사용 안내](../Tools/StevExtraction/使用说明.md) |
 | 업데이트 | [변경 이력](update_log.md) |

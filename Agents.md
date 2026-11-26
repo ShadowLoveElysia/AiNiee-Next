@@ -45,9 +45,9 @@ codex mcp add ainiee-cli -- /path/to/AiNiee-CLI/Tools/MCPServer/codex_stdio_laun
       "command": "uv",
       "args": [
         "run", "--directory", "/path/to/AiNiee-CLI",
-        "--isolated", "--no-project", "--quiet",
-        "--with", "mcp", "--with", "fastapi",
-        "--with", "uvicorn[standard]", "--with", "requests",
+        "--python", "3.12", "--isolated", "--no-project", "--quiet",
+        "--with", "mcp>=1.27,<2", "--with", "fastapi",
+        "--with", "uvicorn[standard]", "--with", "requests", "--with", "psutil",
         "python", "Tools/MCPServer/server.py", "--transport", "stdio"
       ]
     }

@@ -5,7 +5,7 @@
 当前设计原则：
 
 - 放在 `Tools/MCPServer` 下，和主流程解耦
-- 复用 `Tools/WebServer/web_server.py` 现有 HTTP API，避免重复实现业务逻辑
+- 通过 `Tools/APIServer` 调用共享任务、配置和队列能力；旧 `Tools/WebServer/web_server.py` 保留兼容启动入口
 - 缺少组件或依赖时，只在尝试启动 MCP 时提示，不影响主程序其他功能
 
 当前入口文件：
@@ -15,26 +15,26 @@
 - `Tools/MCPServer/docs.py`
   负责生成 MCP 内置使用手册、工具目录、安全策略与验证清单
 - `Tools/MCPServer/server.py`
-  启动 MCP 服务，并自动拉起一个内嵌的 `WebServer` 后端作为桥接层
+  启动 MCP 服务；stdio 工具发现与目录读取不启动 API，首次需要运行能力时才连接或启动 API owner
 - `Tools/MCPServer/MCP_CLIENT_GUIDE.md`
   面向 LLM 客户端的 MCP 使用文档源文件
 
 推荐安装命令：
 
 ```bash
-set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp"
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp>=1.27,<2"
 ```
 
-如果本地缺少 WebServer 运行依赖，也可以一起补齐：
+本桥接使用 MCP Python SDK 的 1.x `FastMCP` 接口，预检会拒绝不兼容的 SDK。若缺少 API owner 运行依赖，可一起补齐：
 
 ```bash
-set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp" "fastapi" "uvicorn[standard]" "requests"
+set "UV_PROJECT_ENVIRONMENT=%CD%\.venv-win" && uv --directory "%CD%" add "mcp>=1.27,<2" "fastapi" "uvicorn[standard]" "requests" "psutil"
 ```
 
 Linux / macOS 可使用：
 
 ```bash
-UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp' 'fastapi' 'uvicorn[standard]' 'requests'
+UV_PROJECT_ENVIRONMENT="$(pwd)/.venv" uv --directory "$(pwd)" add 'mcp>=1.27,<2' 'fastapi' 'uvicorn[standard]' 'requests' 'psutil'
 ```
 
 客户端接入示例：
@@ -55,7 +55,7 @@ uv run --directory /path/to/AiNiee-CLI --python /path/to/AiNiee-CLI/.venv/bin/py
 
 Windows 使用项目环境时，将解释器改为
 `H:\\小说\\AiNiee-CLI\\.venv-win\\Scripts\\python.exe`。只有项目环境不存在或明确需要隔离时，才使用
-`uv run --python 3.12 --isolated --no-project --with mcp --with fastapi --with 'uvicorn[standard]' --with requests ...`。
+`uv run --python 3.12 --isolated --no-project --with 'mcp>=1.27,<2' --with fastapi --with 'uvicorn[standard]' --with requests --with psutil ...`。`psutil` 用于 API owner 的任务进程管理，不代表隔离环境已安装全部翻译引擎依赖。
 
 补充说明：
 
@@ -64,6 +64,7 @@ Windows 使用项目环境时，将解释器改为
 - 现在如果 AiNiee 的 `streamable-http` MCP 已经在运行，新的 `stdio` 进程会先探测该端点，探测成功后直接复用已有服务，不再重复启动一套 MCP
 - 复用命中时，`stderr` 会打印一行提示：`AiNiee MCP reusing running service: http://127.0.0.1:端口/mcp`
 - 如果你确实需要禁用这层复用逻辑，可设置环境变量 `AINIEE_MCP_DISABLE_RUNNING_REUSE=1`
+- MCP 退出时只关闭自己启动的 API。若任务清理或监听线程退出尚未完成，会在 stderr 提示并等待重试；不会把未完成的关闭报告为成功。
 
 3. `streamable-http` 路由接入
 
@@ -86,6 +87,8 @@ LLM 客户端接入后，推荐先调用以下 MCP 说明工具，而不是猜�
 默认情况下，MCP 不会把每个 Web API 路由都注册成独立 `api_*` 工具，避免一百多个端点在工具发现阶段占用大量上下文。LLM 应先读取 `get_mcp_tool_categories`，再按需读取单个分类的 `get_mcp_tool_catalog(category="...")`，最后用 `call_web_api` 调用目录里的 `/api/*` 路由。
 
 如需兼容旧版每路由独立工具，可设置 `AINIEE_MCP_REGISTER_ROUTE_TOOLS=1` 或启动时添加 `--register-route-tools`。
+
+目录根据 Schema 区分 JSON、multipart 和文件输出。上传使用 `upload_file`；二进制资源使用 `download_file(path, path_params, query)`，仅接受目录声明的文件 GET，最多 32 MiB，流式保存至项目 `tmp/mcp-downloads` 的唯一文件并返回路径、大小和 SHA-256。通用 `call_web_api` 不再把二进制内容转成文本。
 
 安全要求：
 

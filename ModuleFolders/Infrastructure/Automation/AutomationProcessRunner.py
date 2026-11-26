@@ -1,7 +1,9 @@
+import logging
 import os
 import subprocess
 import sys
 import threading
+import time
 from typing import Dict
 
 import rapidjson as json
@@ -20,6 +22,7 @@ from ModuleFolders.Infrastructure.Automation.AutomationProgress import (
     task_config_file_for_run,
 )
 from ModuleFolders.Infrastructure.SensitiveData import split_sensitive_data
+from ModuleFolders.Service.TaskRuntime.processes import OwnedProcessTree, launch_options, mark_worker_environment
 from ModuleFolders.Infrastructure.Automation.WorkflowRunner import describe_workflow_steps, WorkflowRunner
 
 
@@ -28,6 +31,7 @@ class AutomationProcessRunner:
     _processes: Dict[str, subprocess.Popen] = {}
     _progress_files: Dict[str, str] = {}
     _task_config_files: Dict[str, str] = {}
+    _process_trees: Dict[str, OwnedProcessTree] = {}
 
     @classmethod
     def start(cls, task_config: dict, project_root: str = None) -> dict:
@@ -77,7 +81,6 @@ class AutomationProcessRunner:
             env[TASK_SECRETS_ENV] = json.dumps(secret_overlay, ensure_ascii=False)
 
         log_path = os.path.join(os.path.dirname(progress_file), f"{run_id}.worker.log")
-        log_file = open(log_path, "a", encoding="utf-8")
         cmd = [
             sys.executable,
             "-m",
@@ -85,26 +88,24 @@ class AutomationProcessRunner:
             "--task-config",
             task_config_path,
         ]
-        process = subprocess.Popen(
-            cmd,
-            cwd=project_root,
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        reporter.update(status="running", phase="worker", pid=process.pid, message="Automation worker started")
+        marker = mark_worker_environment(env, nested=True)
+        launched_at = time.time()
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            process = subprocess.Popen(
+                cmd, cwd=project_root, env=env, stdout=log_file,
+                stderr=subprocess.STDOUT, text=True, **launch_options(),
+            )
 
         with cls._lock:
             cls._processes[run_id] = process
+            cls._process_trees[run_id] = OwnedProcessTree(process, owner_id=marker, launched_at=launched_at)
             cls._progress_files[run_id] = progress_file
             cls._task_config_files[run_id] = task_config_path
 
-        threading.Thread(
-            target=cls._watch_process,
-            args=(run_id, process, log_file, progress_file),
-            daemon=True,
-        ).start()
+        try:
+            reporter.update(status="running", phase="worker", pid=process.pid, message="Automation worker started")
+        finally:
+            threading.Thread(target=cls._watch_process, args=(run_id, process), daemon=True).start()
 
         return {
             "run_id": run_id,
@@ -114,34 +115,43 @@ class AutomationProcessRunner:
         }
 
     @classmethod
-    def _watch_process(cls, run_id: str, process: subprocess.Popen, log_file, progress_file: str):
-        return_code = process.wait()
-        try:
-            log_file.close()
-        except Exception:
-            pass
+    def _watch_process(cls, run_id: str, process: subprocess.Popen):
+        process.wait()
+        with cls._lock:
+            if cls._processes.get(run_id) is process and not cls._finish_run_locked(run_id):
+                logging.getLogger(__name__).warning("Automation cleanup is pending for %s; ownership retained.", run_id)
 
+    @classmethod
+    def _finish_run_locked(cls, run_id: str, message: str | None = None) -> bool:
+        process = cls._processes.get(run_id)
+        if process is None or not cls._process_trees[run_id].terminate(timeout=2):
+            return False
+
+        progress_file = cls._progress_files[run_id]
         state = read_progress_file(progress_file)
-        if state.get("status") not in TERMINAL_STATUSES:
+        if message is not None or state.get("status") not in TERMINAL_STATUSES:
             reporter = AutomationProgressReporter(
                 progress_file,
                 run_id,
                 initial=cls._state_for_resume(state),
                 emit_initial=False,
             )
-            if return_code == 0:
+            if message is not None:
+                reporter.finish("interrupted", message)
+            elif process.returncode == 0:
                 task_config = cls._read_task_config_for_run(run_id, progress_file)
                 if WorkflowRunner.is_enqueue_only(task_config):
                     reporter.finish("enqueued", "Queued for task processing")
                 else:
                     reporter.finish("completed", "Automation worker completed")
             else:
-                reporter.finish("interrupted", f"Automation worker exited with code {return_code}")
+                reporter.finish("interrupted", f"Automation worker exited with code {process.returncode}")
 
-        with cls._lock:
-            cls._processes.pop(run_id, None)
-            cls._progress_files.pop(run_id, None)
-            cls._task_config_files.pop(run_id, None)
+        cls._processes.pop(run_id)
+        cls._progress_files.pop(run_id)
+        cls._task_config_files.pop(run_id)
+        cls._process_trees.pop(run_id)
+        return True
 
     @classmethod
     def _read_task_config_for_run(cls, run_id: str, progress_file: str) -> dict:
@@ -177,22 +187,7 @@ class AutomationProcessRunner:
     @classmethod
     def terminate(cls, run_id: str, message: str = "Automation task interrupted") -> bool:
         with cls._lock:
-            process = cls._processes.get(run_id)
-            progress_file = cls._progress_files.get(run_id) or progress_file_for_run(run_id)
-        if not process:
-            return False
-
-        if process.poll() is None:
-            process.terminate()
-        state = read_progress_file(progress_file)
-        reporter = AutomationProgressReporter(
-            progress_file,
-            run_id,
-            initial=cls._state_for_resume(state),
-            emit_initial=False,
-        )
-        reporter.finish("interrupted", message)
-        return True
+            return cls._finish_run_locked(run_id, message)
 
     @classmethod
     def terminate_all(cls, message: str = "Automation status view exited; background tasks interrupted") -> int:

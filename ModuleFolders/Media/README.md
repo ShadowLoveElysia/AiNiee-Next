@@ -776,7 +776,7 @@ Transformers 5.6.0, accelerate, FunASR, sentencepiece, Silero VAD, ONNX Runtime,
 SoundCard and NumPy, plus Python's Tk support. The desktop entry reports missing
 dependencies in the control window. Desktop labels and status messages use
 the existing AppI18N loader and all seven project locales. The file-video workflow
-is described above; Web/Tauri media controls are not included in this desktop integration.
+is described above; Web media controls are not included in this desktop integration.
 
 The simultaneous-translation candidate pipeline is:
 

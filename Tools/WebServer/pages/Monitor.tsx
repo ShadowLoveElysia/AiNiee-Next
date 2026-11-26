@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { StatsPanel } from '../components/StatsPanel';
 import { Terminal } from '../components/Terminal';
-import { DataService } from '../services/DataService';
+import { DataService, mergeTaskStatus } from '../services/DataService';
 import { useGlobal } from '../contexts/GlobalContext';
-import { LogEntry } from '../types';
 import { Activity, LayoutDashboard, Loader2 } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 
@@ -17,19 +16,6 @@ export const Monitor: React.FC = () => {
   const [comparisonChannelStatus, setComparisonChannelStatus] = useState<'idle' | 'waiting' | 'active' | 'stale'>('idle');
   const [comparisonLagSec, setComparisonLagSec] = useState<number | null>(null);
 
-  const mapLogs = (logs: any[], prefix: string): LogEntry[] => {
-    return (logs || [])
-      .map((l: any, idx: number) => ({
-        id: l.id || `${prefix}-${idx}-${l.timestamp || Date.now()}`,
-        timestamp: typeof l.timestamp === 'number'
-          ? new Date(l.timestamp * 1000).toLocaleTimeString()
-          : (l.timestamp || new Date().toLocaleTimeString()),
-        message: String(l.message || ''),
-        type: l.type || 'info'
-      }))
-      .filter(Boolean) as LogEntry[];
-  };
-
   const resolveComparisonStatus = (taskStatus: string, comparisonSeq: number, comparisonUpdatedAt?: number) => {
     if (!['running', 'starting'].includes(taskStatus)) return { status: 'idle' as const, lagSec: null as number | null };
     if (!comparisonSeq || !comparisonUpdatedAt) return { status: 'waiting' as const, lagSec: null as number | null };
@@ -39,16 +25,32 @@ export const Monitor: React.FC = () => {
       : { status: 'stale' as const, lagSec };
   };
 
-  const startPolling = () => {
-    stopPolling();
-    intervalRef.current = setInterval(async () => {
+  useEffect(() => {
+    let disposed = false;
+    let request: AbortController | null = null;
+    let firstSnapshot = true;
+    let taskId: string | null = null;
+    cursorRef.current = { logs: 0, chart: 0, comparison: 0 };
+    const poll = async () => {
+      if (disposed || request) return;
+      const controller = new AbortController();
+      request = controller;
       try {
         const requestedCursor = { ...cursorRef.current };
-        const data = await DataService.getTaskStatus(
+        let data = await DataService.getTaskStatus(
           requestedCursor.logs,
           requestedCursor.chart,
-          requestedCursor.comparison
+          requestedCursor.comparison,
+          undefined,
+          controller.signal,
         );
+        if (disposed) return;
+        const taskChanged = taskId !== (data.task_id || null);
+        if (taskChanged && !firstSnapshot) {
+          data = await DataService.getTaskStatus(0, 0, 0, data.task_id || undefined, controller.signal);
+          if (disposed) return;
+        }
+        taskId = data.task_id || null;
         const nextCursor = data.cursors || requestedCursor;
         cursorRef.current = {
           logs: nextCursor.logs ?? requestedCursor.logs,
@@ -64,43 +66,22 @@ export const Monitor: React.FC = () => {
         setComparisonChannelStatus(comparisonStatus.status);
         setComparisonLagSec(comparisonStatus.lagSec);
         
-        setTaskState(prev => {
-          if (!data || !data.stats) return prev;
-
-          const mappedLogs = mapLogs(data.logs || [], 'be');
-          const logsReset = (nextCursor.logs ?? requestedCursor.logs) < requestedCursor.logs;
-          const chartReset = (nextCursor.chart ?? requestedCursor.chart) < requestedCursor.chart;
-
-          const mergedLogs = logsReset
-            ? mappedLogs
-            : (mappedLogs.length > 0 ? [...prev.logs, ...mappedLogs] : prev.logs);
-          const mergedChart = chartReset
-            ? (data.chart_data || [])
-            : ((data.chart_data && data.chart_data.length > 0) ? [...prev.chartData, ...data.chart_data] : prev.chartData);
-
-          return {
-            ...prev,
-            stats: data.stats,
-            logs: mergedLogs.slice(-500),
-            chartData: mergedChart.slice(-120),
-            isRunning: Boolean(data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)),
-            comparison: data.comparison ? { ...data.comparison } : prev.comparison
-          };
-        });
+        const reset = firstSnapshot || taskChanged;
+        setTaskState(prev => mergeTaskStatus(prev, data, requestedCursor, reset));
+        firstSnapshot = false;
       } catch (e) {
-        console.error("Polling error", e);
+        if (!controller.signal.aborted) console.error("Polling error", e);
+      } finally {
+        if (request === controller) request = null;
       }
-    }, 1000);
-  };
-
-  const stopPolling = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-  };
-
-  useEffect(() => {
-    cursorRef.current = { logs: taskState.logs.length, chart: taskState.chartData.length, comparison: 0 };
-    startPolling();
-    return () => stopPolling();
+    };
+    intervalRef.current = setInterval(poll, 1000);
+    void poll();
+    return () => {
+      disposed = true;
+      request?.abort();
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, []);
 
   const comparisonStatusMeta = (() => {

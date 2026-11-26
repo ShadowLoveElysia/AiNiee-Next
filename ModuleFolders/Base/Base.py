@@ -4,6 +4,7 @@ import threading
 import traceback
 import queue
 import contextvars
+from contextlib import contextmanager
 
 try:
     import rapidjson as json
@@ -12,10 +13,9 @@ except ModuleNotFoundError:  # MediaRuntime may be upgrading its optional novel 
 from rich import print as rich_print
 from rich.console import RenderableType
 from ModuleFolders.Base.EventManager import EventManager
-from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import sync_sdk_request_mode_config
 from ModuleFolders.Infrastructure.TaskConfig.ConfigProfileService import (
     load_effective_config,
-    save_effective_config,
+    patch_effective_config,
 )
 
 
@@ -174,6 +174,7 @@ class Base():
 
     # 状态列表
     STATUS = Status()
+    work_status = STATUS.IDLE
 
     # 配置文件路径
     CONFIG_PATH = os.path.join(".", "Resource", "config.json")
@@ -185,6 +186,7 @@ class Base():
     _active_task_session_id = 0
     _cancelled_task_session_ids = set()
     _task_session_var = contextvars.ContextVar("ainiee_task_session", default=None)
+    _request_cancel_event = contextvars.ContextVar("ainiee_request_cancel_event", default=None)
 
     # 全局输入队列 (用于 TUI 交互)
     global_input_queue = queue.Queue()
@@ -236,6 +238,9 @@ class Base():
     @classmethod
     def is_task_session_active(cls, session_id=None) -> bool:
         if session_id is None:
+            event = cls._request_cancel_event.get()
+            if event is not None:
+                return not event.is_set()
             session_id = cls.current_task_session()
         if session_id is None:
             return True
@@ -246,7 +251,27 @@ class Base():
             )
 
     @classmethod
+    @contextmanager
+    def independent_request_scope(cls, cancel_event):
+        """Bind one background run's cancellation to this request thread only."""
+        token = cls._request_cancel_event.set(cancel_event)
+        try:
+            yield
+        finally:
+            cls._request_cancel_event.reset(token)
+
+    @classmethod
+    def request_stopped(cls) -> bool:
+        event = cls._request_cancel_event.get()
+        if event is not None:
+            return event.is_set()
+        return cls.work_status == cls.STATUS.STOPING or not cls.is_task_session_active()
+
+    @classmethod
     def should_suppress_task_output(cls) -> bool:
+        event = cls._request_cancel_event.get()
+        if event is not None:
+            return event.is_set()
         session_id = cls.current_task_session()
         return session_id is not None and not cls.is_task_session_active(session_id)
 
@@ -275,9 +300,6 @@ class Base():
 
         # 获取事件管理器单例
         self.event_manager_singleton = EventManager()
-
-        # 类变量
-        Base.work_status = Base.STATUS.IDLE if not hasattr(Base, "work_status") else Base.work_status
 
     # 检查是否处于调试模式
     def is_debug(self) -> bool:
@@ -353,22 +375,10 @@ class Base():
             return load_effective_config(create_missing=False)
 
     # 保存配置文件
-    def save_config(self, new: dict) -> None:
-        with Base.CONFIG_FILE_LOCK:
-            old = load_effective_config(create_missing=False)
-
-            # 对比新旧数据是否一致
-            if old == new:
-                return old
-
-            # 更新配置数据
-            for k, v in new.items():
-                old[k] = v
-            prefer_sdk_request_mode = "sdk_request_mode" in new
-            sync_sdk_request_mode_config(old, prefer_sdk_request_mode=prefer_sdk_request_mode)
-            save_effective_config(old, prefer_sdk_request_mode=prefer_sdk_request_mode)
-
-        return old
+    def save_config(self, new: dict) -> dict:
+        if os.environ.get("AINIEE_BACKEND_WORKER") == "1":
+            return new
+        return patch_effective_config(new)
 
     # 更新合并配置
     def fill_config(self, old: dict, new: dict) -> dict:

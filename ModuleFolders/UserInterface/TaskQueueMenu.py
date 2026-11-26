@@ -2,8 +2,11 @@
 任务队列菜单模块
 从 ainiee_cli.py 分离
 """
+import copy
 import os
+import tempfile
 import time
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -166,7 +169,12 @@ class TaskQueueMenu:
             time.sleep(1)
             return
 
-        task = queue_manager.tasks[index]
+        with queue_manager.state_lock:
+            if not queue_manager.can_modify_task(index):
+                console.print(f"[red]{self.i18n.get('msg_task_locked_cannot_move')}[/red]")
+                return
+            revision = queue_manager.revision
+            task = copy.deepcopy(queue_manager.tasks[index])
         console.print(
             Panel(
                 f"[bold]{self.i18n.get('menu_queue_edit_fine')}[/bold]: "
@@ -279,8 +287,10 @@ class TaskQueueMenu:
         self._edit_task_segmentation(task)
         self._edit_task_thinking(task)
 
-        queue_manager.save_tasks()
-        console.print(f"[green]{self.i18n.get('msg_queue_task_updated')}[/green]")
+        if queue_manager.update_task(task.task_id, task, expected_revision=revision):
+            console.print(f"[green]{self.i18n.get('msg_queue_task_updated')}[/green]")
+        else:
+            console.print(f"[red]{self.i18n.get('msg_operation_failed')}[/red]")
         time.sleep(1)
 
     def _edit_task_model_settings(self, task):
@@ -392,10 +402,20 @@ class TaskQueueMenu:
             task.thinking_budget = None
 
     def _edit_queue_json(self, queue_manager):
-        if open_in_editor(queue_manager.queue_file):
-            Prompt.ask(f"\n{self.i18n.get('msg_press_enter_after_save')}")
-            queue_manager.load_tasks()
-            console.print(f"[green]{self.i18n.get('msg_queue_reloaded_from_file')}[/green]")
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                draft = Path(directory) / "queue.json"
+                with queue_manager.state_lock:
+                    revision = queue_manager.revision
+                    draft.write_text(queue_manager.get_queue_json(), encoding="utf-8")
+                if open_in_editor(str(draft)):
+                    Prompt.ask(f"\n{self.i18n.get('msg_press_enter_after_save')}")
+                    if queue_manager.load_from_json(draft.read_text(encoding="utf-8"), expected_revision=revision):
+                        console.print(f"[green]{self.i18n.get('msg_queue_reloaded_from_file')}[/green]")
+                    else:
+                        console.print(f"[red]{self.i18n.get('msg_operation_failed')}[/red]")
+        except (ValueError, OSError, RecursionError):
+            console.print(f"[red]{self.i18n.get('msg_operation_failed')}[/red]")
         time.sleep(1)
 
     def _clear_queue(self, queue_manager):

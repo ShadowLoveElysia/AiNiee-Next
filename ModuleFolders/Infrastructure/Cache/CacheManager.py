@@ -16,6 +16,7 @@ from ModuleFolders.Base.Base import Base
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from ModuleFolders.Infrastructure.Cache.CacheFile import CacheFile
 from ModuleFolders.Infrastructure.Cache.CacheItem import CacheItem, TranslationStatus
+from ModuleFolders.Infrastructure.Cache.CachePersistence import CacheWriteConflict, cache_write_transaction
 from ModuleFolders.Infrastructure.Cache.CacheProject import (
     CacheProject,
     CacheProjectStatistics
@@ -27,7 +28,7 @@ class CacheManager(Base):
     MIN_SAVE_INTERVAL = 1
     MAX_SAVE_INTERVAL = 3600
 
-    def __init__(self) -> None:
+    def __init__(self, *, subscribe_events: bool = True) -> None:
         super().__init__()
 
         # 线程锁
@@ -43,11 +44,12 @@ class CacheManager(Base):
         self.project.stats_data = CacheProjectStatistics()
 
         # 注册事件
-        self.subscribe(Base.EVENT.TASK_START, self.start_interval_saving)
-        self.subscribe(Base.EVENT.TASK_COMPLETED, self.on_task_finished)
-        self.subscribe(Base.EVENT.TASK_STOP_DONE, self.on_task_finished)
-        self.subscribe(Base.EVENT.APP_SHUT_DOWN, self.app_shut_down)
-        self.subscribe(Base.EVENT.TASK_MANUAL_SAVE_CACHE, self.on_manual_save_cache_requested)
+        if subscribe_events:
+            self.subscribe(Base.EVENT.TASK_START, self.start_interval_saving)
+            self.subscribe(Base.EVENT.TASK_COMPLETED, self.on_task_finished)
+            self.subscribe(Base.EVENT.TASK_STOP_DONE, self.on_task_finished)
+            self.subscribe(Base.EVENT.APP_SHUT_DOWN, self.app_shut_down)
+            self.subscribe(Base.EVENT.TASK_MANUAL_SAVE_CACHE, self.on_manual_save_cache_requested)
         
     def start_interval_saving(self, event: int, data: dict):
         # Prefer runtime path from event to avoid loading stale output directory.
@@ -167,9 +169,19 @@ class CacheManager(Base):
         # 定义临时文件路径，确保在同一文件系统下以支持原子性替换
         tmp_path = path + f".{os.getpid()}.tmp"
 
-        with self.file_lock:
+        with cache_write_transaction(path), self.file_lock:
             try:
                 os.makedirs(cache_dir, exist_ok=True)
+                loaded_path = getattr(self.project, "_cache_path", None)
+                loaded_revision = getattr(self.project, "_cache_revision", None)
+                if loaded_path == os.path.realpath(path) and loaded_revision is not None:
+                    try:
+                        with open(path, "rb") as reader:
+                            current_revision = hashlib.sha256(reader.read()).hexdigest()
+                    except FileNotFoundError:
+                        current_revision = None
+                    if current_revision != loaded_revision:
+                        raise CacheWriteConflict("Cache changed on disk; reload before saving")
                 content_bytes = msgspec.json.encode(self.project)
 
                 # 先将完整内容写入临时文件
@@ -179,6 +191,8 @@ class CacheManager(Base):
                 # 使用原子操作替换旧文件。这能保证其他进程/线程
                 # 要么读到旧的完整文件，要么读到新的完整文件，绝不会读到一半。
                 os.replace(tmp_path, path)
+                self.project._cache_path = os.path.realpath(path)
+                self.project._cache_revision = hashlib.sha256(content_bytes).hexdigest()
 
                 config = self.load_config()
                 if config.get("enable_cache_backup", False):
@@ -280,7 +294,7 @@ class CacheManager(Base):
     def load_from_file(self, output_path: str, interactive_recovery: bool | None = None) -> None:
         """从文件加载数据"""
         path = os.path.join(output_path, "cache", "AinieeCacheData.json")
-        with self.file_lock:
+        with cache_write_transaction(path), self.file_lock:
             if os.path.isfile(path):
                 try:
                     self.project = self.read_from_file(path)
@@ -322,6 +336,7 @@ class CacheManager(Base):
         self.project = selected["project"]
         self._normalize_project_state()
         shutil.copy2(selected["path"], main_cache_path)
+        self.project._cache_path = os.path.realpath(main_cache_path)
         self.print(f"[[green]SUCCESS[/]] {self.tra('msg_cache_healed').format(os.path.basename(selected['path']))}")
         return True
 
@@ -526,13 +541,16 @@ class CacheManager(Base):
             content_bytes = reader.read()
         try:
             # 反序列化严格按照dataclass定义，如source_text这种非optional类型不能为None，否则反序列化失败
-            return msgspec.json.decode(content_bytes, type=CacheProject)
+            project = msgspec.json.decode(content_bytes, type=CacheProject)
         except msgspec.ValidationError:
             content = json.loads(content_bytes.decode('utf-8'))
             if isinstance(content, dict):
-                return CacheProject.from_dict(content)
+                project = CacheProject.from_dict(content)
             else:
-                return cls._read_from_old_content(content)
+                project = cls._read_from_old_content(content)
+        project._cache_path = os.path.realpath(cache_path)
+        project._cache_revision = hashlib.sha256(content_bytes).hexdigest()
+        return project
 
     @classmethod
     def _read_from_old_content(cls, content: list) -> CacheProject:

@@ -529,11 +529,11 @@ class WebRuntimeBridge:
     def _push_stats_to_webserver(self, stats_data):
         try:
             import requests
-            from Tools.MCPServer.security import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
+            from ModuleFolders.Infrastructure.ApiSecurity import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
 
             response = requests.post(
                 f"{self._get_internal_api_base()}/api/internal/update_stats",
-                json=stats_data,
+                json={**stats_data, "task_id": os.environ.get("AINIEE_WEB_TASK_ID") or None},
                 headers={INTERNAL_AUTH_HEADER: os.environ.get(INTERNAL_AUTH_ENV, "")},
                 timeout=1.0,
             )
@@ -544,11 +544,11 @@ class WebRuntimeBridge:
     def _push_log_to_webserver(self, message, log_type="info"):
         try:
             import requests
-            from Tools.MCPServer.security import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
+            from ModuleFolders.Infrastructure.ApiSecurity import INTERNAL_AUTH_ENV, INTERNAL_AUTH_HEADER
 
             response = requests.post(
                 f"{self._get_internal_api_base()}/api/internal/push_log",
-                json={"message": message, "type": log_type},
+                json={"message": message, "type": log_type, "task_id": os.environ.get("AINIEE_WEB_TASK_ID") or None},
                 headers={INTERNAL_AUTH_HEADER: os.environ.get(INTERNAL_AUTH_ENV, "")},
                 timeout=1.0,
             )

@@ -59,7 +59,7 @@ class ProofreadSuggestionTask(Base):
         request_tokens_consume = Tokener().calculate_tokens(self.messages, self.system_prompt) or 0
         wait_start_time = time.time()
         while True:
-            if Base.work_status == Base.STATUS.STOPING:
+            if Base.request_stopped():
                 return self._skip_result()
             if self.request_limiter.check_limiter(request_tokens_consume):
                 break

@@ -3,9 +3,9 @@ import { RuntimeParameters, RuntimeSteps, RuntimeValues, StepValues } from '../c
 import { Terminal } from '../components/Terminal';
 import { StatsPanel } from '../components/StatsPanel';
 import { Play, Square, Upload, FileText, ChevronRight, ChevronDown, Terminal as TerminalIcon, Loader2, History, AlertCircle, Sparkles, ListPlus, X } from 'lucide-react';
-import { DataService } from '../services/DataService';
+import { ApiRequestError, DataService, isTaskActive, mergeTaskStatus } from '../services/DataService';
 import { nativeConfirm } from '../services/nativeDialog';
-import { TaskStats, LogEntry, TaskType, TaskPayload } from '../types';
+import { AppConfig, LogEntry, TaskType, TaskPayload } from '../types';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useI18n } from '../contexts/I18nContext';
 
@@ -28,6 +28,57 @@ const resolveMangaProjectPath = (outputPath?: string, inputPath?: string) => {
   return `${derivedOutput}/mangaProject`;
 };
 
+interface TaskRunOptions {
+  taskType: TaskType;
+  inputPath: string;
+  resume: boolean;
+  manga: boolean;
+  runtimeOverrides: RuntimeValues;
+  stepOverrides: StepValues;
+}
+
+export const buildTaskPayload = (config: AppConfig, options: TaskRunOptions): TaskPayload => {
+  const platformConfig = config.platforms?.[config.target_platform];
+  const taskType = options.taskType;
+  const payload: TaskPayload = {
+    task: taskType,
+    input_path: options.inputPath,
+    output_path: config.label_output_path || undefined,
+    source_lang: config.source_language || undefined,
+    target_lang: config.target_language || undefined,
+    project_type: config.translation_project || undefined,
+    resume: options.resume,
+    profile: config.active_profile || undefined,
+    rules_profile: config.active_rules_profile || undefined,
+    threads: Number(config.user_thread_counts ?? 0),
+    retry: Number(config.retry_count ?? 0),
+    timeout: Number(config.request_timeout ?? 60),
+    rounds: Number(config.round_limit ?? 3),
+    pre_lines: Number(config.pre_line_counts ?? 3),
+    platform: config.target_platform,
+    model: config.model || platformConfig?.model || '',
+    api_key: platformConfig?.api_key || (config as AppConfig & { api_key?: string }).api_key || undefined,
+    api_url: config.base_url || platformConfig?.api_url || undefined,
+    failover: !!config.enable_api_failover,
+    think_depth: config.think_depth ?? platformConfig?.think_depth ?? undefined,
+    thinking_budget: config.thinking_budget ?? platformConfig?.thinking_budget ?? undefined,
+    polish_mode: taskType === TaskType.POLISH || taskType === TaskType.ALL_IN_ONE
+      ? config.polishing_mode_selection || undefined : undefined,
+    lines: !config.tokens_limit_switch ? Math.max(1, Math.min(100, Number(config.lines_limit || 20))) : undefined,
+    tokens: config.tokens_limit_switch ? Math.max(400, Math.min(16000, Number(config.tokens_limit || 1500))) : undefined,
+    manga: taskType === TaskType.TRANSLATE && options.manga,
+  };
+  if (!payload.manga && taskType !== TaskType.EXPORT) {
+    payload.runtime_overrides = options.runtimeOverrides;
+    const steps = taskType === TaskType.ALL_IN_ONE ? ['translate', 'polish'] : [String(taskType)];
+    payload.step_overrides = Object.fromEntries(Object.entries(options.stepOverrides).filter(([key]) => steps.includes(key)));
+    if (Object.keys(options.runtimeOverrides).length || Object.keys(payload.step_overrides).length) {
+      for (const key of ['threads', 'retry', 'timeout', 'rounds', 'pre_lines', 'platform', 'model', 'api_url', 'api_key', 'failover', 'think_depth', 'thinking_budget', 'lines', 'tokens'] as const) delete payload[key];
+    }
+  }
+  return payload;
+};
+
 export const TaskRunner: React.FC = () => {
   const { t } = useI18n();
   const { config, taskState, setTaskState } = useGlobal();
@@ -39,7 +90,8 @@ export const TaskRunner: React.FC = () => {
   const intervalRef = useRef<any>(null);
   const taskGenerationRef = useRef(0);
   const taskIdRef = useRef<string | null>(null);
-  const pollInFlightRef = useRef(false);
+  const statusSynchronizedRef = useRef(false);
+  const pollRequestRef = useRef<AbortController | null>(null);
   const startInFlightRef = useRef(false);
   const cursorRef = useRef({ logs: 0, chart: 0, comparison: 0 });
   const [comparisonChannelStatus, setComparisonChannelStatus] = useState<'idle' | 'waiting' | 'active' | 'stale'>('idle');
@@ -52,9 +104,46 @@ export const TaskRunner: React.FC = () => {
   const [showUploadArea, setShowUploadArea] = useState(false);
   const [previewTaskOverride, setPreviewTaskOverride] = useState<TaskType | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [recoveryNotice, setRecoveryNotice] = useState('');
+  const [commandPreview, setCommandPreview] = useState<{ request: string; text: string; error: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mangaMode = !!taskState.isMangaMode;
   const mangaProjectPath = resolveMangaProjectPath(config?.label_output_path, taskState.customInputPath);
+
+  const taskOptions: TaskRunOptions = {
+    taskType: previewTaskOverride || taskState.taskType || TaskType.TRANSLATE,
+    inputPath: taskState.customInputPath,
+    resume: !!taskState.isResuming,
+    manga: mangaMode,
+    runtimeOverrides,
+    stepOverrides,
+  };
+  const previewPayload = config && taskOptions.inputPath.trim() ? buildTaskPayload(config, taskOptions) : null;
+  const previewRequest = previewPayload ? JSON.stringify({ ...previewPayload, api_key: undefined }) : '';
+
+  useEffect(() => {
+    if (!previewRequest) {
+      setCommandPreview(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const preview = await DataService.previewTask(JSON.parse(previewRequest) as TaskPayload, controller.signal);
+        if (!controller.signal.aborted) {
+          setCommandPreview({ request: previewRequest, text: JSON.stringify(['uv', 'run', 'ainiee_cli.py', ...preview.argv]), error: false });
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setCommandPreview({ request: previewRequest, text: error instanceof Error ? error.message : String(error), error: true });
+        }
+      }
+    }, 400);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [previewRequest]);
 
   // --- Helper Functions (Hoisted) ---
 
@@ -88,20 +177,6 @@ export const TaskRunner: React.FC = () => {
       }
   };
 
-  const mapLogs = (logs: any[], prefix: string): LogEntry[] => {
-      return (logs || []).map((l: any, idx: number) => {
-          if (!l) return null;
-          return {
-              id: l.id || `${prefix}-${idx}-${l.timestamp || Date.now()}`,
-              timestamp: typeof l.timestamp === 'number'
-                  ? new Date(l.timestamp * 1000).toLocaleTimeString()
-                  : (l.timestamp || new Date().toLocaleTimeString()),
-              message: String(l.message || ''),
-              type: l.type || 'info'
-          };
-      }).filter(Boolean) as LogEntry[];
-  };
-
   const resolveComparisonStatus = (taskStatus: string, comparisonSeq: number, comparisonUpdatedAt?: number) => {
       if (!['running', 'starting'].includes(taskStatus)) return { status: 'idle' as const, lagSec: null as number | null };
       if (!comparisonSeq || !comparisonUpdatedAt) return { status: 'waiting' as const, lagSec: null as number | null };
@@ -130,9 +205,14 @@ export const TaskRunner: React.FC = () => {
               if (await nativeConfirm(confirmMsg)) {
                   // User chose to Delete (Overwrite)
                   result = await DataService.uploadFile(file, 'overwrite');
-              } else {
-                  // User chose Cancel (Keep old, use buffer)
+              } else if (result.buffer_available !== false) {
                   result = await DataService.uploadFile(file, 'buffer');
+              } else {
+                  return;
+              }
+              if (result.status === 'limit_reached') {
+                  alert(t('msg_upload_limit_reached').replace('{}', result.limit).replace('{}', result.oldest || ''));
+                  return;
               }
           }
           
@@ -143,23 +223,7 @@ export const TaskRunner: React.FC = () => {
                   .replace('{}', result.deleted);
               
               alert(warnMsg);
-              // Backend already deleted oldest and saved new file in this request? 
-              // Wait, my backend logic for 'forced_delete' returned early without saving!
-              // I need to fix backend to save after deleting.
-              // Assuming backend fixed:
-              // actually backend logic: if count >= limit+1: delete, return status. 
-              // It didn't save. Frontend needs to retry upload?
-              // Let's re-read my backend code.
-              
-              // Backend Code: 
-              // elif count >= limit + 1:
-              //    try: os.remove(files[0][0]) ...
-              //    return { "status": "forced_delete", ... }
-              // It RETURNS before saving!
-              
-              // So Frontend must re-upload now that space is made.
-              // Policy 'buffer' or 'default' should work now as count dropped.
-              result = await DataService.uploadFile(file, 'default');
+              if (!result.path) result = await DataService.uploadFile(file, 'default');
           }
 
           if (result.path) {
@@ -208,18 +272,48 @@ export const TaskRunner: React.FC = () => {
 
   const startPolling = (generation = taskGenerationRef.current) => {
       stopPolling();
-      intervalRef.current = setInterval(async () => {
-          if (pollInFlightRef.current || generation !== taskGenerationRef.current) return;
-          pollInFlightRef.current = true;
+      let recovering = false;
+      const poll = async () => {
+          if (pollRequestRef.current || generation !== taskGenerationRef.current) return;
+          const controller = new AbortController();
+          pollRequestRef.current = controller;
           try {
-              const requestedCursor = { ...cursorRef.current };
-              const data = await DataService.getTaskStatus(
-                  requestedCursor.logs,
-                  requestedCursor.chart,
-                  requestedCursor.comparison,
-                  taskIdRef.current || undefined,
+              const obsolete = () => controller.signal.aborted || generation !== taskGenerationRef.current;
+              const previousId = taskIdRef.current;
+              const zero = { logs: 0, chart: 0, comparison: 0 };
+              let requestedCursor = recovering ? zero : { ...cursorRef.current };
+              const read = (id?: string) => DataService.getTaskStatus(
+                  requestedCursor.logs, requestedCursor.chart, requestedCursor.comparison, id, controller.signal,
               );
-              if (generation !== taskGenerationRef.current) return;
+              let data;
+              if (!recovering) {
+                  try {
+                      data = await read(previousId || undefined);
+                  } catch (error) {
+                      if (!previousId || !(error instanceof ApiRequestError) || error.status !== 404) throw error;
+                  }
+                  if (obsolete()) return;
+                  if (previousId && previousId !== (data?.task_id || null)) {
+                      recovering = true;
+                      statusSynchronizedRef.current = false;
+                      setRecoveryNotice(`Task ${previousId} is no longer available. Reconnecting…`);
+                  }
+              }
+              if (recovering) {
+                  requestedCursor = zero;
+                  data = await read();
+                  if (obsolete()) return;
+                  setRecoveryNotice(data.task_id
+                      ? `Reconnected to task ${data.task_id} after losing task ${previousId}.`
+                      : `Task ${previousId} is no longer available. No current task.`);
+                  setPreviewTaskOverride(null);
+                  recovering = false;
+              }
+              if (!data) return;
+              const taskChanged = taskIdRef.current !== (data.task_id || null);
+              const reset = taskChanged || !statusSynchronizedRef.current;
+              taskIdRef.current = data.task_id || null;
+              statusSynchronizedRef.current = true;
               const nextCursor = data.cursors || requestedCursor;
               cursorRef.current = {
                   logs: nextCursor.logs ?? requestedCursor.logs,
@@ -234,54 +328,20 @@ export const TaskRunner: React.FC = () => {
               );
               setComparisonChannelStatus(comparisonStatus.status);
               setComparisonLagSec(comparisonStatus.lagSec);
-              if (['completed', 'error', 'failed', 'idle', 'stopped'].includes(data.stats?.status)) {
+              if (!isTaskActive(data)) {
                   setPreviewTaskOverride(null);
+                  stopPolling();
               }
-              
-              setTaskState(prev => {
-                  try {
-                      const stats = data.stats || prev.stats;
-                      const mappedLogs = mapLogs(data.logs || [], 'be');
-                      const logsReset = (nextCursor.logs ?? requestedCursor.logs) < requestedCursor.logs;
-                      const chartReset = (nextCursor.chart ?? requestedCursor.chart) < requestedCursor.chart;
-                      const mergedLogs = logsReset
-                          ? mappedLogs
-                          : (mappedLogs.length > 0 ? [...prev.logs, ...mappedLogs] : prev.logs);
-                      const mergedChart = chartReset
-                          ? (data.chart_data || [])
-                          : ((data.chart_data && data.chart_data.length > 0) ? [...prev.chartData, ...data.chart_data] : prev.chartData);
-
-                      // Update State
-                      const newState = {
-                          ...prev,
-                          stats: stats,
-                          logs: mergedLogs.slice(-500),
-                          chartData: mergedChart.slice(-120),
-                          comparison: data.comparison ? { ...data.comparison } : prev.comparison
-                      };
-                      
-                      // Check stop condition
-                      if (['completed', 'error', 'failed', 'idle', 'stopped'].includes(stats.status)) {
-                          if (prev.isRunning) {
-                              // Stop running locally if backend is done
-                              stopPolling();
-                              return { ...newState, isRunning: false };
-                          }
-                      }
-
-                      return newState;
-                  } catch (innerError) {
-                      console.error("State update error", innerError);
-                      return prev;
-                  }
-              });
+              setTaskState(prev => mergeTaskStatus(prev, data, requestedCursor, reset));
 
           } catch (e) {
-              console.error("Polling error", e);
+              if (!controller.signal.aborted) console.error("Polling error", e);
           } finally {
-              pollInFlightRef.current = false;
+              if (pollRequestRef.current === controller) pollRequestRef.current = null;
           }
-      }, 1000);
+      };
+      intervalRef.current = setInterval(poll, 1000);
+      void poll();
   };
 
   const stopPolling = () => {
@@ -289,6 +349,8 @@ export const TaskRunner: React.FC = () => {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
       }
+      pollRequestRef.current?.abort();
+      pollRequestRef.current = null;
   };
 
   const handleStart = async (isAllInOne = false) => {
@@ -302,66 +364,20 @@ export const TaskRunner: React.FC = () => {
           return;
       }
 
-      // Defensive access
-      const targetPlatform = config.target_platform;
-      const platformConfig = config.platforms ? config.platforms[targetPlatform] : undefined;
-      const apiKey = platformConfig?.api_key || (config as any).api_key || undefined;
-
-      // Prepare payload with explicit values (transmitting parameters correctly)
       const taskType = isAllInOne ? TaskType.ALL_IN_ONE : (taskState.taskType || TaskType.TRANSLATE);
+      const payload = buildTaskPayload(config, { ...taskOptions, taskType });
       const taskGeneration = taskGenerationRef.current + 1;
       taskGenerationRef.current = taskGeneration;
       stopPolling();
       startInFlightRef.current = true;
       setIsStarting(true);
+      setRecoveryNotice('');
       setShowUploadArea(false);
       setPreviewTaskOverride(taskType);
-      const payload: TaskPayload = {
-          task: taskType,
-          input_path: taskState.customInputPath,
-          output_path: config.label_output_path || undefined, 
-          source_lang: config.source_language || undefined,
-          target_lang: config.target_language || undefined,
-          project_type: config.translation_project || undefined,
-          resume: !!taskState.isResuming,
-          profile: config.active_profile || undefined,
-          rules_profile: config.active_rules_profile || undefined,
-          
-          threads: Number(config.user_thread_counts || 0),
-          retry: Number(config.retry_count || 0),
-          timeout: Number(config.request_timeout || 60),
-          rounds: Number(config.round_limit || 3),
-          pre_lines: Number(config.pre_line_counts ?? 3),
-          
-          platform: targetPlatform,
-          model: config.model || platformConfig?.model || '',
-          api_key: apiKey,
-          api_url: config.base_url || platformConfig?.api_url || undefined,
-          
-          failover: !!config.enable_api_failover,
-          think_depth: config.think_depth ?? platformConfig?.think_depth ?? undefined,
-          thinking_budget: config.thinking_budget ?? platformConfig?.thinking_budget ?? undefined,
-          polish_mode: taskType === TaskType.POLISH || taskType === TaskType.ALL_IN_ONE
-              ? (config.polishing_mode_selection as TaskPayload['polish_mode']) || undefined
-              : undefined,
-          
-          lines: !config.tokens_limit_switch ? Math.max(1, Math.min(100, Number(config.lines_limit || 20))) : undefined,
-          tokens: config.tokens_limit_switch ? Math.max(400, Math.min(16000, Number(config.tokens_limit || 1500))) : undefined,
-          
-          manga: taskType === TaskType.TRANSLATE && mangaMode
-      };
-
-      if (!payload.manga && taskType !== TaskType.EXPORT) {
-          payload.runtime_overrides = runtimeOverrides;
-          const activeSteps = isAllInOne ? ['translate', 'polish'] : [String(taskType)];
-          payload.step_overrides = Object.fromEntries(Object.entries(stepOverrides).filter(([key]) => activeSteps.includes(key)));
-          if (Object.keys(runtimeOverrides).length || Object.keys(payload.step_overrides).length) {
-              for (const key of ['threads', 'retry', 'timeout', 'rounds', 'pre_lines', 'platform', 'model', 'api_url', 'api_key', 'failover', 'think_depth', 'thinking_budget', 'lines', 'tokens'] as const) delete payload[key];
-          }
-      }
 
       // Reset Chart but keep input path
       cursorRef.current = { logs: 0, chart: 0, comparison: 0 };
+      statusSynchronizedRef.current = false;
       setComparisonChannelStatus('waiting');
       setComparisonLagSec(null);
       setTaskState(prev => ({ 
@@ -370,7 +386,7 @@ export const TaskRunner: React.FC = () => {
           chartData: [],
           logs: [],
           stats: { 
-              ...(prev.stats || {}), 
+              ...prev.stats,
               status: 'running',
               completedProgress: 0 // Reset local progress display
           }
@@ -380,8 +396,8 @@ export const TaskRunner: React.FC = () => {
 
       try {
           const started = await DataService.startTask(payload);
-          taskIdRef.current = started.task_id || null;
           if (taskGeneration !== taskGenerationRef.current) return;
+          taskIdRef.current = started.task_id || null;
           startInFlightRef.current = false;
           setIsStarting(false);
           startPolling(taskGeneration);
@@ -396,88 +412,29 @@ export const TaskRunner: React.FC = () => {
   };
 
   const handleStop = async () => {
+      if (!taskIdRef.current || !statusSynchronizedRef.current) return;
       addLog("[SYSTEM] Sending STOP signal...", "warning");
+      const requestedGeneration = taskGenerationRef.current;
+      const requestedId = taskIdRef.current;
       try {
-          await DataService.stopTask(taskIdRef.current || undefined);
-          taskIdRef.current = null;
+          const stopped = await DataService.stopTask(requestedId);
+          if (requestedGeneration !== taskGenerationRef.current || requestedId !== taskIdRef.current || !statusSynchronizedRef.current) return;
           taskGenerationRef.current += 1;
           stopPolling();
           startInFlightRef.current = false;
           setIsStarting(false);
-          setPreviewTaskOverride(null);
+          const active = isTaskActive(stopped);
+          if (!active) setPreviewTaskOverride(null);
           setTaskState(prev => ({
               ...prev,
-              isRunning: false,
-              stats: { ...prev.stats, status: 'idle' }
+              isRunning: active,
+              stats: { ...prev.stats, status: stopped.status ?? (active ? 'stopping' : 'stopped') }
           }));
+          startPolling();
       } catch (e: any) {
-          addLog(`[ERROR] Failed to stop: ${e.message}`, "error");
+          if (requestedGeneration === taskGenerationRef.current) addLog(`[ERROR] Failed to stop: ${e.message}`, "error");
       }
   };
-
-  const generateCLIPreview = () => {
-      if (!config) return "Loading config...";
-      const previewTask = previewTaskOverride || taskState.taskType || TaskType.TRANSLATE;
-      const platformConfig = config.target_platform ? config.platforms?.[config.target_platform] : undefined;
-      const polishMode = config.polishing_mode_selection;
-      const thinkDepth = config.think_depth ?? platformConfig?.think_depth;
-      const thinkingBudget = config.thinking_budget ?? platformConfig?.thinking_budget;
-      const parts = ['uv run ainiee_cli.py', previewTask, `"${taskState.customInputPath || ''}"`];
-      if (Object.keys(runtimeOverrides).length || Object.keys(stepOverrides).length) {
-          const steps = previewTask === TaskType.ALL_IN_ONE ? ['translate', 'polish'] : [String(previewTask)];
-          const selectedSteps = Object.fromEntries(Object.entries(stepOverrides).filter(([key]) => steps.includes(key)));
-          const quote = (text: string) => "'" + text.replace(/'/g, "'\"'\"'") + "'";
-          if (config.active_profile) parts.push('--profile', quote(config.active_profile));
-          if (config.active_rules_profile) parts.push('--rules-profile', quote(config.active_rules_profile));
-          parts.push('--runtime-overrides', quote(JSON.stringify(runtimeOverrides)));
-          if (Object.keys(selectedSteps).length) parts.push('--step-overrides', quote(JSON.stringify(selectedSteps)));
-          parts.push('--yes');
-          if (taskState.isResuming) parts.push('--resume');
-          return parts.join(' ');
-      }
-
-      
-      // Flags
-      if (taskState.isResuming) parts.push('-y --resume');
-      else parts.push('-y');
-
-      // Add Profile (Critical)
-      if (config.active_profile) parts.push(`--profile "${config.active_profile}"`);
-      if (config.active_rules_profile) parts.push(`--rules-profile "${config.active_rules_profile}"`);
-      if (config.label_output_path) parts.push(`--output "${config.label_output_path}"`);
-      if (mangaMode && previewTask === TaskType.TRANSLATE) parts.push('--manga');
-
-      if (config.source_language) parts.push(`-s "${config.source_language}"`);
-      if (config.target_language) parts.push(`-t "${config.target_language}"`);
-      if (config.translation_project) parts.push(`--type "${config.translation_project}"`);
-      if (config.user_thread_counts !== undefined) parts.push(`--threads ${Number(config.user_thread_counts || 0)}`);
-      if (config.retry_count !== undefined) parts.push(`--retry ${Number(config.retry_count || 0)}`);
-      if (config.request_timeout !== undefined) parts.push(`--timeout ${Number(config.request_timeout || 60)}`);
-      if (config.round_limit !== undefined) parts.push(`--rounds ${Number(config.round_limit || 3)}`);
-      if (config.pre_line_counts !== undefined) parts.push(`--pre-lines ${Number(config.pre_line_counts ?? 3)}`);
-      if (config.target_platform) parts.push(`--platform "${config.target_platform}"`);
-      const model = config.model || platformConfig?.model;
-      if (model) parts.push(`--model "${model}"`);
-      const apiUrl = config.base_url || platformConfig?.api_url;
-      if (apiUrl) parts.push(`--api-url "${apiUrl}"`);
-      parts.push(`--failover ${config.enable_api_failover ? 'on' : 'off'}`);
-      if (thinkDepth !== undefined && thinkDepth !== null && thinkDepth !== '') {
-          parts.push(`--think-depth ${String(thinkDepth)}`);
-      }
-      if (thinkingBudget !== undefined && thinkingBudget !== null) {
-          parts.push(`--thinking-budget ${Number(thinkingBudget)}`);
-      }
-      if ((previewTask === TaskType.POLISH || previewTask === TaskType.ALL_IN_ONE) && polishMode) {
-          parts.push(`--polish-mode ${polishMode}`);
-      }
-      if (config.tokens_limit_switch) {
-          parts.push(`--tokens ${Math.max(400, Math.min(16000, Number(config.tokens_limit || 1500)))}`);
-      } else {
-          parts.push(`--lines ${Math.max(1, Math.min(100, Number(config.lines_limit || 20)))}`);
-      }
-      parts.push('--web-mode');
-      return parts.join(' ');
-  }
 
   // --- Effects ---
 
@@ -492,16 +449,18 @@ export const TaskRunner: React.FC = () => {
   // Initial sync on mount to recover state after refresh
   useEffect(() => {
     const recoveryGeneration = taskGenerationRef.current;
+    const controller = new AbortController();
     const recoverState = async () => {
         try {
-            const data = await DataService.getTaskStatus(0, 0, 0);
-            if (recoveryGeneration !== taskGenerationRef.current) return;
+            const data = await DataService.getTaskStatus(0, 0, 0, undefined, controller.signal);
+            if (controller.signal.aborted || recoveryGeneration !== taskGenerationRef.current) return;
             cursorRef.current = {
-                logs: data.cursors?.logs ?? (data.logs?.length || 0),
-                chart: data.cursors?.chart ?? (data.chart_data?.length || 0),
-                comparison: data.cursors?.comparison ?? (data.comparison ? 1 : 0)
+                logs: data.cursors?.logs ?? 0,
+                chart: data.cursors?.chart ?? 0,
+                comparison: data.cursors?.comparison ?? 0
             };
             taskIdRef.current = data.task_id || null;
+            statusSynchronizedRef.current = true;
             const recoveredStatus = resolveComparisonStatus(
                 data.stats?.status || 'idle',
                 cursorRef.current.comparison,
@@ -509,27 +468,24 @@ export const TaskRunner: React.FC = () => {
             );
             setComparisonChannelStatus(recoveredStatus.status);
             setComparisonLagSec(recoveredStatus.lagSec);
-            if (!data.running && !['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)) {
+            if (!isTaskActive(data)) {
                 setPreviewTaskOverride(null);
             }
-            setTaskState(prev => ({
-                ...prev,
-                isRunning: Boolean(data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)),
-                stats: data.stats,
-                chartData: data.chart_data || [],
-                comparison: data.comparison || prev.comparison,
-                logs: mapLogs(data.logs || [], 'sync')
-            }));
+            setTaskState(prev => mergeTaskStatus(prev, data, { logs: 0, chart: 0, comparison: 0 }, true));
             
-            if (data.running || ['running', 'starting', 'waiting_for_agent', 'agent_disconnected', 'committed'].includes(data.stats.status)) {
+            if (isTaskActive(data)) {
                 startPolling(recoveryGeneration);
             }
         } catch (e) {
-            console.error("Failed to recover state", e);
+            if (!controller.signal.aborted) {
+                console.error("Failed to recover state", e);
+                if (recoveryGeneration === taskGenerationRef.current) startPolling(recoveryGeneration);
+            }
         }
     };
     recoverState();
     return () => {
+        controller.abort();
         taskGenerationRef.current += 1;
         startInFlightRef.current = false;
         stopPolling();
@@ -566,6 +522,7 @@ export const TaskRunner: React.FC = () => {
 
   return (
     <div className="space-y-3 h-[calc(100vh-140px)] flex flex-col">
+      {recoveryNotice && <p role="status" className="text-sm text-amber-300">{recoveryNotice}</p>}
       {!mangaMode && taskState.taskType !== TaskType.EXPORT && <div className="max-h-[50vh] overflow-y-auto shrink-0 space-y-2">
         <RuntimeParameters value={runtimeOverrides} onChange={setRuntimeOverrides} disabled={taskState.isRunning || isStarting} />
         <RuntimeSteps value={stepOverrides} onChange={setStepOverrides} disabled={taskState.isRunning || isStarting} steps={['translate', 'polish']} />
@@ -725,7 +682,7 @@ export const TaskRunner: React.FC = () => {
                 ) : (
                     <button 
                         onClick={handleStop}
-                        disabled={isStarting}
+                        disabled={isStarting || !taskIdRef.current || !statusSynchronizedRef.current}
                         className="flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500/20 hover:shadow-lg hover:shadow-red-500/10"
                     >
                         {isStarting
@@ -775,8 +732,10 @@ export const TaskRunner: React.FC = () => {
 
       <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-slate-400 flex items-start gap-3 overflow-x-auto whitespace-nowrap">
         <TerminalIcon size={14} className="mt-0.5 text-primary shrink-0" />
-        <span className="text-slate-500 select-none">$</span>
-        <span className="text-emerald-400">{generateCLIPreview()}</span>
+        <span className="text-slate-500 select-none">argv</span>
+        <span className="text-emerald-400" role={commandPreview?.request === previewRequest && commandPreview.error ? 'alert' : undefined}>
+          {!previewRequest ? t('msg_enter_input_path') : commandPreview?.request === previewRequest ? commandPreview.text : t('loading')}
+        </span>
       </div>
 
       {/* Tabs */}

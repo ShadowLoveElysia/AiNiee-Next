@@ -45,6 +45,9 @@ export enum TaskType {
 }
 
 export interface QueueTaskItem {
+  task_id: string;
+  protected: boolean;
+  execution_mode?: 'default_api' | 'external_agent';
   runtime_overrides?: Record<string, string | number | boolean>;
   step_overrides?: Record<string, { enabled?: boolean; runtime_overrides?: Record<string, string | number | boolean> }>;
   task_type: TaskType.TRANSLATE | TaskType.POLISH | TaskType.ALL_IN_ONE | 'invalid';
@@ -94,6 +97,7 @@ export type ThemeType = 'default' | 'elysia' | 'eden' | 'mobius' | 'pardofelis' 
 
 // Payload structure to match ainiee_cli.py arguments
 export interface TaskPayload {
+  execution_mode?: 'default_api' | 'external_agent';
   runtime_overrides?: Record<string, string | number | boolean>;
   step_overrides?: Record<string, { enabled?: boolean; runtime_overrides?: Record<string, string | number | boolean> }>;
   task?: TaskType | number;
@@ -130,6 +134,8 @@ export interface TaskPayload {
   // Segmentation
   lines?: number;
   tokens?: number;
+  lines_limit?: number;
+  tokens_limit?: number;
 }
 
 export interface PlatformConfig {
@@ -262,6 +268,7 @@ export interface TaskRunnerState {
 }
 
 export interface AppConfig {
+  _config_revision?: string;
   // --- Root / Meta ---
   version?: string; // Injected from version.json
   active_profile?: string; // Injected by backend to identify active profile

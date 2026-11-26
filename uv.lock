@@ -128,7 +128,7 @@ requires-dist = [
     { name = "language-data" },
     { name = "librosa", marker = "extra == 'media-index-echo'", specifier = ">=0.10" },
     { name = "lxml" },
-    { name = "mcp", specifier = ">=1.27.0" },
+    { name = "mcp", specifier = ">=1.27.0,<2" },
     { name = "mediapipe" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "msgspec" },
