@@ -48,7 +48,13 @@ class TaskOperations:
         self, spec: TaskSpec, *, caller: CallerContext | None = None,
         user_confirmed_external_processing: bool = False,
     ) -> dict:
+        if any(str(step.get("execution_mode") or "").strip().lower() in {"external_agent", "agent", "external"} for step in spec.workflow_steps):
+            raise TaskOperationError("EXTERNAL_CHANNEL_REQUIRED", "External-Agent workflow steps require individual task-scoped approval.")
+        if spec.workflow_file:
+            raise TaskOperationError("INVALID_TASK", "API execution requires inline workflow_steps instead of a mutable workflow file.")
         if spec.execution_mode == "external_agent":
+            if spec.workflow_steps or spec.workflow_file:
+                raise TaskOperationError("INVALID_TASK", "External-Agent preparation does not execute custom workflows.")
             if caller is None or caller.channel != "mcp":
                 raise TaskOperationError("EXTERNAL_CHANNEL_REQUIRED", "External-Agent tasks require the authenticated MCP channel.")
             if user_confirmed_external_processing is not True:

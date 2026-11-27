@@ -173,7 +173,8 @@ class QueueTaskItem:
                  automation_progress_file=None, automation_worker_pid=None,
                  trigger_file_path=None, trigger_file_name=None, trigger_detected_at=None,
                  series_incremental=False, series_key=None, series_volume=None, extra=None,
-                 task_id=None, runtime_overrides=None, step_overrides=None):
+                 task_id=None, runtime_overrides=None, step_overrides=None, strict_export=None,
+                 output_policy=None, output_policy_confirmed=False, export_format=None):
         spec = TaskSpec.from_mapping(
             {
                 "task_type": task_type,
@@ -204,6 +205,11 @@ class QueueTaskItem:
                 "manga": manga,
                 "runtime_overrides": runtime_overrides,
                 "step_overrides": step_overrides,
+                "strict_export": strict_export,
+                "workflow_steps": workflow_steps,
+                "output_policy": output_policy,
+                "output_policy_confirmed": output_policy_confirmed,
+                "export_format": export_format,
             }
         )
         queue_fields = spec.to_queue_fields()
@@ -211,7 +217,7 @@ class QueueTaskItem:
         for field_name, value in queue_fields.items():
             setattr(self, field_name, value)
         self.resume_explicit = bool(resume_explicit) if resume_explicit is not None else None
-        self.workflow_steps = workflow_steps or []
+        self.workflow_steps = spec.workflow_steps
         if not self.workflow_steps and (spec.runtime_overrides or spec.step_overrides):
             kinds = ["translate", "polish"] if spec.task_type == "all_in_one" else [spec.task_type]
             self.workflow_steps = [{"id": kind, "type": kind} for kind in kinds]
@@ -1447,12 +1453,12 @@ class QueueManager(Base):
         return updated
 
     @_serialized
-    def continue_partial_task(self, run_id: str = "", input_path: str = "") -> bool:
+    def continue_partial_task(self, run_id: str = "", input_path: str = "", *, task_id: str = "") -> bool:
         target_input = os.path.abspath(input_path) if input_path else ""
         for task in self.tasks:
             matches_run = run_id and getattr(task, "automation_run_id", None) == run_id
             matches_path = target_input and os.path.abspath(getattr(task, "input_path", "") or "") == target_input
-            if not (matches_run or matches_path):
+            if not (task.task_id == task_id if task_id else matches_run or matches_path):
                 continue
             if getattr(task, "status", "") != "partial":
                 continue
@@ -1480,12 +1486,12 @@ class QueueManager(Base):
         return False
 
     @_serialized
-    def resume_stopped_task(self, run_id: str = "", input_path: str = "") -> bool:
+    def resume_stopped_task(self, run_id: str = "", input_path: str = "", *, task_id: str = "") -> bool:
         target_input = os.path.abspath(input_path) if input_path else ""
         for task in self.tasks:
             matches_run = run_id and getattr(task, "automation_run_id", None) == run_id
             matches_path = target_input and os.path.abspath(getattr(task, "input_path", "") or "") == target_input
-            if not (matches_run or matches_path):
+            if not (task.task_id == task_id if task_id else matches_run or matches_path):
                 continue
             if getattr(task, "status", "") not in {"stopped", "interrupted"}:
                 continue
@@ -2087,6 +2093,9 @@ class QueueManager(Base):
                 skip_prompt_validation=skip_prompt_validation,
                 save_runtime_config=False,
                 execution_mode=getattr(task, "execution_mode", "default_api"),
+                output_policy=None if resume else getattr(task, "output_policy", None),
+                output_policy_confirmed=getattr(task, "output_policy_confirmed", False),
+                export_format=getattr(task, "export_format", None),
             )
             if not task_ok:
                 if getattr(task, "execution_mode", "default_api") == "external_agent":

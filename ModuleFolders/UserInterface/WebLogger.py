@@ -14,6 +14,7 @@ class WebLogger:
         self.show_detailed = show_detailed
         self.current_source = ""
         self._last_result_time = 0
+        self._last_progress_data = {}
 
     def _push_to_web(self, source, translation):
         internal_api_url = os.environ.get("AINIEE_INTERNAL_API_URL")
@@ -88,6 +89,7 @@ class WebLogger:
     def update_progress(self, event, data):
         if not data or not isinstance(data, dict):
             return
+        self._last_progress_data.update(data)
 
         if time.time() - self.last_stats_time < 0.5:
             return

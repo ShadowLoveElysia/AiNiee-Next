@@ -19,7 +19,7 @@ _GROUPS = {
     "execution": "user_thread_counts enable_async_mode enable_rate_limit custom_rpm_limit custom_tpm_limit request_timeout enable_stream_api",
     "batch": "tokens_limit_switch lines_limit tokens_limit chunk_soft_limit_extra_lines line_split_optimization_mode retry_split_min_lines",
     "context": "pre_line_counts polishing_pre_line_counts enable_context_enhancement character_recall_switch character_recall_context_lines character_recall_lookahead_lines sparse_completion_previous_lines sparse_completion_lookahead_lines translation_consistency_enhancement",
-    "references": "prompt_dictionary_switch dynamic_glossary_switch translation_memory_switch rag_enabled rag_top_k characterization_switch world_building_switch writing_style_switch translation_example_switch few_shot_and_example_switch",
+    "references": "prompt_dictionary_switch dynamic_glossary_switch dynamic_glossary_series dynamic_glossary_volume dynamic_glossary_volume_map translation_memory_switch rag_enabled rag_top_k characterization_switch world_building_switch writing_style_switch translation_example_switch few_shot_and_example_switch",
     "generation": "think_switch think_depth thinking_budget temperature top_p max_output_tokens structured_output_mode enable_prompt_caching",
     "checks": "newline_character_count_check return_to_original_text_check residual_original_text_check reply_format_check retry_count round_limit enable_smart_round_limit smart_round_max_limit untranslated_retry_limit untranslated_reduction_rate enable_retry_backoff enable_api_failover api_failover_threshold",
     "proofread": "enable_auto_proofread proofread_context_lines proofread_batch_size proofread_confidence_threshold",
@@ -31,6 +31,9 @@ _GROUPS = {
 
 _EXTRA = {
     "strict_export": ("bool", False, None, None),
+    "dynamic_glossary_series": ("string", "", None, None),
+    "dynamic_glossary_volume": ("int", None, 1, None),
+    "dynamic_glossary_volume_map": ("object", {}, None, None),
     "platform": ("string", None, None, None),
     "model": ("string", None, None, None),
     "translation_prompt_id": ("string", None, None, None),
@@ -106,6 +109,19 @@ def normalize_runtime_overrides(value: Any) -> dict:
         kind = spec["type"]
         if kind == "bool":
             valid = isinstance(entry, bool)
+        elif key == "dynamic_glossary_series":
+            valid = isinstance(entry, str)
+            if valid:
+                entry = entry.strip()
+        elif key == "dynamic_glossary_volume_map":
+            from ModuleFolders.Domain.PromptBuilder.DynamicGlossary import normalize_volume
+            valid = isinstance(entry, Mapping) and all(
+                isinstance(path, str) and bool(path.strip()) and isinstance(volume, int)
+                and not isinstance(volume, bool) and normalize_volume(volume) == volume and volume >= 1
+                for path, volume in entry.items()
+            )
+            if valid:
+                entry = dict(entry)
         elif kind in {"int", "float"}:
             valid = isinstance(entry, (int, float)) and not isinstance(entry, bool) and math.isfinite(entry)
             if kind == "int":

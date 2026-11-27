@@ -95,7 +95,7 @@ class LiveSession:
     worker_module = "ModuleFolders.Media.worker"
     worker_creationflags = 0
 
-    def __init__(self) -> None:
+    def __init__(self, *, own_process_tree: bool = False) -> None:
         self._process = None
         self._events = queue.Queue(maxsize=MAX_EVENT_QUEUE)
         self._stop_deadline = None
@@ -108,6 +108,8 @@ class LiveSession:
         self._reader_stop = threading.Event()
         self._reader = None
         self._stderr_reader = None
+        self._own_process_tree = own_process_tree
+        self._process_tree = None
 
     @property
     def active(self) -> bool:
@@ -122,22 +124,37 @@ class LiveSession:
             preflight_application(config.application_pid, config.application_started)
         config = replace(config, model_root=str(Path(config.model_root).expanduser().resolve()))
         from ModuleFolders.Media.runtime import subprocess_environment
+        environment = subprocess_environment()
+        launched_at = time.time()
+        if self._own_process_tree:
+            from ModuleFolders.Service.TaskRuntime.processes import mark_worker_environment
+            marker = mark_worker_environment(environment, nested=True)
         self._events = queue.Queue(maxsize=MAX_EVENT_QUEUE)
         process = subprocess.Popen(
             [interpreter or sys.executable, "-u", "-m", self.worker_module],
-            cwd=Path(__file__).resolve().parents[2], env=subprocess_environment(),
+            cwd=Path(__file__).resolve().parents[2], env=environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if getattr(self, "capture_worker_stderr", False) else subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace",
             start_new_session=os.name != "nt",
             creationflags=self.worker_creationflags,
         )
+        if self._own_process_tree:
+            from ModuleFolders.Service.TaskRuntime.processes import OwnedProcessTree
+            self._process_tree = OwnedProcessTree(process, owner_id=marker, launched_at=launched_at)
         try:
             process.stdin.write(json.dumps(asdict(config)) + "\n")
             process.stdin.flush()
         except Exception:
-            terminate_worker(process)
-            process.wait(timeout=3)
+            if self._process_tree is not None:
+                self._process = process
+                if not self._process_tree.terminate(timeout=3):
+                    raise RuntimeError("Media worker cleanup is still pending") from None
+                self._process_tree = None
+                self._process = None
+            else:
+                terminate_worker(process)
+                process.wait(timeout=3)
             raise
         self._process = process
         events = self._events
@@ -261,6 +278,10 @@ class LiveSession:
             if self._process.poll() is None:
                 terminate_worker(self._process)
         if self._process.poll() is not None:
+            if self._process_tree is not None:
+                if not self._process_tree.terminate(timeout=2):
+                    return events
+                self._process_tree = None
             if not self._reader_done.is_set() or not self._events.empty():
                 return events
             code = self._process.returncode
@@ -279,6 +300,10 @@ class LiveSession:
         self._reader_stop.set()
         if self.active:
             self.stop()
+            if self._process_tree is not None:
+                if not self._process_tree.terminate(timeout=3):
+                    raise RuntimeError("Media worker cleanup is still pending")
+                self._process_tree = None
             try:
                 self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:

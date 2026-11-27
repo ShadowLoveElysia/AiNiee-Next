@@ -21,6 +21,7 @@ from typing import List, Dict, Any, Optional
 try:
     from fastapi import FastAPI, HTTPException, Body, File, UploadFile, Response, BackgroundTasks, Query, Request, APIRouter
     from fastapi.responses import JSONResponse
+    from fastapi.exceptions import RequestValidationError
     from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 except ImportError:
     # This error will be caught and handled in ainiee_cli.py
@@ -248,6 +249,10 @@ from Tools.APIServer.responses import (
 
 app = FastAPI(title="AiNiee CLI Backend API")
 app.include_router(manga_router)
+from Tools.APIServer.job_routes import router as job_router
+app.include_router(job_router)
+from Tools.APIServer.control_routes import router as control_router
+app.include_router(control_router)
 
 
 @app.exception_handler(Exception)
@@ -255,6 +260,14 @@ async def handle_unexpected_api_error(request: Request, error: Exception):
     import logging
     logging.getLogger(__name__).error("API operation failed (%s).", type(error).__name__)
     return JSONResponse(status_code=500, content={"detail": "API operation failed. Check the server logs."})
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_api_validation_error(request: Request, error: RequestValidationError):
+    # Validation receipts must not echo rejected credentials or source documents.
+    issues = [{"loc": list(issue["loc"]), "type": issue["type"], "msg": "Invalid value"}
+              for issue in error.errors()]
+    return JSONResponse(status_code=422, content={"detail": issues})
 
 # --- Paths to Resources ---
 RESOURCE_PATH = os.path.join(PROJECT_ROOT, "Resource")
@@ -2844,7 +2857,7 @@ def _read_cache_snapshot(output_path):
 
 
 @contextmanager
-def _edit_cache_project(output_path, *, expected_revision=None, replacement=None):
+def _edit_cache_project(output_path, *, expected_revision=None, replacement=None, cache_variant="main"):
     from ModuleFolders.Service.TaskRuntime.cache_editing import CacheEditConflict, edit_project
     from ModuleFolders.Infrastructure.Cache.CachePersistence import CacheWriteConflict
     # Keep an API worker from starting while its output is being edited.
@@ -2853,7 +2866,7 @@ def _edit_cache_project(output_path, *, expected_revision=None, replacement=None
             raise HTTPException(status_code=409, detail="Cache cannot be edited while a task is active")
         _require_proofread_report_idle(output_path)
         try:
-            with edit_project(output_path, expected_revision=expected_revision, replacement=replacement) as transaction:
+            with edit_project(output_path, expected_revision=expected_revision, replacement=replacement, cache_variant=cache_variant) as transaction:
                 yield transaction
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Cache file not found") from exc
@@ -3829,6 +3842,11 @@ def _queue_rows(qm, request):
                 "execution_mode": serialized.get("execution_mode", "default_api"),
                 "runtime_overrides": serialized.get("runtime_overrides", {}),
                 "step_overrides": serialized.get("step_overrides", {}),
+                "workflow_steps": serialized.get("workflow_steps", []),
+                "strict_export": serialized.get("strict_export"),
+                "output_policy": serialized.get("output_policy"),
+                "output_policy_confirmed": serialized.get("output_policy_confirmed", False),
+                "export_format": serialized.get("export_format"),
                 "input_path": task.input_path,
                 "output_path": getattr(task, "output_path", ""),
                 "profile": getattr(task, "profile", ""),
@@ -3988,6 +4006,11 @@ def _update_queue_fields(qm, index, item, request):
             fields_to_update.add("lines_limit")
         if preserve_api_key:
             queue_payload["api_key"] = existing_payload.get("api_key")
+        if "strict_export" in fields_to_update and "runtime_overrides" not in fields_to_update:
+            runtime = dict(queue_payload.get("runtime_overrides") or {})
+            runtime.pop("strict_export", None)
+            queue_payload["runtime_overrides"] = runtime
+            fields_to_update.add("runtime_overrides")
         # TaskSpec 用 None 表示无覆盖，而 model_fields_set 保留显式 null 的清空语义。
         queue_fields = TaskSpec.from_mapping(queue_payload).to_queue_fields(
             include_api_key=True
@@ -4101,4 +4124,16 @@ async def reorder_queue(request: QueueReorderRequest, expected_revision: str | N
         _refresh_queue(qm, expected_revision, writing=True)
         order = [_queue_index(qm, target) for target in request.new_order]
         return _queue_write_result(qm, qm.reorder_tasks(order))
+
+
+from Tools.APIServer.automation_routes import router as automation_router
+from Tools.APIServer.media_routes import router as media_router
+from Tools.APIServer.review_routes import router as review_router
+from Tools.APIServer.cache_review_routes import router as cache_review_router
+from Tools.APIServer.system_routes import router as system_router
+from Tools.APIServer.maintenance_routes import router as maintenance_router
+from Tools.APIServer.host_routes import router as host_router
+
+for domain_router in (automation_router, media_router, review_router, cache_review_router, system_router, maintenance_router, host_router):
+    app.include_router(domain_router)
 

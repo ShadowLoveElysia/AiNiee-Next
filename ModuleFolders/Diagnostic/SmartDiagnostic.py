@@ -33,11 +33,11 @@ class SmartDiagnostic:
     使用分层策略最小化API调用成本
     """
 
-    def __init__(self, config: DiagnosticConfig = None, lang: str = "zh_CN"):
+    def __init__(self, config: DiagnosticConfig = None, lang: str = "zh_CN", *, knowledge_base=None):
         self.config = config or DiagnosticConfig()
         self.lang = lang
         self.rule_matcher = RuleMatcher(lang=lang)
-        self.knowledge_base = KnowledgeBase(lang=lang)
+        self.knowledge_base = knowledge_base if knowledge_base is not None else KnowledgeBase(lang=lang)
 
         # 统计信息
         self.stats = {

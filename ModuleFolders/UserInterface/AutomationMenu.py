@@ -78,6 +78,7 @@ class AutomationMenu:
         task_payload["task_type"] = task_config.get("task_type", "translation")
         task_payload["input_path"] = task_config.get("input_path", "")
         task_fields = TaskSpec.from_mapping(task_payload).to_queue_fields()
+        task_fields.pop("workflow_steps", None)
         task_item = QueueTaskItem(
             **task_fields,
             resume_explicit="resume" in task_payload,
@@ -1131,9 +1132,8 @@ class AutomationMenu:
             }
         )
         task_item = QueueTaskItem(
-            **TaskSpec.from_mapping(task_payload).to_queue_fields(),
+            **TaskSpec.from_mapping({**task_payload, "workflow_steps": workflow_steps}).to_queue_fields(),
             resume_explicit="resume" in task_payload,
-            workflow_steps=workflow_steps,
             source="watch",
             rule_id=rule.id,
             trigger_file_path=item["path"],

@@ -45,7 +45,7 @@ def edit_runtime_parameters(host, current=None):
             values.pop(key, None)
             continue
         try:
-            value = json.loads(raw) if spec["type"] in {"int", "float", "bool"} else raw
+            value = json.loads(raw) if spec["type"] in {"int", "float", "bool", "object"} else raw
             values.update(normalize_runtime_overrides({key: value}))
         except (ValueError, TypeError) as exc:
             console.print(str(exc), style="red", markup=False)

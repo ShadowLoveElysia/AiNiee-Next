@@ -36,4 +36,23 @@ python -m Tools.APIServer.server --host 127.0.0.1 --port 8000
 
 主公开接口均提供请求、响应和错误声明；开放配置及规则扩展字段标记为动态结构，不宣称字段枚举完整。MCP 文件上传用 `upload_file`，二进制输出用 `download_file`；后者只接受目录声明的文件 GET，最多 32 MiB，保存到项目 `tmp/mcp-downloads` 的唯一文件，不覆盖旧文件。
 
-当前迁出重点是任务、配置策略、运行管理和 MCP 桥接。其余规则、缓存、校对等旧 HTTP 实现暂留 `application.py`，后续按领域拆分；此版本没有新增多任务并发、SSE、全量任务历史或统一独立 Skills 运行实例。
+TUI 的业务能力通过下列领域接口提供；`GET /api/system/tui-capabilities` 返回入口映射，完整参数以 `/openapi.json` 和 MCP 分类目录为准。
+
+| 领域 | 入口 | 能力 |
+|---|---|---|
+| 任务 | `/api/task/*` | 翻译、润色、导出、漫画、结构化工作流、动态术语卷映射、输出策略及格式转换 |
+| 运行控制 | `/api/task/control` | 暂停、恢复、线程/批量增减、跳文件、切换 API；返回命令ID，可查询处理收据 |
+| 媒体 | `/api/media/*` | 同传、视频、设置、模型与环境、输入设备、字幕历史/录制、互译、产物下载 |
+| 自动化 | `/api/automation/*` | 定时、队列事件、目录监视、规则维护、工作流、历史、重入队及部分任务恢复 |
+| 术语/校对 | `/api/review/*` | 多卷增量术语、规则导入导出/预览、提示词测试、主/校对缓存选择与批量编辑、校对报告 |
+| 系统 | `/api/system/*` | 配置元数据/校验、平台验证和模型列表、Profile文档、最近项目、诊断、MCP/Skills服务、Web托管 |
+| 维护 | `/api/maintenance/*` | 应用/Web更新、漫画运行环境与默认引擎准备 |
+| 辅助作业 | `/api/jobs/*` | 耗时操作的ID、状态、结果和停止；取消未完成时保持stopping |
+
+长任务和媒体会话沿用受控进程与唯一API owner；目录查询不启动模型、安装依赖或创建翻译任务。运行控制只接受当前task_id，worker通过内部鉴权通道获取命令；`queued`不表示已执行，`processed/rejected/expired`才是控制收据。同一命令的网络重投不会重复应用。
+
+任务新增字段包括 `strict_export`、`export_format`、`glossary_impact`、`glossary_impact_suggestions`、`workflow_steps`、漫画引擎/设备参数及 `output_policy`。工作流步骤直接传结构化对象；API不读取任意可变workflow文件。归档/覆盖须同时提交 `output_policy_confirmed=true`。动态术语的series、volume和volume_map位于runtime_overrides，由原权威校验器处理。
+
+模型验证、分析、安装、更新、服务启动等显式操作保留确认字段；没有确认不执行。MCP读取新的原文/译文结果须提供本次 `user_confirmed_external_processing=true`，媒体结果还绑定session_id。普通配置的高级确认标记同样适用于原始Profile文档，不可通过另一入口绕过。
+
+纯界面功能（终端光标、颜色渲染、Tk窗口移动、剪贴板、打开浏览器/编辑器）由调用客户端实现；API提供对应内容和业务操作，不控制已运行的旧Tk窗口。本次不新增SSE、多任务并发或统一独立Skills运行实例；真实媒体、模型、CUDA和原生平台可用性仍以运行环境检查为准。

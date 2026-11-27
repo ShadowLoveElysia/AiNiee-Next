@@ -44,19 +44,22 @@ def project_configuration(config: dict, caller: CallerContext) -> dict:
     return config
 
 
-@config_transaction()
-def update_configuration(changes: dict, caller: CallerContext) -> str:
+def authorize_configuration_changes(changes: dict, caller: CallerContext) -> None:
     if caller.channel not in {"web", "mcp"}:
         raise PermissionError("This channel cannot manage configuration.")
-    changes = strip_mcp_security_metadata(changes)
-    revision = changes.pop("_config_revision", None)
-    if revision is not None and not isinstance(revision, str):
-        raise ValueError("Invalid configuration revision.")
     if caller.channel == "mcp":
         if any(key in changes for key in ("mcp_server_port", "mcp_server_host")) and not caller.confirm_advanced_change:
             raise PermissionError("Advanced MCP settings require explicit change confirmation.")
         ensure_agent_batch_change_confirmed(changes, caller.confirm_agent_batch_change)
 
+
+@config_transaction()
+def update_configuration(changes: dict, caller: CallerContext) -> str:
+    authorize_configuration_changes(changes, caller)
+    changes = strip_mcp_security_metadata(changes)
+    revision = changes.pop("_config_revision", None)
+    if revision is not None and not isinstance(revision, str):
+        raise ValueError("Invalid configuration revision.")
     full_snapshot = {"active_profile", "active_rules_profile", "platforms"} <= changes.keys()
 
     def prepare(current, incoming):

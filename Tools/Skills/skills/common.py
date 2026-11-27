@@ -219,6 +219,14 @@ def validate_task_spec_paths(spec: TaskSpec) -> TaskSpec:
         value = getattr(spec, field_name, None)
         if value:
             validate_skill_path(value, field_name=field_name)
+    if spec.workflow_file:
+        raise SkillPathError("Use inline workflow_steps for Skills tasks.", "INVALID_TASK")
+    for step in spec.workflow_steps:
+        for field_name in ("input_path", "output_path", "output_root", "prompt_file"):
+            if step.get(field_name):
+                validate_skill_path(step[field_name], field_name=field_name)
+    for value in spec.glossary_impact or ():
+        validate_skill_path(value, field_name="glossary_impact")
     return spec
 
 
@@ -274,6 +282,11 @@ _PARAMETER_DESCRIPTIONS = {
     "polish_mode": "Polishing mode for polish or all-in-one tasks.",
     "runtime_overrides": "Per-run settings object; omitted fields inherit, false and zero are preserved.",
     "step_overrides": "Settings keyed by stable workflow step ID (translate/polish for built-in tasks).",
+    "workflow_steps": "Ordered workflow steps with stable IDs; use profiles for credentials.",
+    "strict_export": "Block incomplete or structurally invalid text export for this run.",
+    "output_policy": "Existing output policy: resume, archive, overwrite or cancel.",
+    "output_policy_confirmed": "Explicit confirmation for archive or overwrite output policy.",
+    "export_format": "Optional ebook conversion format for this text task.",
 }
 _INTEGER_PARAMETERS = {
     "threads",
@@ -285,7 +298,7 @@ _INTEGER_PARAMETERS = {
     "tokens_limit",
     "thinking_budget",
 }
-_BOOLEAN_PARAMETERS = {"resume", "failover"}
+_BOOLEAN_PARAMETERS = {"resume", "failover", "strict_export", "output_policy_confirmed"}
 _TASK_FIELD_ORDER = tuple(
     field for field in QUEUE_TASK_OVERRIDE_FIELDS if field != "input_path"
 )
@@ -302,6 +315,8 @@ def task_skill_parameters(
         param_type = "integer" if name in _INTEGER_PARAMETERS else "boolean" if name in _BOOLEAN_PARAMETERS else "string"
         if name in {"runtime_overrides", "step_overrides"}:
             param_type = "object"
+        elif name == "workflow_steps":
+            param_type = "array"
         parameters.append(
             SkillParameter(
                 name=name,
@@ -357,7 +372,7 @@ def task_subprocess_invocation(spec: TaskSpec) -> tuple[list[str], Dict[str, str
     env.pop(TASK_API_KEY_ENV, None)
     if spec.api_key:
         env[TASK_API_KEY_ENV] = spec.api_key
-    if spec.runtime_overrides or spec.step_overrides:
+    if spec.runtime_overrides or spec.step_overrides or spec.workflow_steps:
         from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV, write_worker_snapshot
         env[RUNTIME_SNAPSHOT_ENV] = write_worker_snapshot(spec.to_mapping())
     return command, env

@@ -274,8 +274,11 @@ class WorkflowRunner:
                 child = dict(step, type=kind, id=f"{step['id']}.{kind}")
                 if kind == "polish":
                     child.setdefault("resume", True)
+                    child.pop("output_policy", None)
+                    child.pop("output_policy_confirmed", None)
                 else:
                     child.pop("polish_mode", None)
+                    child.pop("export_format", None)
                 if parent:
                     own = overrides_by_id.get(child["id"], {})
                     overrides_by_id[child["id"]] = {
@@ -987,14 +990,21 @@ class WorkflowRunner:
 
         task_payload = select_task_contract_fields(task_config or {})
         task_payload.update(select_task_contract_fields(step))
+        task_payload.pop("workflow_steps", None)
+        task_payload.pop("workflow_file", None)
         # 步骤显式设置优先于任务的旧式顶层参数。
         from ModuleFolders.Infrastructure.TaskConfig.RuntimeOverrides import LEGACY_ALIASES
         for old_key, new_key in {**LEGACY_ALIASES, "platform": "platform", "model": "model", "think_depth": "think_depth", "thinking_budget": "thinking_budget", "lines_limit": "lines_limit", "tokens_limit": "tokens_limit"}.items():
             if new_key in step.get("runtime_overrides", {}) and old_key not in step:
                 task_payload.pop(old_key, None)
+        if "strict_export" in step.get("runtime_overrides", {}):
+            task_payload.pop("strict_export", None)
         task_payload["task_type"] = contract_task_type or task_type_to_step_type(task_type)
         task_payload["input_path"] = input_path
         task_payload["resume"] = resume
+        if resume:
+            task_payload.pop("output_policy", None)
+            task_payload.pop("output_policy_confirmed", None)
         if task_payload["task_type"] == "translate":
             task_payload.pop("polish_mode", None)
         step_spec = TaskSpec.from_mapping(task_payload)
@@ -1050,6 +1060,9 @@ class WorkflowRunner:
                 skip_preflight=True,
                 save_runtime_config=False,
                 automation_progress=bool(self.progress_reporter),
+                output_policy=step_spec.output_policy,
+                output_policy_confirmed=step_spec.output_policy_confirmed,
+                export_format=step_spec.export_format,
             )
             if ok:
                 self._last_output_path = self.host.config.get("label_output_path")
@@ -1114,6 +1127,8 @@ class WorkflowRunner:
         output_path = self._resolve_step_output_path(input_path, step) or task_config.get("output_path") or None
         task_payload = select_task_contract_fields(task_config)
         task_payload.update(select_task_contract_fields(step))
+        task_payload.pop("workflow_steps", None)
+        task_payload.pop("workflow_file", None)
         task_payload.update(
             {
                 "task_type": step.get("task_type", task_config.get("task_type", "translation")),

@@ -14,6 +14,7 @@ from ModuleFolders.Infrastructure.MangaFeatureGuard import get_manga_feature_sta
 from ModuleFolders.Infrastructure.TaskConfig.PolishingMode import normalize_polishing_mode
 from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
 from ModuleFolders.Infrastructure.TaskContract import (
+    MANGA_ENGINE_FIELDS, MANGA_DEVICE_FIELDS, MANGA_FLAG_FIELDS,
     TaskContractError,
     TaskSpec,
     select_task_contract_fields,
@@ -72,6 +73,10 @@ def normalize_cli_task_args(args) -> TaskSpec:
         "manga",
         "runtime_overrides",
         "step_overrides",
+        "strict_export", "glossary_impact", "glossary_impact_suggestions", "export_format",
+        "output_policy", "output_policy_confirmed",
+        "workflow_steps", "workflow_file",
+        *MANGA_ENGINE_FIELDS, *MANGA_DEVICE_FIELDS, *MANGA_FLAG_FIELDS,
     ):
         setattr(args, field_name, getattr(spec, field_name))
     args.task = spec.task_type
@@ -110,8 +115,12 @@ def _skills_task_argument_names(args) -> list[str]:
         ("project_type", "--type"),
         ("resume", "--resume"),
         ("strict_export", "--strict-export"),
+        ("export_format", "--export-format"),
+        ("output_policy", "--output-policy"),
+        ("output_policy_confirmed", "--output-policy-confirmed"),
         ("glossary_impact", "--glossary-impact"),
         ("glossary_impact_suggestions", "--glossary-impact-suggestions"),
+        ("workflow_steps", "--workflow-steps"),
         ("non_interactive", "--yes"),
         ("threads", "--threads"),
         ("retry", "--retry"),
@@ -368,14 +377,15 @@ class CommandModeRunner:
             console.print("[red]--glossary-impact-suggestions requires --glossary-impact.[/red]")
             return 2
         if getattr(args, "glossary_impact", None) and (getattr(args, "runtime_overrides", None)
-                or getattr(args, "step_overrides", None) or getattr(args, "workflow_file", None)):
+                or getattr(args, "step_overrides", None) or getattr(args, "workflow_file", None)
+                or getattr(args, "workflow_steps", None)):
             console.print("[red]--glossary-impact cannot be combined with workflow overrides.[/red]")
             return 2
         if getattr(args, "glossary_impact", None) and args.task != "export":
             console.print("[red]--glossary-impact requires export and a cached project.[/red]")
             return 2
         if (getattr(args, "runtime_overrides", None) or getattr(args, "step_overrides", None)
-                or getattr(args, "workflow_file", None)
+                or getattr(args, "workflow_file", None) or getattr(args, "workflow_steps", None)
                 or (args.task == "queue" and getattr(args, "strict_export", False))) and not getattr(args, "manga", False):
             return self._run_configured_workflow(args)
 
@@ -385,9 +395,9 @@ class CommandModeRunner:
         if args.rules_profile:
             self.host.switch_active_rules_profile(args.rules_profile)
 
-        if getattr(args, "strict_export", False):
+        if getattr(args, "strict_export", None) is not None:
             runtime = dict(getattr(self.host, "runtime_config_overrides", {}) or {})
-            runtime["strict_export"] = True
+            runtime["strict_export"] = args.strict_export
             self.host.runtime_config_overrides = runtime
 
         if getattr(args, "execution_mode", None) is None:
@@ -425,6 +435,9 @@ class CommandModeRunner:
                     non_interactive=args.non_interactive,
                     web_mode=args.web_mode,
                     execution_mode=args.execution_mode,
+                    output_policy=args.output_policy,
+                    output_policy_confirmed=args.output_policy_confirmed,
+                    export_format=args.export_format,
                 )
             return 0 if started is not False else 3
 
@@ -438,6 +451,7 @@ class CommandModeRunner:
                 strict_export=getattr(args, "strict_export", False),
                 glossary_impact=getattr(args, "glossary_impact", None),
                 glossary_impact_suggestions=getattr(args, "glossary_impact_suggestions", False),
+                export_format=getattr(args, "export_format", None),
             )
             return result or 0
 
@@ -476,8 +490,9 @@ class CommandModeRunner:
                 if not isinstance(template, dict):
                     raise TaskContractError("Workflow file must contain an object")
                 saved_runtime = template.pop("runtime_overrides", {})
-                template.update({key: value for key, value in payload.items() if value is not None and (key not in {"step_overrides", "runtime_overrides"} or value)})
+                template.update({key: value for key, value in payload.items() if value is not None and (key not in {"step_overrides", "runtime_overrides", "workflow_steps"} or value)})
                 template["runtime_defaults"] = saved_runtime
+                template.pop("workflow_file", None)
                 payload = template
             if not payload.get("workflow_steps"):
                 kinds = ["translate", "polish"] if args.task == "all_in_one" else [args.task]
@@ -639,6 +654,8 @@ class CommandModeRunner:
                 web_mode=args.web_mode,
                 from_queue=True,
                 skip_prompt_validation=True,
+                output_policy=args.output_policy,
+                output_policy_confirmed=args.output_policy_confirmed,
             )
             if translate_ok and Base.work_status != Base.STATUS.STOPING:
                 self.host.run_task(
@@ -648,6 +665,7 @@ class CommandModeRunner:
                     non_interactive=True,
                     web_mode=args.web_mode,
                     skip_prompt_validation=True,
+                    export_format=args.export_format,
                 )
             return
 

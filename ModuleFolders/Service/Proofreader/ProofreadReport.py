@@ -7,6 +7,35 @@ import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from ModuleFolders.Infrastructure.Cache.CacheItem import TranslationStatus
+
+
+def correction_target_field(report_item, cache_item) -> str:
+    target_field = report_item.ai_check.get("target_field")
+    if target_field in ("translated_text", "polished_text"):
+        return target_field
+    report_text = report_item.translated_text or ""
+    if report_text == (cache_item.translated_text or ""):
+        return "translated_text"
+    if report_text == (cache_item.polished_text or ""):
+        return "polished_text"
+    return "translated_text"
+
+
+def apply_report_correction(report_item, cache_item, corrected_text: str) -> str:
+    """Share the legacy report's translated/polished write-back semantics."""
+    target_field = correction_target_field(report_item, cache_item)
+    if target_field == "polished_text":
+        cache_item.polished_text = corrected_text
+        cache_item.translation_status = TranslationStatus.POLISHED
+    else:
+        cache_item.translated_text = corrected_text
+        cache_item.polished_text = ""
+        cache_item.translation_status = TranslationStatus.TRANSLATED
+    if cache_item.extra is None:
+        cache_item.extra = {}
+    cache_item.extra["ai_proofread"] = {"target_field": target_field, "applied": True}
+    return target_field
 
 
 @dataclass

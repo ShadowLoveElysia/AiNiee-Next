@@ -165,7 +165,10 @@ class CacheManager(Base):
         }
         """
         cache_dir = os.path.join(self.save_to_file_require_path, "cache")
-        path = os.path.join(cache_dir, "AinieeCacheData.json")
+        filename = getattr(self, "save_cache_filename", "AinieeCacheData.json")
+        if filename not in {"AinieeCacheData.json", "AinieeCacheData_proofread.json"}:
+            raise ValueError("Unsupported cache filename")
+        path = os.path.join(cache_dir, filename)
         # 定义临时文件路径，确保在同一文件系统下以支持原子性替换
         tmp_path = path + f".{os.getpid()}.tmp"
 
@@ -195,10 +198,12 @@ class CacheManager(Base):
                 self.project._cache_revision = hashlib.sha256(content_bytes).hexdigest()
 
                 config = self.load_config()
-                if config.get("enable_cache_backup", False):
+                if filename == "AinieeCacheData.json" and config.get("enable_cache_backup", False):
                     self._create_cache_backup(cache_dir, path, content_bytes, config)
 
                 # 写入项目整体翻译状态文件
+                if filename == "AinieeCacheData_proofread.json":
+                    return
                 if self.project and self.project.stats_data:
                     total_line = self.project.stats_data.total_line # 获取需翻译总行数
                     line = self.project.stats_data.line # 获取已翻译行数

@@ -50,6 +50,9 @@ QUEUE_TASK_OVERRIDE_FIELDS = (
     "polish_mode",
     "runtime_overrides",
     "step_overrides",
+    "workflow_steps",
+    "strict_export",
+    "output_policy", "output_policy_confirmed", "export_format",
 )
 
 _TASK_TYPE_ALIASES = {
@@ -132,6 +135,12 @@ TASK_CONTRACT_INPUT_FIELDS = frozenset(
         "manga",
         "runtime_overrides",
         "step_overrides",
+        "strict_export", "glossary_impact", "glossary_impact_suggestions", "export_format",
+        "workflow_steps", "workflow_file",
+        "output_policy", "output_policy_confirmed",
+        "manga_strict_models", "manga_allow_fallback", "manga_runtime_check",
+        "manga_ocr_engine", "manga_detect_engine", "manga_segment_engine", "manga_inpaint_engine",
+        "manga_runtime_device", "manga_detect_device", "manga_ocr_device", "manga_inpaint_device",
     }
 )
 
@@ -292,6 +301,30 @@ def _execution_mode(value: Any) -> str:
     return normalized
 
 
+MANGA_ENGINE_FIELDS = ("manga_ocr_engine", "manga_detect_engine", "manga_segment_engine", "manga_inpaint_engine")
+MANGA_DEVICE_FIELDS = ("manga_runtime_device", "manga_detect_device", "manga_ocr_device", "manga_inpaint_device")
+MANGA_FLAG_FIELDS = ("manga_strict_models", "manga_allow_fallback", "manga_runtime_check")
+
+
+def normalize_task_workflow(steps, task_type):
+    if steps in (None, []):
+        return []
+    if isinstance(steps, str):
+        try:
+            steps = json.loads(steps)
+        except ValueError as exc:
+            raise TaskContractError("workflow_steps must contain valid JSON") from exc
+    if not isinstance(steps, list):
+        raise TaskContractError("workflow_steps must be an array")
+    from ModuleFolders.Infrastructure.SensitiveData import contains_sensitive_data
+    if contains_sensitive_data(steps):
+        raise TaskContractError("Workflow steps must reference profiles instead of embedding credentials")
+    if any(isinstance(step, dict) and (step.get("workflow_steps") or step.get("workflow_file")) for step in steps):
+        raise TaskContractError("Nested workflows are not supported")
+    from ModuleFolders.Infrastructure.Automation.WorkflowRunner import normalize_workflow_steps
+    return normalize_workflow_steps(copy.deepcopy(steps), task_type)
+
+
 @dataclass(frozen=True, slots=True)
 class TaskSpec:
     """一次任务的不可变覆盖参数，不包含队列运行状态。"""
@@ -323,6 +356,25 @@ class TaskSpec:
     thinking_budget: int | None = None
     polish_mode: str | None = None
     manga: bool = False
+    strict_export: bool | None = None
+    export_format: str | None = None
+    output_policy: str | None = None
+    output_policy_confirmed: bool = False
+    glossary_impact: tuple[str, str] | None = None
+    glossary_impact_suggestions: bool = False
+    workflow_steps: list[dict] = field(default_factory=list)
+    workflow_file: str | None = None
+    manga_strict_models: bool = False
+    manga_allow_fallback: bool = False
+    manga_runtime_check: bool = False
+    manga_ocr_engine: str | None = None
+    manga_detect_engine: str | None = None
+    manga_segment_engine: str | None = None
+    manga_inpaint_engine: str | None = None
+    manga_runtime_device: str | None = None
+    manga_detect_device: str | None = None
+    manga_ocr_device: str | None = None
+    manga_inpaint_device: str | None = None
     runtime_overrides: dict = field(default_factory=dict)
     step_overrides: dict = field(default_factory=dict)
 
@@ -374,7 +426,8 @@ class TaskSpec:
             raise TaskContractError("manga is only supported for translate tasks")
 
         input_path = _optional_string(data.get("input_path"), "input_path", preserve=True)
-        if normalized_task != QUEUE and input_path is None:
+        runtime_check = _bool_value(data.get("manga_runtime_check"), "manga_runtime_check", default=False)
+        if normalized_task != QUEUE and input_path is None and not (manga and runtime_check):
             raise TaskContractError(f"input_path is required for {normalized_task} tasks")
 
         queue_file = _optional_string(data.get("queue_file"), "queue_file", preserve=True)
@@ -395,8 +448,59 @@ class TaskSpec:
             if normalized_task not in {POLISH, ALL_IN_ONE}:
                 raise TaskContractError("polish_mode is only supported for polish tasks")
 
+        strict_export = _bool_value(data.get("strict_export"), "strict_export")
+        export_format = _optional_string(data.get("export_format"), "export_format")
+        if export_format is not None:
+            export_format = export_format.lower()
+            if normalized_task == QUEUE or manga or export_format not in {"epub", "mobi", "azw3", "fb2", "pdf", "txt", "docx", "htmlz", "kepub"}:
+                raise TaskContractError("export_format requires a text task and a supported ebook format")
+        output_policy = _optional_string(data.get("output_policy"), "output_policy")
+        output_confirmed = bool(_bool_value(data.get("output_policy_confirmed"), "output_policy_confirmed", default=False))
+        if output_policy is not None:
+            if output_policy not in {"resume", "archive", "overwrite", "cancel"} or normalized_task not in QUEUE_TASK_TYPES or manga:
+                raise TaskContractError("output_policy requires a text task and resume/archive/overwrite/cancel")
+            if output_policy in {"archive", "overwrite"} and not output_confirmed:
+                raise TaskContractError("Archiving or overwriting existing output requires output_policy_confirmed=true")
+            if output_policy != "resume" and _bool_value(data.get("resume"), "resume", default=False):
+                raise TaskContractError("resume conflicts with output_policy")
+        glossary_impact = data.get("glossary_impact")
+        if glossary_impact is not None:
+            if not isinstance(glossary_impact, (list, tuple)) or len(glossary_impact) != 2:
+                raise TaskContractError("glossary_impact requires old and new rules paths")
+            glossary_impact = tuple(_optional_string(value, "glossary_impact", preserve=True) for value in glossary_impact)
+            if not all(glossary_impact) or normalized_task != EXPORT:
+                raise TaskContractError("glossary_impact requires export and two nonempty rules paths")
+        suggestions = bool(_bool_value(data.get("glossary_impact_suggestions"), "glossary_impact_suggestions", default=False))
+        if suggestions and glossary_impact is None:
+            raise TaskContractError("glossary_impact_suggestions requires glossary_impact")
+        if glossary_impact and export_format:
+            raise TaskContractError("glossary_impact analysis does not export a converted document")
+        workflow_steps = normalize_task_workflow(data.get("workflow_steps"), normalized_task)
+        workflow_file = _optional_string(data.get("workflow_file"), "workflow_file", preserve=True)
+        if workflow_steps and workflow_file:
+            raise TaskContractError("workflow_steps and workflow_file are mutually exclusive")
+        if (workflow_steps or workflow_file) and (manga or normalized_task not in QUEUE_TASK_TYPES):
+            raise TaskContractError("Custom workflows require a text translation or polishing task")
+        manga_options = {key: _optional_string(data.get(key), key) for key in (*MANGA_ENGINE_FIELDS, *MANGA_DEVICE_FIELDS)}
+        manga_options.update({key: bool(_bool_value(data.get(key), key, default=False)) for key in MANGA_FLAG_FIELDS})
+        if any(value not in (None, False) for value in manga_options.values()) and not manga:
+            raise TaskContractError("Manga execution options require manga=true")
+        if any(value not in (None, "auto", "cpu", "cuda", "mps") for key, value in manga_options.items() if key in MANGA_DEVICE_FIELDS):
+            raise TaskContractError("Unsupported manga compute device")
+        execution_mode = _execution_mode(data.get("execution_mode"))
+        if execution_mode == "external_agent" and (manga or normalized_task in {EXPORT, QUEUE}):
+            raise TaskContractError("External-Agent mode only supports individual text translation and polishing tasks")
+        if strict_export is not None and manga:
+            raise TaskContractError("strict_export is a text export option; manga uses its quality gate")
+
         try:
             runtime_overrides = normalize_runtime_overrides(data.get("runtime_overrides"))
+            if strict_export is not None and normalized_task != EXPORT and not manga:
+                if "strict_export" in runtime_overrides and runtime_overrides["strict_export"] != strict_export:
+                    raise RuntimeOverrideError("Conflicting strict_export values")
+                runtime_overrides["strict_export"] = strict_export
+            if glossary_impact and (runtime_overrides or data.get("step_overrides") or workflow_steps or workflow_file):
+                raise RuntimeOverrideError("glossary_impact cannot be combined with workflow overrides")
             step_overrides = normalize_step_overrides(data.get("step_overrides"))
             task_runtime_overrides({**data, "runtime_overrides": runtime_overrides})
             if (runtime_overrides or step_overrides) and (manga or normalized_task == EXPORT):
@@ -434,6 +538,15 @@ class TaskSpec:
             ),
             polish_mode=polish_mode,
             manga=manga,
+            strict_export=strict_export,
+            export_format=export_format,
+            output_policy=output_policy,
+            output_policy_confirmed=output_confirmed,
+            glossary_impact=glossary_impact,
+            glossary_impact_suggestions=suggestions,
+            workflow_steps=workflow_steps,
+            workflow_file=workflow_file,
+            **manga_options,
             runtime_overrides=runtime_overrides,
             step_overrides=step_overrides,
         )
@@ -471,6 +584,15 @@ class TaskSpec:
             "thinking_budget": self.thinking_budget,
             "polish_mode": self.polish_mode,
             "manga": self.manga,
+            "strict_export": self.strict_export,
+            "export_format": self.export_format,
+            "output_policy": self.output_policy,
+            "output_policy_confirmed": self.output_policy_confirmed,
+            "glossary_impact": list(self.glossary_impact) if self.glossary_impact else None,
+            "glossary_impact_suggestions": self.glossary_impact_suggestions,
+            "workflow_steps": copy.deepcopy(self.workflow_steps),
+            "workflow_file": self.workflow_file,
+            **{name: getattr(self, name) for name in (*MANGA_ENGINE_FIELDS, *MANGA_DEVICE_FIELDS, *MANGA_FLAG_FIELDS)},
             "runtime_overrides": copy.deepcopy(self.runtime_overrides),
             "step_overrides": copy.deepcopy(self.step_overrides),
         }
@@ -487,6 +609,8 @@ class TaskSpec:
         """生成当前 QueueTaskItem 构造器使用的兼容字段。"""
         if self.manga:
             raise TaskContractError("Manga tasks are not supported by the task queue")
+        if self.workflow_file:
+            raise TaskContractError("Queue items require inline workflow_steps, not a mutable workflow file")
         if self.queue_file is not None:
             raise TaskContractError("queue_file cannot be stored inside a queue item")
 
@@ -533,6 +657,10 @@ def build_cli_args(
         ("--lines", spec.lines_limit),
         ("--tokens", spec.tokens_limit),
         ("--pre-lines", spec.pre_lines),
+        ("--workflow-file", spec.workflow_file),
+        ("--export-format", spec.export_format),
+        ("--output-policy", spec.output_policy),
+        *(("--" + name.replace("_", "-"), getattr(spec, name)) for name in (*MANGA_ENGINE_FIELDS, *MANGA_DEVICE_FIELDS)),
     )
     for option, value in value_options:
         if value is not None:
@@ -545,6 +673,19 @@ def build_cli_args(
         if value:
             args.extend([option, json.dumps(value, ensure_ascii=False, separators=(",", ":"))])
 
+    if spec.workflow_steps:
+        args.extend(["--workflow-steps", json.dumps(spec.workflow_steps, ensure_ascii=False, separators=(",", ":"))])
+    if spec.strict_export is not None:
+        args.append("--strict-export" if spec.strict_export else "--no-strict-export")
+    if spec.glossary_impact:
+        args.extend(["--glossary-impact", *spec.glossary_impact])
+    if spec.glossary_impact_suggestions:
+        args.append("--glossary-impact-suggestions")
+    if spec.output_policy_confirmed:
+        args.append("--output-policy-confirmed")
+    for name in MANGA_FLAG_FIELDS:
+        if getattr(spec, name):
+            args.append("--" + name.replace("_", "-"))
     if spec.resume:
         args.append("--resume")
     if spec.failover is not None:

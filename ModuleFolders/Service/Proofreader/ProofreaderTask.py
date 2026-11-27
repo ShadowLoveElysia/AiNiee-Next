@@ -108,12 +108,12 @@ class ProofreaderTask(Base):
         from ModuleFolders.Infrastructure.Tokener.Tokener import Tokener
 
         # 预估 Token 消费
-        request_tokens_consume = Tokener.calculate_tokens(self, self.messages, self.system_prompt)
+        request_tokens_consume = Tokener().calculate_tokens(self.messages, self.system_prompt) or 0
 
         # 等待限流 (复用翻译任务的限流逻辑)
         wait_start_time = time.time()
         while True:
-            if Base.work_status == Base.STATUS.STOPING:
+            if Base.request_stopped():
                 return {}
 
             if self.request_limiter.check_limiter(request_tokens_consume):
@@ -171,6 +171,10 @@ class ProofreaderTask(Base):
                 json_match = response[start:end].strip()
 
             data = json.loads(json_match)
+            if not isinstance(data, dict) or not isinstance(data.get("issues", []), list) or not isinstance(data.get("corrections", []), list):
+                raise ValueError("Invalid proofread response structure")
+            if "issues" not in data and "corrections" not in data:
+                raise ValueError("Proofread response contains no result fields")
 
             # 解析问题列表 (新格式使用id字段)
             for issue_data in data.get("issues", []):
@@ -197,7 +201,7 @@ class ProofreaderTask(Base):
                 if line_id is not None and text:
                     result["corrections"][line_id] = text
 
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ValueError("Invalid proofread response") from exc
 
         return result

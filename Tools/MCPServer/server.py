@@ -381,7 +381,7 @@ class AiNieeAPIClient:
         import requests
 
         headers = self.headers
-        if path == "/api/config":
+        if _config_write_payload(path, payload) is not None:
             if confirm_advanced_change is True:
                 headers["X-AiNiee-Confirm-Advanced"] = "true"
             if confirm_agent_batch_change is True:
@@ -814,13 +814,14 @@ def _register_route_proxy_tools(mcp, api: AiNieeAPIClient, routes: List[Dict[str
                 if ensure_backend is not None:
                     ensure_backend()
                 _ensure_advanced_change_confirmed(route_path, body, confirm_advanced_change)
-                if route_path == "/api/config":
-                    ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
+                config_body = _config_write_payload(route_path, body)
+                if config_body is not None:
+                    ensure_agent_batch_change_confirmed(config_body, confirm_agent_batch_change)
                 rendered_path = _render_path_template(route_path, path_params)
                 confirmations = ({
                     "confirm_advanced_change": confirm_advanced_change,
                     "confirm_agent_batch_change": confirm_agent_batch_change,
-                } if route_path == "/api/config" else {})
+                } if config_body is not None else {})
                 return api.request(route_method, rendered_path, params=query, payload=body, **confirmations)
 
             route_tool.__name__ = route_tool_name
@@ -842,10 +843,21 @@ def _method_display(method: str) -> str:
     return method.upper()
 
 
+def _config_write_payload(path: str, body: Any):
+    if not isinstance(body, dict):
+        return None
+    if path == "/api/config":
+        return body
+    if path.startswith("/api/system/profile-documents/") and isinstance(body.get("content"), dict):
+        return body["content"]
+    return None
+
+
 def _needs_advanced_change_confirmation(path: str, body: Any) -> bool:
-    if path != "/api/config" or not isinstance(body, dict):
+    values = _config_write_payload(path, body)
+    if values is None:
         return False
-    return any(key in body for key in ("mcp_server_port", "mcp_server_host"))
+    return any(key in values for key in ("mcp_server_port", "mcp_server_host"))
 
 
 def _ensure_advanced_change_confirmed(path: str, body: Any, confirmed: bool) -> None:
@@ -1749,12 +1761,13 @@ def _build_mcp_app(
             raise ValueError(f"This route requires the dedicated {tool} tool.")
         _ensure_backend()
         _ensure_advanced_change_confirmed(normalized_path, body, confirm_advanced_change)
-        if normalized_path == "/api/config":
-            ensure_agent_batch_change_confirmed(body, confirm_agent_batch_change)
+        config_body = _config_write_payload(normalized_path, body)
+        if config_body is not None:
+            ensure_agent_batch_change_confirmed(config_body, confirm_agent_batch_change)
         confirmations = ({
             "confirm_advanced_change": confirm_advanced_change,
             "confirm_agent_batch_change": confirm_agent_batch_change,
-        } if normalized_path == "/api/config" else {})
+        } if config_body is not None else {})
         return api.request(method.upper(), rendered_path, params=query, payload=body, **confirmations)
 
     @_mcp_tool(

@@ -7,6 +7,10 @@ from ModuleFolders.Infrastructure.LLMRequester.ModelConfigHelper import ModelCon
 
 # 接口请求器
 class GoogleRequester(Base):
+
+    def get_model_list(self, platform_config):
+        from ModuleFolders.Infrastructure.LLMRequester.ModelDiscovery import discover_models
+        return discover_models(platform_config, "Google")
     # 类级别的缓存存储
     _cached_content_store: dict = {}
     # 类级别的缓存支持状态标记

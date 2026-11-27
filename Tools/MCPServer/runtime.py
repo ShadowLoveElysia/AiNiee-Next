@@ -46,6 +46,27 @@ REQUIRED_API_COMPONENT_FILES = (
     "ModuleFolders/Service/TaskRuntime/operations.py",
     "ModuleFolders/Service/TaskRuntime/preflight.py",
     "ModuleFolders/Service/TaskRuntime/processes.py",
+    "ModuleFolders/Service/TaskRuntime/activities.py",
+    "ModuleFolders/Service/TaskRuntime/jobs.py",
+    "ModuleFolders/Service/TaskRuntime/controls.py",
+    "ModuleFolders/Service/TaskRuntime/media.py",
+    "ModuleFolders/Service/TaskRuntime/media_runtime.py",
+    "ModuleFolders/Service/TaskRuntime/media_settings.py",
+    "ModuleFolders/Service/TaskRuntime/automation.py",
+    "ModuleFolders/Service/TaskRuntime/review.py",
+    "ModuleFolders/Service/TaskRuntime/cache_review.py",
+    "ModuleFolders/Service/TaskRuntime/system_management.py",
+    "ModuleFolders/Service/TaskRuntime/system_services.py",
+    "ModuleFolders/Service/TaskRuntime/maintenance.py",
+    "ModuleFolders/Media/api_runtime.py",
+    "ModuleFolders/Infrastructure/MangaRuntimeInstaller.py",
+    "ModuleFolders/Infrastructure/LLMRequester/ModelDiscovery.py",
+    "ModuleFolders/Infrastructure/ProjectInfo.py",
+    "ModuleFolders/Infrastructure/TaskConfig/OutputPolicy.py",
+    "Tools/APIServer/parity.py",
+    *(f"Tools/APIServer/{domain}_{kind}.py"
+      for domain in ("job", "control", "host", "media", "automation", "review", "cache_review", "system", "maintenance")
+      for kind in ("contracts", "routes")),
 )
 
 

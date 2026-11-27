@@ -64,10 +64,10 @@ def get_calibre_lang_code(current_lang):
     return lang_map.get(current_lang, "en")
 
 
-def ensure_calibre_available(current_lang, tool_name="ebook-convert.exe"):
+def ensure_calibre_available(current_lang, tool_name="ebook-convert.exe", *, interactive=True):
     ebook_module = import_module("Tools.Ebook.批量电子书整合")
     return ebook_module.ensureCalibreTool(
         tool_name,
         get_calibre_lang_code(current_lang),
-        isInteractive=True,
+        isInteractive=interactive,
     )

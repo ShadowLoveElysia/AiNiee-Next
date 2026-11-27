@@ -44,15 +44,17 @@ class KnowledgeBase:
     3. 向量相似度 (可选)
     """
 
-    def __init__(self, base_path: str = None, lang: str = "zh_CN"):
+    def __init__(self, base_path: str = None, lang: str = "zh_CN", *, read_only: bool = False):
         if base_path is None:
             base_path = os.path.join(".", "Resource", "Diagnostic")
 
         self.base_path = base_path
         self.lang = self._normalize_lang(lang)
+        self.read_only = read_only
 
         # 确保目录存在
-        os.makedirs(base_path, exist_ok=True)
+        if not read_only:
+            os.makedirs(base_path, exist_ok=True)
 
         self.kb_path = self._knowledge_path("zh_CN")
         self.faq_cache_path = os.path.join(base_path, self._faq_cache_filename(self.lang))
@@ -133,6 +135,8 @@ class KnowledgeBase:
 
     def _save_faq_cache(self):
         """保存FAQ缓存"""
+        if self.read_only:
+            return
         try:
             with open(self.faq_cache_path, "w", encoding="utf-8") as f:
                 json.dump(self.faq_cache, f, ensure_ascii=False, indent=2)
@@ -287,6 +291,8 @@ class KnowledgeBase:
 
     def _save_knowledge_base(self):
         """保存知识库"""
+        if self.read_only:
+            return
         try:
             data = {
                 "version": "1.0",

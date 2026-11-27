@@ -124,6 +124,11 @@ class QueueTaskItem(BaseModel):
     polish_mode: Optional[str] = None
     runtime_overrides: Optional[Dict[str, Any]] = None
     step_overrides: Optional[Dict[str, Any]] = None
+    workflow_steps: Optional[list[dict[str, Any]]] = None
+    strict_export: Optional[StrictBool] = None
+    output_policy: Optional[str] = None
+    output_policy_confirmed: StrictBool = False
+    export_format: Optional[str] = None
     status: Optional[str] = "waiting"
 
     def to_task_spec(self) -> TaskSpec:
@@ -165,6 +170,11 @@ class QueueTaskUpdate(BaseModel):
     polish_mode: Optional[str] = None
     runtime_overrides: Optional[Dict[str, Any]] = None
     step_overrides: Optional[Dict[str, Any]] = None
+    workflow_steps: Optional[list[dict[str, Any]]] = None
+    strict_export: Optional[bool] = None
+    output_policy: Optional[str] = None
+    output_policy_confirmed: Optional[bool] = None
+    export_format: Optional[str] = None
 
 class QueueMoveRequest(BaseModel):
     to_index: int
@@ -219,6 +229,24 @@ class TaskPayload(BaseModel):
     runtime_overrides: Optional[Dict[str, Any]] = None
     step_overrides: Optional[Dict[str, Any]] = None
     manga: Optional[bool] = False
+    strict_export: Optional[StrictBool] = None
+    export_format: Optional[str] = None
+    glossary_impact: Optional[tuple[str, str]] = None
+    output_policy: Optional[str] = None
+    output_policy_confirmed: StrictBool = False
+    glossary_impact_suggestions: StrictBool = False
+    workflow_steps: Optional[List[Dict[str, Any]]] = None
+    manga_strict_models: StrictBool = False
+    manga_allow_fallback: StrictBool = False
+    manga_runtime_check: StrictBool = False
+    manga_ocr_engine: Optional[str] = None
+    manga_detect_engine: Optional[str] = None
+    manga_segment_engine: Optional[str] = None
+    manga_inpaint_engine: Optional[str] = None
+    manga_runtime_device: Optional[str] = None
+    manga_detect_device: Optional[str] = None
+    manga_ocr_device: Optional[str] = None
+    manga_inpaint_device: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_task_contract(self):
@@ -336,6 +364,10 @@ class TaskPreviewResponse(BaseModel):
     task_type: str
     argv: List[str]
     steps: Dict[str, Any]
+    resolved_output_path: Optional[str] = None
+    output_exists: bool = False
+    cache_exists: bool = False
+    output_policy: Optional[str] = None
 
 
 

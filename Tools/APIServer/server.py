@@ -15,6 +15,27 @@ _thread = None
 _options = None
 _shutdown_pending = False
 _lock = threading.RLock()
+_web_enabled = False
+_web_dist = None
+
+
+def web_status():
+    dist = _web_dist or Path(__file__).resolve().parents[1] / "WebServer" / "dist"
+    return {"enabled": _web_enabled, "available": (dist / "index.html").is_file(),
+            "running": _server is not None and bool(_server.is_running)}
+
+
+def configure_web(enabled: bool):
+    global _web_enabled, _options
+    with _lock:
+        if _server is None or not _server.is_running or _shutdown_pending:
+            raise RuntimeError("API owner is not available")
+        if enabled and not web_status()["available"]:
+            raise FileNotFoundError("Web assets not found")
+        _web_enabled = enabled
+        if _options is not None:
+            _options = (*_options[:2], enabled, _options[3])
+        return web_status()
 
 
 def get_application():
@@ -74,7 +95,7 @@ def run_server(
     from ModuleFolders.Infrastructure.ApiSecurity import INTERNAL_AUTH_ENV
 
     ensure_bind_allowed(host, allow_remote_access, "API server")
-    global _server, _thread, _options
+    global _server, _thread, _options, _web_enabled, _web_dist
     with _lock:
         if _shutdown_pending:
             raise RuntimeError("API owner shutdown is pending; retry stopping it before restarting.")
@@ -101,15 +122,27 @@ def run_server(
         os.environ["AINIEE_INTERNAL_API_URL"] = internal_url
         os.environ[INTERNAL_AUTH_ENV] = application.INTERNAL_API_TOKEN
 
-        api_app = application.app
-        if serve_web:
-            dist = Path(web_dist) if web_dist else Path(application.PROJECT_ROOT) / "Tools/WebServer/dist"
-            if (dist / "index.html").is_file():
-                api_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-                api_app.router.routes.extend(application.app.router.routes)
-                api_app.user_middleware = list(application.app.user_middleware)
-                api_app.exception_handlers.update(application.app.exception_handlers)
-                api_app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
+        _web_dist = Path(web_dist) if web_dist else Path(application.PROJECT_ROOT) / "Tools/WebServer/dist"
+        _web_enabled = serve_web
+        static = StaticFiles(directory=str(_web_dist), html=True, check_dir=False)
+
+        async def api_app(scope, receive, send):
+            path = scope.get("path", "")
+            if scope["type"] == "http" and _web_enabled and not (path == "/api" or path.startswith("/api/")):
+                if path in {"/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"}:
+                    return await application.app(scope, receive, send)
+                async def static_send(message):
+                    if message["type"] == "http.response.start":
+                        message["headers"] = [*message.get("headers", []), (b"cache-control", b"no-cache")]
+                    await send(message)
+                if (_web_dist / "index.html").is_file():
+                    from starlette.exceptions import HTTPException as StaticHTTPException
+                    from starlette.responses import PlainTextResponse
+                    try:
+                        return await static(scope, receive, static_send)
+                    except StaticHTTPException as exc:
+                        return await PlainTextResponse(exc.detail, status_code=exc.status_code)(scope, receive, static_send)
+            return await application.app(scope, receive, send)
 
         class OwnedServer(uvicorn.Server):
             def install_signal_handlers(self):
@@ -141,11 +174,16 @@ def stop_server(*, cancel_tasks: bool = True) -> bool:
         manager = get_application().task_manager
         idle = manager.set_task_admission(False)
         try:
+            from ModuleFolders.Service.TaskRuntime.activities import auxiliary_active, stop_auxiliaries
+            from ModuleFolders.Service.TaskRuntime.jobs import get_job_manager
+            if not cancel_tasks and (not idle or auxiliary_active() or get_job_manager().any_running()):
+                return False
+            auxiliaries_stopped = stop_auxiliaries()
             ready = manager.stop_task() if cancel_tasks else idle
         except Exception:
             logging.getLogger(__name__).error("Task shutdown failed; retaining API ownership for retry.")
             return False
-        if not ready:
+        if not ready or not auxiliaries_stopped:
             return False
         _server.should_exit = True
         thread = _thread

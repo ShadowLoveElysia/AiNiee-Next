@@ -9,6 +9,10 @@ from ModuleFolders.Infrastructure.LLMRequester.SdkRequestMode import is_anthropi
 # 接口请求器
 class AnthropicRequester(Base):
 
+    def get_model_list(self, platform_config):
+        from ModuleFolders.Infrastructure.LLMRequester.ModelDiscovery import discover_models
+        return discover_models(platform_config, "Anthropic")
+
     def __init__(self) -> None:
         pass
 

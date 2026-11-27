@@ -654,12 +654,7 @@ class GlossaryMenu:
 
     def run_prompt_test(self):
         """提示词测试功能入口"""
-        from ModuleFolders.Domain.FileReader.FileReader import FileReader
-        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
         from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
-        from ModuleFolders.Domain.PromptBuilder.PromptBuilder import PromptBuilder
-        from ModuleFolders.Service.TaskExecutor.TranslatorUtil import get_source_language_for_file
 
         self.display_banner()
         console.print(Panel(f"[bold]{self.i18n.get('menu_prompt_test') or '提示词测试'}[/bold]"))
@@ -768,30 +763,6 @@ class GlossaryMenu:
             pure_prompt_mode = (mode_choice == 1)
             break
 
-        # 准备配置
-        config = TaskConfig()
-        config.initialize(self.config)
-        config.prepare_for_translation(TaskType.TRANSLATION)
-
-        # 设置选中的提示词
-        config.translation_prompt_selection = {
-            "last_selected_id": selected_prompt_file.replace(".txt", ""),
-            "prompt_content": selected_prompt_content
-        }
-
-        platform_config = config.get_platform_configuration("translationReq")
-
-        # 如果是纯提示词模式，禁用所有附加功能
-        if pure_prompt_mode:
-            config.prompt_dictionary_switch = False
-            config.exclusion_list_switch = False
-            config.characterization_switch = False
-            config.world_building_switch = False
-            config.writing_style_switch = False
-            config.translation_example_switch = False
-            config.few_shot_and_example_switch = False
-            config.pre_line_counts = 0
-
         console.print(f"\n[bold green]{self.i18n.get('msg_reading_file') or '正在读取文件...'}[/bold green]")
 
         try:
@@ -816,16 +787,13 @@ class GlossaryMenu:
             console.print(f"\n[cyan]{self.i18n.get('label_file_info') or '文件信息'}:[/cyan]")
             console.print(f"  {self.i18n.get('label_total_lines') or '总行数'}: [yellow]{len(source_texts)}[/yellow]")
 
-            # 构建源文本字典
-            source_text_dict = {str(i): text for i, text in enumerate(source_texts)}
-
-            # 使用配置的源语言
-            source_lang = config.source_language
-
-            # 构建提示词
-            messages, system_prompt, extra_log = PromptBuilder.generate_prompt(
-                config, source_text_dict, [], source_lang
+            from ModuleFolders.Service.TaskRuntime.review import build_prompt_test
+            preview, config = build_prompt_test(
+                self.config, file_content, selected_prompt_content,
+                selected_prompt_file.replace(".txt", ""), pure_prompt=pure_prompt_mode,
             )
+            messages, system_prompt = preview["messages"], preview["system_prompt"]
+            platform_config = config.get_platform_configuration("translationReq")
 
             # 显示提示词预览
             console.print(f"\n[bold cyan]{'='*50}[/bold cyan]")

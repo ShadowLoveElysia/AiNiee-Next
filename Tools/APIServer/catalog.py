@@ -42,6 +42,9 @@ def _contract_models() -> dict[str, type]:
     from pydantic import BaseModel
     from Tools.APIServer import contracts, responses
     namespaces = [vars(contracts), vars(responses)]
+    for source in sorted(_API_ROOT.glob("*_contracts.py")):
+        module = __import__(f"Tools.APIServer.{source.stem}", fromlist=[source.stem])
+        namespaces.append(vars(module))
     source = _PROJECT_ROOT / "ModuleFolders/MangaCore/api/schemas.py"
     if source.is_file():
         # Loading the pure DTO file directly avoids the api package's router imports.
@@ -364,7 +367,7 @@ def _routes_from_source(source: Path, models: dict[str, type], *, optional: bool
 def load_api_catalog() -> list[dict]:
     """Return source-declared routes without starting the API or importing optional engines."""
     models = _contract_models()
-    sources = [_API_ROOT / "application.py", *sorted((_API_ROOT / "routers").glob("*.py"))]
+    sources = [_API_ROOT / "application.py", *sorted(_API_ROOT.glob("*_routes.py")), *sorted((_API_ROOT / "routers").glob("*.py"))]
     manga = sorted((_PROJECT_ROOT / "ModuleFolders/MangaCore/api").glob("routes*.py"))
     routes = {}
     for source in [*sources, *manga]:

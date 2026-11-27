@@ -5,6 +5,7 @@ import zipfile
 import requests
 import time
 import subprocess
+import stat
 from datetime import datetime, timezone
 import rapidjson as json
 from ModuleFolders.Base.Base import Base
@@ -588,7 +589,21 @@ class UpdateManager(Base):
             
         return self._apply_update_from_zip(target_zip)
 
-    def _apply_update_from_zip(self, zip_path):
+    @staticmethod
+    def _validate_update_archive(archive):
+        total = 0
+        for item in archive.infolist():
+            name = item.filename.replace("\\", "/")
+            parts = name.split("/")
+            if name.startswith("/") or ".." in parts or ":" in parts[0]:
+                raise ValueError("Update archive contains an unsafe path")
+            if stat.S_ISLNK(item.external_attr >> 16):
+                raise ValueError("Update archive contains a symbolic link")
+            total += item.file_size
+            if total > 2 * 1024 ** 3 or len(archive.filelist) > 100000:
+                raise ValueError("Update archive exceeds the extraction limit")
+
+    def _apply_update_from_zip(self, zip_path, *, restart=True, strict=False):
         """通用的解压并应用更新逻辑"""
         temp_dir = os.path.join(self.project_root, "update_temp_extract")
         try:
@@ -598,31 +613,40 @@ class UpdateManager(Base):
 
             # 解压并尝试恢复Unix权限
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                self._validate_update_archive(zip_ref)
                 zip_ref.extractall(temp_dir)
                 # 在Unix系统上恢复文件权限
                 if sys.platform != "win32":
                     self._restore_unix_permissions(zip_ref, temp_dir)
 
             extracted_subdirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
-            if not extracted_subdirs: raise Exception("Failed to find extracted content.")
+            if len(extracted_subdirs) != 1: raise ValueError("Expected one application root in update archive")
             
             src_dir = os.path.join(temp_dir, extracted_subdirs[0])
+            if not os.path.isfile(os.path.join(src_dir, "ainiee_cli.py")) or not os.path.isdir(os.path.join(src_dir, "ModuleFolders")):
+                raise ValueError("Archive is not an AiNiee application package")
+            for root, dirs, files in os.walk(src_dir):
+                relative = os.path.relpath(root, src_dir)
+                destination = os.path.join(self.project_root, relative)
+                if os.path.islink(destination) or any(os.path.islink(os.path.join(destination, name)) for name in dirs + files):
+                    raise ValueError("Update destination contains a symbolic link")
             self.print(f"[cyan]{self.get_msg('applying')}...[/cyan]")
             
             for item in os.listdir(src_dir):
                 s = os.path.join(src_dir, item)
                 d = os.path.join(self.project_root, item)
-                if item in [".env", "output", "Resource/profiles", ".git", "__pycache__", ".venv", "Update"]:
+                if os.path.islink(d):
+                    raise ValueError("Update destination contains a symbolic link")
+                if item in [".env", ".gitignore", ".agents", ".codex", ".aws", "output", "tmp", "updatetemp", "Resource/profiles", ".git", "__pycache__", ".venv", ".venv-win", "Update"]:
                     continue
                 if os.path.isdir(s):
                     if os.path.exists(d):
                         if item in ["ModuleFolders", "PluginScripts", "I18N", "Resource"]:
                             if item == "Resource": self._merge_resource_dir(s, d)
                             else:
-                                shutil.rmtree(d)
-                                shutil.copytree(s, d)
+                                self._merge_dirs(s, d)
                         else: self._merge_dirs(s, d)
-                    else: shutil.copytree(s, d)
+                    else: shutil.copytree(s, d, ignore=shutil.ignore_patterns(".gitignore"))
                 else: shutil.copy2(s, d)
 
             # 在Unix系统上修复项目目录权限
@@ -630,20 +654,28 @@ class UpdateManager(Base):
                 self._fix_project_permissions()
 
             self.print(f"[bold green]{self.get_msg('complete')}[/bold green]")
-            time.sleep(2)
+            if restart:
+                time.sleep(2)
             if "update_temp.zip" in zip_path and os.path.exists(zip_path): 
                 os.remove(zip_path)
             if os.path.exists(temp_dir): 
                 shutil.rmtree(temp_dir)
-            self._restart_script()
+            if restart:
+                self._restart_script()
             return True
         except Exception as e:
+            if strict:
+                raise
             self.error(f"Update application failed: {e}")
             return False
 
     def _merge_dirs(self, src, dst):
         for item in os.listdir(src):
+            if item == ".gitignore":
+                continue
             s, d = os.path.join(src, item), os.path.join(dst, item)
+            if os.path.islink(d):
+                raise ValueError("Update destination contains a symbolic link")
             if os.path.isdir(s):
                 if not os.path.exists(d): os.makedirs(d)
                 self._merge_dirs(s, d)
@@ -710,7 +742,9 @@ class UpdateManager(Base):
     def _merge_resource_dir(self, src, dst):
         for item in os.listdir(src):
             s, d = os.path.join(src, item), os.path.join(dst, item)
-            if item in ["config.json", "profiles"]: continue
+            if item in ["config.json", "profiles", "rules_profiles", "media_overlay.json", "automation_progress"]: continue
+            if item == ".gitignore":
+                continue
             if os.path.isdir(s):
                 if not os.path.exists(d): os.makedirs(d)
                 self._merge_dirs(s, d)
@@ -856,7 +890,7 @@ class UpdateManager(Base):
             except:
                 self.error(self.get_msg("msg_web_setup_fail"))
 
-    def _apply_web_dist(self, zip_path):
+    def _apply_web_dist(self, zip_path, *, strict=False):
         """部署 Web 静态资源 (Smart Extraction)"""
         temp_extract = os.path.join(self.project_root, "web_extract_temp")
         dist_target = os.path.join(self.project_root, "Tools", "WebServer", "dist")
@@ -864,7 +898,9 @@ class UpdateManager(Base):
         try:
             self.print(f"[cyan]{self.get_msg('msg_web_extracting')}...[/cyan]")
             if os.path.exists(temp_extract): shutil.rmtree(temp_extract)
-            with zipfile.ZipFile(zip_path, 'r') as z: z.extractall(temp_extract)
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                self._validate_update_archive(z)
+                z.extractall(temp_extract)
             
             # 扫描包含 index.html 的文件夹 (Reinforced Deployment Logic)
             src_dist = None
@@ -874,15 +910,20 @@ class UpdateManager(Base):
                     break
             
             if src_dist:
-                # Force rename/move to dist
-                if os.path.exists(dist_target): shutil.rmtree(dist_target)
-                shutil.copytree(src_dist, dist_target)
+                if os.path.islink(dist_target):
+                    raise ValueError("Web distribution destination is a symbolic link")
+                os.makedirs(dist_target, exist_ok=True)
+                self._merge_dirs(src_dist, dist_target)
                 self.print(f"[bold green]{self.get_msg('msg_web_setup_ok')}[/bold green]")
+                return True
             else:
                 raise Exception("index.html not found in package. Invalid distribution.")
                 
         except Exception as e:
+            if strict:
+                raise
             self.error(f"Failed to deploy web assets: {e}")
+            return False
         finally:
             if os.path.exists(zip_path): os.remove(zip_path)
             if os.path.exists(temp_extract): shutil.rmtree(temp_extract)

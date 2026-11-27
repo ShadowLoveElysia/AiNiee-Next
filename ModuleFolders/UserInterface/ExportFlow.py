@@ -42,7 +42,7 @@ class ExportFlow:
             elif item.polished_text and item.polished_text.strip():
                 item.translation_status = TranslationStatus.POLISHED
 
-    def run_export_only(self, target_path=None, non_interactive=False, strict_export=False, glossary_impact=None, glossary_impact_suggestions=False):
+    def run_export_only(self, target_path=None, non_interactive=False, strict_export=None, glossary_impact=None, glossary_impact_suggestions=False, export_format=None):
         from ModuleFolders.Infrastructure.Cache.CacheManager import CacheManager
 
         if target_path is None:
@@ -122,7 +122,7 @@ class ExportFlow:
                 self.host.task_executor.config.initialize(self.host.config)
                 config = self.host.task_executor.config
                 output_config = {
-                    "strict_export": strict_export or bool(getattr(config, "strict_export", False)),
+                    "strict_export": bool(getattr(config, "strict_export", False)) if strict_export is None else strict_export,
                     "translated_suffix": config.output_filename_suffix,
                     "bilingual_suffix": "_bilingual",
                     "bilingual_order": config.bilingual_text_order,
@@ -143,7 +143,7 @@ class ExportFlow:
                     if merge:
                         merge(output_path, output_path, os.path.basename(target_path) + "_AiNiee_Merged",
                               allow_non_series_prompt=not non_interactive)
-                self._convert_output_format(output_path, target_path, non_interactive)
+                self._convert_output_format(output_path, target_path, non_interactive, export_format)
 
             console.print(f"\n[green]✓ {self.i18n.get('msg_export_completed')}[/green]")
             console.print(f"[dim]Output: {output_path}[/dim]")
@@ -197,12 +197,12 @@ class ExportFlow:
             return None
         return None
 
-    def _convert_output_format(self, output_path, target_path, non_interactive):
+    def _convert_output_format(self, output_path, target_path, non_interactive, export_format=None):
         """Apply the configured ebook format conversion after cache export."""
         settings = self.host.config
-        if not settings.get("enable_post_conversion", False) or not settings.get(
+        if export_format is None and (not settings.get("enable_post_conversion", False) or not settings.get(
             "enable_export_post_conversion", False
-        ):
+        )):
             return
 
         ebook_exts = {".epub", ".mobi", ".azw3", ".fb2", ".txt", ".docx", ".pdf", ".htmlz", ".kepub"}
@@ -210,7 +210,9 @@ class ExportFlow:
         if input_ext not in ebook_exts and not os.path.isdir(target_path):
             return
 
-        if settings.get("fixed_output_format_switch", False):
+        if export_format is not None:
+            target_format = export_format
+        elif settings.get("fixed_output_format_switch", False):
             target_format = str(settings.get("fixed_output_format", "epub")).strip().lower()
         elif non_interactive:
             return
@@ -239,8 +241,10 @@ class ExportFlow:
         from ModuleFolders.UserInterface.UIHelpers import ensure_calibre_available
 
         language = getattr(self.host, "current_lang", None) or settings.get("interface_language", "en")
-        calibre_path = ensure_calibre_available(language)
+        calibre_path = ensure_calibre_available(language, interactive=not non_interactive)
         if not calibre_path:
+            if export_format is not None:
+                raise RuntimeError("Requested ebook conversion requires Calibre")
             console.print("[dim]Format conversion skipped: Calibre unavailable.[/dim]")
             return
         for epub_name in epub_files:
@@ -258,9 +262,13 @@ class ExportFlow:
                 if result.returncode == 0:
                     console.print(f"[green]✓ Converted: {os.path.basename(dst_path)}[/green]")
                 else:
+                    if export_format is not None:
+                        raise RuntimeError("Requested ebook conversion failed")
                     detail = (result.stderr or result.stdout or "").strip()[:200]
                     console.print(f"[yellow]Conversion warning: {detail}[/yellow]")
             except Exception as exc:
+                if export_format is not None:
+                    raise RuntimeError("Requested ebook conversion failed") from exc
                 console.print(f"[yellow]Conversion error: {exc}[/yellow]")
 
     def _select_target_path(self):

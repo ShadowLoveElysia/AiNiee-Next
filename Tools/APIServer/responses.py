@@ -294,6 +294,11 @@ class QueueRawResponse(ResponseRecord):
 
 
 class QueueItemResponse(ResponseRecord):
+    workflow_steps: list[dict[str, Any]] = []
+    strict_export: bool | None = None
+    output_policy: str | None = None
+    output_policy_confirmed: bool = False
+    export_format: str | None = None
     task_id: str
     revision: str
     protected: bool

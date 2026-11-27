@@ -6,6 +6,23 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import hashlib
+import threading
+from ModuleFolders.Service.Agent.ExternalAgentWriterLease import _interprocess_lock
+
+_PREFERENCES_LOCK = threading.RLock()
+
+
+class PreferenceConflict(ValueError):
+    pass
+
+
+def preferences_revision(path=None) -> str:
+    path = Path(path or SETTINGS_PATH)
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return "missing"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = PROJECT_ROOT / "Resource/media_overlay.json"
@@ -166,7 +183,15 @@ def validate_preference(key: str, value):
     return value
 
 
-def save_preferences(changes: dict, path=SETTINGS_PATH) -> None:
+def save_preferences(changes: dict, path=SETTINGS_PATH, *, expected_revision=None) -> str:
+    with _PREFERENCES_LOCK, _interprocess_lock(Path(path)):
+        if expected_revision is not None and expected_revision != preferences_revision(path):
+            raise PreferenceConflict("Media settings changed; reload before saving")
+        _save_preferences(changes, path)
+        return preferences_revision(path)
+
+
+def _save_preferences(changes: dict, path) -> None:
     path = Path(path)
     data = read_preferences(path)
     data.update(changes)

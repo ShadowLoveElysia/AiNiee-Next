@@ -71,7 +71,7 @@ GLOSSARY_ANALYSIS_MODES = ("full", "split", "incremental_split")
 class GlossaryAnalyzer:
     """术语分析器，处理AI自动分析术语表的核心逻辑"""
 
-    def __init__(self, cli_menu):
+    def __init__(self, cli_menu, *, output_console=None, cancel_event=None, write_diagnostics=True):
         """
         初始化术语分析器
 
@@ -79,6 +79,23 @@ class GlossaryAnalyzer:
             cli_menu: CLIMenu实例，用于访问配置和其他依赖
         """
         self.cli = cli_menu
+        self._console = output_console
+        self.cancel_event = cancel_event
+        self.write_diagnostics = write_diagnostics
+
+    def _send_request(self, requester, messages, system_prompt, platform_config):
+        from ModuleFolders.Base.Base import Base
+        if self.cancel_event is None:
+            return requester.sent_request(messages, system_prompt, platform_config)
+        if self.cancel_event.is_set():
+            return True, "STOPPED", "", 0, 0
+        with Base.independent_request_scope(self.cancel_event):
+            result = requester.sent_request(messages, system_prompt, platform_config)
+        return (True, "STOPPED", "", 0, 0) if self.cancel_event.is_set() else result
+
+    @property
+    def console(self):
+        return self._console or console
 
     @property
     def config(self):
@@ -230,7 +247,7 @@ class GlossaryAnalyzer:
             if not (os.path.isfile(path) or os.path.isdir(path)):
                 raise ValueError(self._tr('msg_glossary_invalid_input_path', '请选择有效的文件或文件夹路径。'))
         except (OSError, TypeError, ValueError) as exc:
-            console.print(
+            self.console.print(
                 f"{self._tr('msg_glossary_invalid_input_path', '请选择有效的文件或文件夹路径。')}: {exc}",
                 style="red", markup=False,
             )
@@ -245,7 +262,7 @@ class GlossaryAnalyzer:
         is_directory = os.path.isdir(input_path)
         reading_key = "msg_glossary_reading_directory" if is_directory else "msg_reading_file"
         reading_default = "正在扫描文件夹中的可分析文件..." if is_directory else "正在读取文件..."
-        console.print(self._tr(reading_key, reading_default), style="cyan", markup=False)
+        self.console.print(self._tr(reading_key, reading_default), style="cyan", markup=False)
 
         try:
             project_type = self.file_reader._normalize_project_type(self.config.get("translation_project", "auto"))
@@ -259,7 +276,7 @@ class GlossaryAnalyzer:
                 cache_data = self.file_reader.read_files("auto", input_path, "")
                 all_items = list(cache_data.items_iter()) if cache_data else []
         except Exception as exc:
-            console.print(
+            self.console.print(
                 f"{self._tr('msg_no_content', '无法读取文件内容')}: {exc}",
                 style="red", markup=False,
             )
@@ -268,7 +285,7 @@ class GlossaryAnalyzer:
         total_lines = len(all_items)
 
         if total_lines == 0 or not any(item.source_text.strip() for item in all_items):
-            console.print(self._tr('msg_glossary_no_readable_text', '未找到可分析的文本，请确认文件格式受支持、文件非空且可读取。'), style="red", markup=False)
+            self.console.print(self._tr('msg_glossary_no_readable_text', '未找到可分析的文本，请确认文件格式受支持、文件非空且可读取。'), style="red", markup=False)
             return None
 
         if analysis_lines:
@@ -349,32 +366,32 @@ class GlossaryAnalyzer:
             normalized_mode = "incremental_split"
         legacy_mode = self.normalize_legacy_mode(legacy_mode)
 
-        console.print(f"[green]{self.i18n.get('msg_total_lines') or '总行数'}: {total_lines}[/green]")
-        console.print(f"[green]{self.i18n.get('msg_lines_to_analyze') or '将分析行数'}: {lines_to_analyze}[/green]")
-        console.print(
+        self.console.print(f"[green]{self.i18n.get('msg_total_lines') or '总行数'}: {total_lines}[/green]")
+        self.console.print(f"[green]{self.i18n.get('msg_lines_to_analyze') or '将分析行数'}: {lines_to_analyze}[/green]")
+        self.console.print(
             f"[green]{self.i18n.get('msg_estimated_tokens') or '预估Token'}: "
             f"{estimated_tokens:,}[/green]"
         )
-        console.print(
+        self.console.print(
             f"[dim]{self.i18n.get('msg_token_reference_note') or 'Token仅用于参考；实际范围仍按行数/比例截取。'}[/dim]"
         )
 
         if normalized_mode == "full":
-            console.print(
+            self.console.print(
                 f"[cyan]{self.i18n.get('msg_single_request_analysis') or '全本/按比例提取：将所选文本一次性发送给LLM。'}[/cyan]"
             )
         elif normalized_mode == "incremental_split":
-            console.print(
+            self.console.print(
                 f"[yellow]{self._tr('msg_incremental_split_request_analysis', '超长增量分批：将所选文本顺序拆分，每批只输出新增或变化，并逐批合并。')}[/yellow]"
             )
         else:
-            console.print(
+            self.console.print(
                 f"[yellow]{self.i18n.get('msg_split_request_analysis') or '拆分提取：将所选文本按行数拆分成多个批次。'}[/yellow]"
             )
 
         # 准备提示词
         prompt_path = self._resolve_prompt_file(prompt_file)
-        console.print(
+        self.console.print(
             f"[cyan]{self.i18n.get('msg_selected_prompt') or '已选提示词'}: "
             f"{prompt_path}[/cyan]"
         )
@@ -397,10 +414,10 @@ class GlossaryAnalyzer:
         # 使用临时配置或当前配置
         if temp_config:
             platform_config = temp_config
-            console.print(f"[cyan]{self.i18n.get('msg_using_temp_config') or '使用临时API配置'}: {temp_config.get('target_platform')}[/cyan]")
+            self.console.print(f"[cyan]{self.i18n.get('msg_using_temp_config') or '使用临时API配置'}: {temp_config.get('target_platform')}[/cyan]")
         else:
             platform_config = task_config.get_platform_configuration("translationReq")
-            console.print(f"[cyan]{self.i18n.get('msg_using_current_config') or '使用当前配置'}: {platform_config.get('target_platform')}[/cyan]")
+            self.console.print(f"[cyan]{self.i18n.get('msg_using_current_config') or '使用当前配置'}: {platform_config.get('target_platform')}[/cyan]")
 
         target_language = getattr(task_config, "target_language", self.config.get("target_language", "Chinese"))
         system_prompt += (
@@ -410,7 +427,7 @@ class GlossaryAnalyzer:
         )
         if translate_during_analysis:
             system_prompt = self._append_analysis_translation_instruction(system_prompt, target_language)
-            console.print(
+            self.console.print(
                 f"[cyan]{self._tr('msg_glossary_analysis_translate_enabled', '已启用分析阶段直译：LLM 将同时输出译名和注释。')}[/cyan]"
             )
 
@@ -433,25 +450,25 @@ class GlossaryAnalyzer:
                     existing_context,
                     incremental_options,
                 )
-                console.print(
+                self.console.print(
                     f"[cyan]{self._tr('msg_glossary_incremental_enabled', '已启用增量术语提取')}: "
                     f"{'/'.join(mode_bits) or 'metadata'} | {incremental_options.get('source_label') or '-'}[/cyan]"
                 )
             else:
-                console.print(
+                self.console.print(
                     f"[cyan]{self._tr('msg_glossary_incremental_context_empty_fallback', '增量参考完全为空：未匹配到旧术语、角色、禁翻或示例，且没有世界观参考；按普通提取提示词分析本次原文，保存时仍会保留来源元数据。')}: "
                     f"{'/'.join(mode_bits) or 'metadata'} | {incremental_options.get('source_label') or '-'}[/cyan]"
                 )
 
         if legacy_mode == "legacy_translation_extract":
             system_prompt = self._append_legacy_translation_extract_instruction(system_prompt, target_language)
-            console.print(
+            self.console.print(
                 f"[cyan]{self._tr('msg_legacy_translation_extract_enabled')}[/cyan]"
             )
         elif legacy_mode == "legacy_mapping_extract":
             legacy_context = self._build_legacy_mapping_context()
             system_prompt = self._append_legacy_mapping_instruction(system_prompt, legacy_context, target_language)
-            console.print(
+            self.console.print(
                 f"[cyan]{self._tr('msg_legacy_mapping_enabled')}[/cyan]"
             )
 
@@ -466,7 +483,7 @@ class GlossaryAnalyzer:
             messages = [{"role": "user", "content": selected_text}]
             try:
                 requester = LLMRequester()
-                skip, _, response, prompt_tokens, completion_tokens = requester.sent_request(
+                skip, _, response, prompt_tokens, completion_tokens = self._send_request(requester,
                     messages, system_prompt, platform_config
                 )
                 if not skip and response:
@@ -484,29 +501,29 @@ class GlossaryAnalyzer:
                             )
                         )
                     completed_count = 1
-                    console.print(
+                    self.console.print(
                         f"[green]√ {self._tr('msg_analysis_complete', '分析完成!')} "
                         f"| {self._tr('msg_found_terms', '发现专有名词')} {len(terms)} "
                         f"| {prompt_tokens}+{completion_tokens}T[/green]"
                     )
                 else:
                     error_count = 1
-                    console.print(f"[red]✗ {self.i18n.get('msg_analysis_error') or '分析出错'}[/red]")
+                    self.console.print(f"[red]✗ {self.i18n.get('msg_analysis_error') or '分析出错'}[/red]")
             except Exception as e:
                 error_count = 1
-                console.print(f"[red]✗ {self.i18n.get('msg_analysis_error') or '分析出错'}: {e}[/red]")
+                self.console.print(f"[red]✗ {self.i18n.get('msg_analysis_error') or '分析出错'}: {e}[/red]")
         elif normalized_mode == "split":
             batch_size = self._get_split_batch_size()
             batches = [items_to_analyze[i:i+batch_size] for i in range(0, len(items_to_analyze), batch_size)]
 
-            console.print(f"[cyan]{self.i18n.get('msg_batch_count') or '批次数量'}: {len(batches)}[/cyan]")
+            self.console.print(f"[cyan]{self.i18n.get('msg_batch_count') or '批次数量'}: {len(batches)}[/cyan]")
 
             # 获取用户配置的线程数 (临时配置优先)
             if temp_config and temp_config.get("thread_counts"):
                 thread_count = temp_config.get("thread_counts")
             else:
                 thread_count = task_config.actual_thread_counts
-            console.print(f"[cyan]{self.i18n.get('msg_thread_count') or '并发线程数'}: {thread_count}[/cyan]")
+            self.console.print(f"[cyan]{self.i18n.get('msg_thread_count') or '并发线程数'}: {thread_count}[/cyan]")
 
             # 收集所有结果 (线程安全)
             terms_lock = threading.Lock()
@@ -522,7 +539,7 @@ class GlossaryAnalyzer:
 
                 try:
                     requester = LLMRequester()
-                    skip, _, response, prompt_tokens, completion_tokens = requester.sent_request(
+                    skip, _, response, prompt_tokens, completion_tokens = self._send_request(requester,
                         messages, system_prompt, platform_config
                     )
 
@@ -542,7 +559,7 @@ class GlossaryAnalyzer:
                                     )
                                 )
                             completed_counter[0] += 1
-                        console.print(
+                        self.console.print(
                             f"[green]√ [{batch_idx+1:03d}] "
                             f"{self._tr('glossary_log_batch_completed', '完成')} | "
                             f"{self._tr('msg_found_terms', '发现专有名词')} {len(terms)} | "
@@ -553,25 +570,27 @@ class GlossaryAnalyzer:
                         with failed_lock:
                             failed_batches.append(batch_info)
                         hint = self._tr('glossary_log_retry_suffix', '，将在下一轮重试') if not is_last_round else ""
-                        console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_batch_failed', '失败')}{hint}[/red]")
+                        self.console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_batch_failed', '失败')}{hint}[/red]")
                 except Exception as e:
                     with failed_lock:
                         failed_batches.append(batch_info)
                     hint = self._tr('glossary_log_retry_suffix', '，将在下一轮重试') if not is_last_round else ""
-                    console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_error', '错误')}: {e}{hint}[/red]")
+                    self.console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_error', '错误')}: {e}{hint}[/red]")
 
             # 使用线程池并发执行
-            console.print(f"\n[bold cyan]{self.i18n.get('msg_starting_concurrent') or '开始并发分析...'}[/bold cyan]\n")
+            self.console.print(f"\n[bold cyan]{self.i18n.get('msg_starting_concurrent') or '开始并发分析...'}[/bold cyan]\n")
 
             max_rounds = 3
             batch_infos = list(enumerate(batches))
 
             for round_num in range(max_rounds):
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    break
                 is_last = (round_num == max_rounds - 1)
                 if round_num > 0:
                     batch_infos = failed_batches[:]
                     failed_batches.clear()
-                    console.print(
+                    self.console.print(
                         f"\n[yellow]⟳ "
                         f"{self._tr('glossary_log_retry_round_remaining', '第{}轮重试，剩余 {} 个失败批次...', round_num + 1, len(batch_infos))}"
                         f"[/yellow]\n"
@@ -585,21 +604,23 @@ class GlossaryAnalyzer:
 
             completed_count = completed_counter[0]
             error_count = len(failed_batches)
-            console.print(
+            self.console.print(
                 f"\n[cyan]{self._tr('glossary_log_batch_summary', '完成: {}/{}, 失败: {}', completed_count, len(batches), error_count)}[/cyan]"
             )
         else:
             target_tokens = self._resolve_incremental_split_target_tokens(incremental_split_target_tokens)
             batches = self._split_items_by_estimated_tokens(items_to_analyze, target_tokens)
-            console.print(
+            self.console.print(
                 f"[cyan]{self.i18n.get('msg_batch_count') or '批次数量'}: {len(batches)} "
                 f"| {self._tr('msg_incremental_split_target_tokens', '目标每批约 {} Token', target_tokens)}[/cyan]"
             )
-            console.print(
+            self.console.print(
                 f"[dim]{self._tr('msg_incremental_split_sequential_note', '该模式会顺序执行；后一批会参考此前批次累计出的术语/角色/世界观快照，只在原始文本条目或句末边界分批，不会截断句子。每批目标可自定，但最大不会超过 256000 Token；也不会写入 Vol_2/Vol_3 这类卷号历史。')}[/dim]"
             )
 
             for batch_idx, batch in enumerate(batches):
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    break
                 text_content = "\n".join([item.source_text for item in batch])
                 batch_context = self._build_incremental_split_context(structured_analysis, all_terms)
                 batch_system_prompt = self._append_incremental_split_instruction(
@@ -612,7 +633,7 @@ class GlossaryAnalyzer:
                 messages = [{"role": "user", "content": text_content}]
                 try:
                     requester = LLMRequester()
-                    skip, _, response, prompt_tokens, completion_tokens = requester.sent_request(
+                    skip, _, response, prompt_tokens, completion_tokens = self._send_request(requester,
                         messages, batch_system_prompt, platform_config
                     )
                     if not skip and response:
@@ -636,7 +657,7 @@ class GlossaryAnalyzer:
                                 )
                             )
                         completed_count += 1
-                        console.print(
+                        self.console.print(
                             f"[green]√ [{batch_idx+1:03d}/{len(batches):03d}] "
                             f"{self._tr('glossary_log_batch_completed', '完成')} | "
                             f"{self._tr('msg_found_terms', '发现专有名词')} {len(terms)} | "
@@ -644,12 +665,12 @@ class GlossaryAnalyzer:
                         )
                     else:
                         error_count += 1
-                        console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_batch_failed', '失败')}[/red]")
+                        self.console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_batch_failed', '失败')}[/red]")
                 except Exception as e:
                     error_count += 1
-                    console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_error', '错误')}: {e}[/red]")
+                    self.console.print(f"[red]✗ [{batch_idx+1:03d}] {self._tr('glossary_log_error', '错误')}: {e}[/red]")
 
-            console.print(
+            self.console.print(
                 f"\n[cyan]{self._tr('glossary_log_batch_summary', '完成: {}/{}, 失败: {}', completed_count, len(batches), error_count)}[/cyan]"
             )
 
@@ -666,15 +687,15 @@ class GlossaryAnalyzer:
 
         if not term_freq:
             if not self._has_non_glossary_analysis(structured_analysis):
-                console.print(f"[yellow]{self.i18n.get('msg_no_terms_found') or '未找到专有名词'}[/yellow]")
+                self.console.print(f"[yellow]{self.i18n.get('msg_no_terms_found') or '未找到专有名词'}[/yellow]")
                 diagnostic_path = self._save_raw_analysis_response_log(input_path, raw_response_diagnostics, output_dir=output_dir)
                 if diagnostic_path:
-                    console.print(
+                    self.console.print(
                         f"[yellow]{self._tr('msg_glossary_parse_empty_with_response', '模型返回了内容，但未解析到术语/分类 JSON；已保存原始响应诊断: {}', diagnostic_path)}[/yellow]"
                     )
                 return None
-            console.print(f"[yellow]{self.i18n.get('msg_no_terms_found') or '未找到专有名词'}[/yellow]")
-            console.print(f"[cyan]{self._tr('msg_structured_analysis_found', '已提取到角色/世界观/禁翻表等分类设定，将继续保存分类结果。')}[/cyan]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_no_terms_found') or '未找到专有名词'}[/yellow]")
+            self.console.print(f"[cyan]{self._tr('msg_structured_analysis_found', '已提取到角色/世界观/禁翻表等分类设定，将继续保存分类结果。')}[/cyan]")
 
         # 返回结果供菜单层处理
         return {
@@ -691,6 +712,8 @@ class GlossaryAnalyzer:
             'legacy_mode': legacy_mode,
             'raw_response_diagnostics': raw_response_diagnostics,
             'output_dir': output_dir,
+            'completed_batches': completed_count,
+            'failed_batches': error_count,
         }
 
     def filter_and_save(self, analysis_result, min_freq, output_dir=None):
@@ -720,14 +743,14 @@ class GlossaryAnalyzer:
         # 过滤低频词
         filtered_terms = {k: v for k, v in term_freq.items() if v['count'] >= min_freq}
 
-        console.print(f"[green]{self.i18n.get('msg_before_filter') or '过滤前'}: {len(term_freq)}[/green]")
-        console.print(f"[green]{self.i18n.get('msg_after_filter') or '过滤后'}: {len(filtered_terms)}[/green]")
+        self.console.print(f"[green]{self.i18n.get('msg_before_filter') or '过滤前'}: {len(term_freq)}[/green]")
+        self.console.print(f"[green]{self.i18n.get('msg_after_filter') or '过滤后'}: {len(filtered_terms)}[/green]")
 
         if not filtered_terms and not self._has_non_glossary_analysis(structured_analysis):
-            console.print(f"[yellow]{self.i18n.get('msg_no_terms_after_filter') or '过滤后无剩余词条'}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_no_terms_after_filter') or '过滤后无剩余词条'}[/yellow]")
             diagnostic_path = self._save_raw_analysis_response_log(input_path, raw_response_diagnostics, output_dir=output_dir)
             if diagnostic_path:
-                console.print(
+                self.console.print(
                     f"[yellow]{self._tr('msg_glossary_parse_empty_with_response', '模型返回了内容，但未解析到术语/分类 JSON；已保存原始响应诊断: {}', diagnostic_path)}[/yellow]"
                 )
             return None
@@ -752,7 +775,7 @@ class GlossaryAnalyzer:
             with open(glossary_path, 'w', encoding='utf-8') as f:
                 json.dump(glossary_data, f, indent=2, ensure_ascii=False)
 
-            console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {glossary_path}[/bold green]")
+            self.console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {glossary_path}[/bold green]")
 
         structured_rules = self._build_structured_rules_config(filtered_terms, structured_analysis)
         structured_rules = self._annotate_text_history_legacy(structured_rules, incremental_options, legacy_mode)
@@ -761,13 +784,13 @@ class GlossaryAnalyzer:
         if self._has_structured_rules(structured_rules):
             with open(structured_path, 'w', encoding='utf-8') as f:
                 json.dump(structured_rules, f, indent=2, ensure_ascii=False)
-            console.print(f"[bold green]{self._tr('msg_structured_rules_saved', '分类规则配置已保存: {}', structured_path)}[/bold green]")
+            self.console.print(f"[bold green]{self._tr('msg_structured_rules_saved', '分类规则配置已保存: {}', structured_path)}[/bold green]")
 
         legacy_mapping_stats = {}
         if legacy_mode == "legacy_mapping_extract":
             legacy_mapping_stats = self.summarize_legacy_mapping_result(structured_rules, glossary_data)
             if legacy_mapping_stats.get("mapped_total", 0) <= 0:
-                console.print(
+                self.console.print(
                     "[yellow]"
                     + self._tr(
                         "msg_legacy_mapping_no_reliable_results",
@@ -791,7 +814,7 @@ class GlossaryAnalyzer:
             raw_response_diagnostics=raw_response_diagnostics,
         )
 
-        console.print(f"[green]{self.i18n.get('msg_log_saved') or '分析日志已保存'}: {log_path}[/green]")
+        self.console.print(f"[green]{self.i18n.get('msg_log_saved') or '分析日志已保存'}: {log_path}[/green]")
 
         return {
             'filtered_terms': filtered_terms,
@@ -848,12 +871,12 @@ class GlossaryAnalyzer:
             self.config["prompt_dictionary_data"] = existing_data
             self.config["prompt_dictionary_switch"] = True
             self.save_config()
-            console.print(f"[bold green]{self.i18n.get('msg_glossary_imported') or '术语表已导入!'}[/bold green]")
+            self.console.print(f"[bold green]{self.i18n.get('msg_glossary_imported') or '术语表已导入!'}[/bold green]")
 
         if save_mode in ("standalone", "both"):
             save_path = self._build_output_glossary_path(base_glossary_path, "_独立术语表")
             self._save_glossary_json_to_path(glossary_data, save_path)
-            console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
+            self.console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
 
     def save_structured_rules_directly(
         self,
@@ -864,7 +887,7 @@ class GlossaryAnalyzer:
     ):
         """保存分类规则配置：术语表、禁翻表、角色设定、世界观、文风和翻译示例。"""
         if not structured_rules:
-            console.print(f"[yellow]{self._tr('msg_structured_rules_empty', '没有可保存的分类规则。')}[/yellow]")
+            self.console.print(f"[yellow]{self._tr('msg_structured_rules_empty', '没有可保存的分类规则。')}[/yellow]")
             return None
 
         summary = {}
@@ -874,7 +897,7 @@ class GlossaryAnalyzer:
             self.save_config()
             world_status = self._tr("label_updated", "已更新") if summary.get('world_building_content', 0) else self._tr("label_none", "无")
             style_status = self._tr("label_updated", "已更新") if summary.get('writing_style_content', 0) else self._tr("label_none", "无")
-            console.print(
+            self.console.print(
                 "[bold green]"
                 + self._tr(
                     "msg_structured_rules_imported",
@@ -892,7 +915,7 @@ class GlossaryAnalyzer:
         if save_mode in ("standalone", "both"):
             save_path = self._build_output_glossary_path(base_glossary_path, "_分类规则配置")
             self._save_glossary_json_to_path(structured_rules, save_path)
-            console.print(f"[bold green]{self._tr('msg_structured_rules_saved', '分类规则配置已保存: {}', save_path)}[/bold green]")
+            self.console.print(f"[bold green]{self._tr('msg_structured_rules_saved', '分类规则配置已保存: {}', save_path)}[/bold green]")
 
         return {"summary": summary, "path": save_path}
 
@@ -922,8 +945,8 @@ class GlossaryAnalyzer:
         save_root_config(self.cli.root_config)
         self.cli.load_config()
 
-        console.print(f"[bold green]{self._tr('msg_rules_profile_created_selected', '已新建并切换到规则配置: {}', profile_name)}[/bold green]")
-        console.print(f"[green]{self._tr('msg_rules_profile_file', '配置文件: {}', profile_path)}[/green]")
+        self.console.print(f"[bold green]{self._tr('msg_rules_profile_created_selected', '已新建并切换到规则配置: {}', profile_name)}[/bold green]")
+        self.console.print(f"[green]{self._tr('msg_rules_profile_file', '配置文件: {}', profile_path)}[/green]")
         return {"profile": profile_name, "path": profile_path}
 
     def summarize_legacy_mapping_result(self, structured_rules=None, glossary_data=None):
@@ -1323,6 +1346,8 @@ class GlossaryAnalyzer:
         }
 
     def _save_raw_analysis_response_log(self, input_path, diagnostics, output_dir=None):
+        if not self.write_diagnostics:
+            return None
         diagnostics = [item for item in diagnostics or [] if item and item.get("preview")]
         if not diagnostics:
             return ""
@@ -1409,7 +1434,7 @@ class GlossaryAnalyzer:
         options = merge_options or {}
         concerns = self._review_incremental_rules(structured_rules, options.get("source_volume"))
         if any(concerns.values()):
-            console.print(
+            self.console.print(
                 f"[yellow]{self._tr('glossary_review_warning', '增量规则需要复核')}: "
                 f"language={concerns['language']}, shortened={concerns['shortened']}[/yellow]"
             )
@@ -1643,45 +1668,31 @@ class GlossaryAnalyzer:
                 concerns["language"] += 1
         return concerns
 
-    def multi_translate_and_select(self, filtered_terms, temp_config=None, rounds=3, save_mode="import", base_glossary_path=None, merge_options=None):
-        """
-        多翻译选择功能
-
-        Args:
-            filtered_terms: 过滤后的术语字典
-            temp_config: 临时API配置
-            rounds: 翻译轮询次数
-        """
-        from ModuleFolders.UserInterface.TermSelector.TermSelector import TermSelector
+    def _translation_context(self, temp_config=None):
         from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
         from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
-
-        console.print(f"\n[cyan]{self.i18n.get('msg_starting_multi_translate') or '开始多翻译请求...'}[/cyan]")
-        console.print(f"[dim]{self.i18n.get('msg_rounds')}: {rounds}[/dim]")
-
-        # 准备配置
         task_config = TaskConfig()
         task_config.load_config_from_dict(self.config)
         task_config.prepare_for_translation(TaskType.TRANSLATION)
+        return temp_config or task_config.get_platform_configuration("translationReq"), task_config.target_language
 
-        if temp_config:
-            platform_config = temp_config
-        else:
-            platform_config = task_config.get_platform_configuration("translationReq")
-
-        target_language = task_config.target_language
-
+    def collect_translation_candidates(self, filtered_terms, temp_config=None, rounds=3, *, avoid=None):
+        platform_config, target_language = self._translation_context(temp_config)
         # 为每个术语请求多次翻译
         multi_results = []
         total = len(filtered_terms)
 
         for idx, (src, term_data) in enumerate(filtered_terms.items(), 1):
-            console.print(f"[{idx}/{total}] {self.i18n.get('msg_translating') or '正在翻译'}: {src}")
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                break
+            self.console.print(f"[{idx}/{total}] {self.i18n.get('msg_translating') or '正在翻译'}: {src}")
 
             options = []
-            seen = set()
+            seen = set((avoid or {}).get(src, []))
 
             for r in range(rounds):
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    break
                 result = self._request_term_translation(src, term_data, target_language, platform_config, seen)
                 if result and result['dst'] not in seen:
                     seen.add(result['dst'])
@@ -1696,22 +1707,43 @@ class GlossaryAnalyzer:
                     "selected_index": 0
                 })
             else:
-                console.print(f"[red]✗ {src} {self.i18n.get('msg_term_all_failed')}[/red]")
+                self.console.print(f"[red]✗ {src} {self.i18n.get('msg_term_all_failed')}[/red]")
 
         skipped = total - len(multi_results)
         if skipped > 0:
-            console.print(f"\n[yellow]⚠ {skipped} {self.i18n.get('msg_term_skipped_count')}[/yellow]")
+            self.console.print(f"\n[yellow]⚠ {skipped} {self.i18n.get('msg_term_skipped_count')}[/yellow]")
+
+        return multi_results
+
+    def multi_translate_and_select(self, filtered_terms, temp_config=None, rounds=3, save_mode="import", base_glossary_path=None, merge_options=None):
+        """
+        多翻译选择功能
+
+        Args:
+            filtered_terms: 过滤后的术语字典
+            temp_config: 临时API配置
+            rounds: 翻译轮询次数
+        """
+        from ModuleFolders.UserInterface.TermSelector.TermSelector import TermSelector
+
+        self.console.print(f"\n[cyan]{self.i18n.get('msg_starting_multi_translate') or '开始多翻译请求...'}[/cyan]")
+        self.console.print(f"[dim]{self.i18n.get('msg_rounds')}: {rounds}[/dim]")
+
+        # 准备配置
+        platform_config, target_language = self._translation_context(temp_config)
+
+        multi_results = self.collect_translation_candidates(filtered_terms, temp_config, rounds)
 
         if not multi_results:
-            console.print(f"[yellow]{self.i18n.get('msg_no_translation_results') or '未获得翻译结果'}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_no_translation_results') or '未获得翻译结果'}[/yellow]")
             fallback_glossary = self._generate_glossary_json(filtered_terms)
             fallback_path = self._build_output_glossary_path(base_glossary_path, "_翻译失败原文回退")
             self._save_glossary_json_to_path(fallback_glossary, fallback_path)
-            console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
             return
 
         # 显示选择界面
-        console.print(f"\n[green]{self.i18n.get('msg_translation_complete') or '翻译完成，请选择最佳译法'}[/green]")
+        self.console.print(f"\n[green]{self.i18n.get('msg_translation_complete') or '翻译完成，请选择最佳译法'}[/green]")
 
         # 定义单条保存回调
         def save_single_term(term_data):
@@ -1729,7 +1761,7 @@ class GlossaryAnalyzer:
         selected_results = selector.show_selector()
 
         if not selected_results:
-            console.print(f"[yellow]{self.i18n.get('msg_cancelled') or '已取消'}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_cancelled') or '已取消'}[/yellow]")
             return
 
         # 保存到术语表
@@ -1741,23 +1773,9 @@ class GlossaryAnalyzer:
             merge_options=merge_options,
         )
 
-    def batch_translate_and_select(self, filtered_terms, temp_config=None, save_mode="import", base_glossary_path=None, merge_options=None):
-        """批量翻译 - 所有术语一次性发送给AI"""
-        from ModuleFolders.UserInterface.TermSelector.TermSelector import TermSelector
-        from ModuleFolders.Infrastructure.TaskConfig.TaskConfig import TaskConfig
-        from ModuleFolders.Infrastructure.TaskConfig.TaskType import TaskType
+    def collect_batch_translation_candidates(self, filtered_terms, temp_config=None):
+        platform_config, target_language = self._translation_context(temp_config)
         from ModuleFolders.Infrastructure.LLMRequester.LLMRequester import LLMRequester
-        import re
-
-        console.print(f"\n[cyan]{self.i18n.get('msg_starting_batch_translate')}[/cyan]")
-
-        task_config = TaskConfig()
-        task_config.load_config_from_dict(self.config)
-        task_config.prepare_for_translation(TaskType.TRANSLATION)
-
-        platform_config = temp_config if temp_config else task_config.get_platform_configuration("translationReq")
-        target_language = task_config.target_language
-
         # 构建批量请求
         term_list = []
         for src, data in filtered_terms.items():
@@ -1781,13 +1799,13 @@ Only output the JSON array, no other text."""
         messages = [{"role": "user", "content": user_content}]
 
         requester = LLMRequester()
-        skip, _, response, pt, ct = requester.sent_request(messages, system_prompt, platform_config)
+        skip, _, response, pt, ct = self._send_request(requester, messages, system_prompt, platform_config)
 
         if skip or not response:
-            console.print(f"[red]{self.i18n.get('msg_no_translation_results')}[/red]")
-            return
+            self.console.print(f"[red]{self.i18n.get('msg_no_translation_results')}[/red]")
+            return []
 
-        console.print(f"[green]{self.i18n.get('msg_batch_translate_complete')} | {pt}+{ct}T[/green]")
+        self.console.print(f"[green]{self.i18n.get('msg_batch_translate_complete')} | {pt}+{ct}T[/green]")
 
         # 解析批量响应
         translated = {}
@@ -1815,18 +1833,30 @@ Only output the JSON array, no other text."""
                     "selected_index": 0
                 })
             else:
-                console.print(f"[red]✗ {src} {self.i18n.get('msg_term_all_failed')}[/red]")
+                self.console.print(f"[red]✗ {src} {self.i18n.get('msg_term_all_failed')}[/red]")
 
         skipped = len(filtered_terms) - len(multi_results)
         if skipped > 0:
-            console.print(f"\n[yellow]⚠ {skipped} {self.i18n.get('msg_term_skipped_count')}[/yellow]")
+            self.console.print(f"\n[yellow]⚠ {skipped} {self.i18n.get('msg_term_skipped_count')}[/yellow]")
+
+        return multi_results
+
+    def batch_translate_and_select(self, filtered_terms, temp_config=None, save_mode="import", base_glossary_path=None, merge_options=None):
+        """批量翻译 - 所有术语一次性发送给AI"""
+        from ModuleFolders.UserInterface.TermSelector.TermSelector import TermSelector
+
+        self.console.print(f"\n[cyan]{self.i18n.get('msg_starting_batch_translate')}[/cyan]")
+
+        platform_config, target_language = self._translation_context(temp_config)
+
+        multi_results = self.collect_batch_translation_candidates(filtered_terms, temp_config)
 
         if not multi_results:
-            console.print(f"[yellow]{self.i18n.get('msg_no_translation_results')}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_no_translation_results')}[/yellow]")
             fallback_glossary = self._generate_glossary_json(filtered_terms)
             fallback_path = self._build_output_glossary_path(base_glossary_path, "_翻译失败原文回退")
             self._save_glossary_json_to_path(fallback_glossary, fallback_path)
-            console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {fallback_path}[/yellow]")
             return
 
         # 定义回调
@@ -1844,7 +1874,7 @@ Only output the JSON array, no other text."""
         selected_results = selector.show_selector()
 
         if not selected_results:
-            console.print(f"[yellow]{self.i18n.get('msg_cancelled')}[/yellow]")
+            self.console.print(f"[yellow]{self.i18n.get('msg_cancelled')}[/yellow]")
             return
 
         self._save_selected_translations(
@@ -1863,7 +1893,7 @@ Only output the JSON array, no other text."""
             self.save_glossary_directly(selected_results, save_mode="import", merge_options=merge_options)
             after = self._count_glossary_history_entries(self.config.get("prompt_dictionary_data", []))
             added_count = max(0, after - before)
-            console.print(f"[bold green]{self.i18n.get('msg_terms_added') or '已添加'} {added_count} {self.i18n.get('msg_terms_to_glossary') or '个术语到术语表'}[/bold green]")
+            self.console.print(f"[bold green]{self.i18n.get('msg_terms_added') or '已添加'} {added_count} {self.i18n.get('msg_terms_to_glossary') or '个术语到术语表'}[/bold green]")
 
         if save_mode in ("standalone", "both"):
             selected_map = {item.get("src"): item for item in selected_results if item.get("src")}
@@ -1889,7 +1919,7 @@ Only output the JSON array, no other text."""
 
             save_path = self._build_output_glossary_path(base_glossary_path, "_独立术语表_翻译结果")
             self._save_glossary_json_to_path(merged_glossary, save_path)
-            console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
+            self.console.print(f"[bold green]{self.i18n.get('msg_glossary_saved') or '术语表已保存'}: {save_path}[/bold green]")
 
     def _count_glossary_history_entries(self, items):
         count = 0
@@ -1947,7 +1977,7 @@ Translation|Note"""
 
         try:
             requester = LLMRequester()
-            skip, _, response, _, _ = requester.sent_request(messages, system_prompt, platform_config)
+            skip, _, response, _, _ = self._send_request(requester, messages, system_prompt, platform_config)
 
             if skip or not response:
                 return None
@@ -1964,7 +1994,7 @@ Translation|Note"""
             if dst and dst != src:
                 return {"dst": dst, "info": info}
         except Exception as e:
-            console.print(f"[red]{self.i18n.get('msg_translation_error') or '翻译错误'}: {e}[/red]")
+            self.console.print(f"[red]{self.i18n.get('msg_translation_error') or '翻译错误'}: {e}[/red]")
 
         return None
 

@@ -191,6 +191,9 @@ class TaskManager:
         with self._lock:
             if not self._accepting_tasks:
                 return "The API owner is shutting down."
+            from .activities import auxiliary_active
+            if auxiliary_active():
+                return "Another application operation is active."
             if not self._is_task_active_locked():
                 return None
             if self.status == "stopping" or self.lifecycle_status == "stopping":
@@ -416,7 +419,7 @@ class TaskManager:
                 env.pop(WEB_TASK_API_KEY_ENV, None)
                 if spec.api_key:
                     env[WEB_TASK_API_KEY_ENV] = spec.api_key
-                if spec.runtime_overrides or spec.step_overrides:
+                if spec.runtime_overrides or spec.step_overrides or spec.workflow_steps:
                     from ModuleFolders.Infrastructure.TaskConfig.RuntimeSnapshot import RUNTIME_SNAPSHOT_ENV, write_worker_snapshot
                     env[RUNTIME_SNAPSHOT_ENV] = write_worker_snapshot(spec.to_mapping())
                 if self.task_id:

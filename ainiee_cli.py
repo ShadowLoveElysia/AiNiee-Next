@@ -88,7 +88,7 @@ from ModuleFolders.Infrastructure.TaskContract import (
 
 console = Console()
 current_lang, i18n = initialize_i18n(PROJECT_ROOT)
-SPONSOR_IDS = ("往生", "Kingxiao")
+from ModuleFolders.Infrastructure.ProjectInfo import SPONSOR_IDS
 WEB_TASK_API_KEY_ENV = TASK_API_KEY_ENV
 
 
@@ -1172,6 +1172,8 @@ class CLIMenu:
         return value
 
     def _configure_dynamic_glossary_for_task(self, task_mode, interactive=True):
+        if task_mode == TaskType.TRANSLATION and not interactive:
+            return
         self.config["dynamic_glossary_switch"] = False
         self.config["dynamic_glossary_series"] = ""
         self.config["dynamic_glossary_volume"] = None
@@ -1209,6 +1211,8 @@ class CLIMenu:
         )
 
     def _configure_dynamic_glossary_volume_map(self, cache_project, interactive=True):
+        if not interactive:
+            return
         self.config["dynamic_glossary_volume_map"] = {}
         if not interactive or not self.config.get("dynamic_glossary_switch"):
             return
@@ -1285,7 +1289,7 @@ class CLIMenu:
             f"{self._polishing_mode_label(selected_mode)}[/cyan]"
         )
 
-    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False, skip_prompt_validation=False, save_runtime_config=True, skip_preflight=False, automation_progress=False, execution_mode=None):
+    def run_task(self, task_mode, target_path=None, continue_status=False, non_interactive=False, web_mode=False, from_queue=False, skip_prompt_validation=False, save_runtime_config=True, skip_preflight=False, automation_progress=False, execution_mode=None, output_policy=None, output_policy_confirmed=False, export_format=None):
         if execution_mode is None:
             execution_mode = self.config.get("translation_execution_mode", "default_api")
         if str(execution_mode or "default_api").strip().lower() == "external_agent":
@@ -1441,7 +1445,14 @@ class CLIMenu:
         )
         
         # --- NEW: Enhanced Output Directory Handling ---
-        if not continue_status and os.path.exists(opath) and not non_interactive:
+        if output_policy is not None:
+            from ModuleFolders.Infrastructure.TaskConfig.OutputPolicy import apply_output_policy
+            try:
+                continue_status = apply_output_policy(opath, target_path, output_policy, confirmed=output_policy_confirmed)
+            except (ValueError, OSError) as exc:
+                console.print(f"[red]{exc}[/red]")
+                return False
+        elif not continue_status and os.path.exists(opath) and not non_interactive:
             cache_exists = os.path.exists(os.path.join(opath, "cache", "AinieeCacheData.json"))
             console.print(Panel(i18n.get("menu_output_exists_prompt"), title=f"[yellow]{i18n.get('menu_output_exists_title')}[/yellow]", expand=False))
             
@@ -1469,21 +1480,20 @@ class CLIMenu:
             if action == "resume":
                 continue_status = True
             elif action == "archive":
-                timestamp = time.strftime('%Y%m%d_%H%M%S')
-                backup_path = f"{opath}_backup_{timestamp}"
+                from ModuleFolders.Infrastructure.TaskConfig.OutputPolicy import apply_output_policy
                 try:
-                    os.rename(opath, backup_path)
-                    console.print(i18n.get('msg_archive_success').format(os.path.basename(backup_path)))
-                except OSError as e:
+                    apply_output_policy(opath, target_path, "archive", confirmed=True)
+                except (OSError, ValueError) as e:
                     console.print(f"[red]Error archiving directory: {e}[/red]")
                     return False
                 continue_status = False
             elif action == "overwrite":
                 if Confirm.ask(i18n.get('msg_overwrite_confirm').format(os.path.basename(opath)), default=False):
+                    from ModuleFolders.Infrastructure.TaskConfig.OutputPolicy import apply_output_policy
                     try:
-                        shutil.rmtree(opath)
+                        apply_output_policy(opath, target_path, "overwrite", confirmed=True)
                         console.print(f"[green]'{os.path.basename(opath)}' deleted.[/green]")
-                    except OSError as e:
+                    except (OSError, ValueError) as e:
                         console.print(f"[red]Error deleting directory: {e}[/red]")
                         return False
                 else:
@@ -1516,8 +1526,8 @@ class CLIMenu:
                 continue_status = False
 
         # --- 格式转换询问逻辑 ---
-        self.target_output_format = None
-        if self.config.get("enable_post_conversion", False) and not non_interactive:
+        self.target_output_format = export_format
+        if export_format is None and self.config.get("enable_post_conversion", False) and not non_interactive:
             # 检查是否是电子书格式
             input_ext = os.path.splitext(target_path)[1].lower()
             ebook_exts = [".epub", ".mobi", ".azw3", ".fb2", ".txt", ".docx", ".pdf", ".htmlz", ".kepub"]
@@ -1929,6 +1939,8 @@ class CLIMenu:
 
                 # --- 4. 主循环与输入监听 ---
                 is_paused = False
+                from ModuleFolders.Service.TaskRuntime.controls import WorkerControlClient
+                worker_controls = WorkerControlClient.from_environment()
                 while not finished.is_set():
                     # 及时介入：如果监测到致命错误（如 Traceback），主动中断循环并进入分析菜单
                     if self._is_critical_failure and not web_mode:
@@ -1936,8 +1948,10 @@ class CLIMenu:
                         time.sleep(2)
                         break
 
-                    if not web_mode and not automation_progress:
-                        key = self.input_listener.get_key()
+                    if worker_controls is not None:
+                        worker_controls.acknowledge(paused=is_paused, config=self.task_executor.config)
+                    if worker_controls is not None or (not web_mode and not automation_progress):
+                        key = worker_controls.next_key() if worker_controls is not None else self.input_listener.get_key()
                         if key:
                             if key == 'q':
                                 self.ui.log("[bold red]Stop requested via keyboard...[/bold red]")
@@ -2072,6 +2086,10 @@ class CLIMenu:
                                     break
 
                     time.sleep(0.1)
+
+                if worker_controls is not None:
+                    worker_controls.acknowledge(paused=is_paused, config=self.task_executor.config)
+                    worker_controls.close()
                 
                 return is_middleware_converted_local
 
@@ -2254,29 +2272,12 @@ class CLIMenu:
             if task_success and self.target_output_format:
                 output_dir = self.config.get("label_output_path")
                 if output_dir:
-                    output_files = [f for f in os.listdir(output_dir) if f.endswith(".epub")]
-                    if output_files:
-                        # 使用新的Calibre检测和下载逻辑
-                        calibre_path = ensure_calibre_available(current_lang)
-                        if calibre_path:
-                            self.ui.log(f"[cyan]Converting to {self.target_output_format.upper()} format...[/cyan]")
-                            for epub_file in output_files:
-                                src_path = os.path.join(output_dir, epub_file)
-                                dst_name = os.path.splitext(epub_file)[0] + f".{self.target_output_format}"
-                                dst_path = os.path.join(output_dir, dst_name)
-                                try:
-                                    result = subprocess.run(
-                                        [calibre_path, src_path, dst_path],
-                                        capture_output=True, text=True, timeout=300
-                                    )
-                                    if result.returncode == 0:
-                                        self.ui.log(f"[green]✓ Converted: {dst_name}[/green]")
-                                    else:
-                                        self.ui.log(f"[yellow]Conversion warning: {result.stderr[:200]}[/yellow]")
-                                except Exception as e:
-                                    self.ui.log(f"[yellow]Conversion error: {e}[/yellow]")
-                        else:
-                            self.ui.log("[dim]Format conversion skipped.[/dim]")
+                    try:
+                        self.export_flow._convert_output_format(output_dir, target_path, non_interactive, self.target_output_format)
+                    except Exception as exc:
+                        self.ui.log(f"[yellow]Conversion error: {exc}[/yellow]")
+                        if export_format is not None:
+                            return False
 
             # --- Post-Task: Auto AI Proofread ---
             if task_success and task_mode == TaskType.TRANSLATION and self.config.get("enable_auto_proofread", False):
@@ -2357,8 +2358,8 @@ class CLIMenu:
             skip_preflight=True,
         )
 
-    def run_export_only(self, target_path=None, non_interactive=False, strict_export=False, glossary_impact=None, glossary_impact_suggestions=False):
-        return self.export_flow.run_export_only(target_path, non_interactive, strict_export, glossary_impact, glossary_impact_suggestions)
+    def run_export_only(self, target_path=None, non_interactive=False, strict_export=None, glossary_impact=None, glossary_impact_suggestions=False, export_format=None):
+        return self.export_flow.run_export_only(target_path, non_interactive, strict_export, glossary_impact, glossary_impact_suggestions, export_format)
 
     def run_manga_translation(self):
         start_path = self.config.get("label_input_path", ".")
@@ -2585,12 +2586,16 @@ def main():
     # 运行策略
     parser.add_argument('-r', '--resume', action='store_true', help=i18n.get('help_resume'))
     parser.add_argument('-y', '--yes', action='store_true', dest='non_interactive', help=i18n.get('help_yes'))
-    parser.add_argument('--strict-export', action='store_true', help='Block export on incomplete items or high-severity structural errors; always write a completion report.')
+    parser.add_argument('--strict-export', action=argparse.BooleanOptionalAction, default=None, help='Block export on incomplete items or high-severity structural errors; always write a completion report.')
+    parser.add_argument('--export-format', choices=['epub', 'mobi', 'azw3', 'fb2', 'pdf', 'txt', 'docx', 'htmlz', 'kepub'], help='Output ebook conversion format for this export only')
+    parser.add_argument('--output-policy', choices=['resume', 'archive', 'overwrite', 'cancel'], help='How to handle an existing text task output directory')
+    parser.add_argument('--output-policy-confirmed', action='store_true', help='Explicit confirmation to archive or remove an existing output directory')
     parser.add_argument('--glossary-impact-suggestions', action='store_true', help='Use the selected model to generate glossary-change suggestions for review; requires --glossary-impact and makes API requests.')
     parser.add_argument('--glossary-impact', nargs=2, metavar=('OLD_RULES', 'NEW_RULES'), help='Compare two glossary JSON files against the selected cache without translation.')
     parser.add_argument('--runtime-overrides', help='JSON object of per-run settings; omitted fields inherit')
     parser.add_argument('--step-overrides', help='JSON object of settings by workflow step ID')
     parser.add_argument('--workflow-file', help='Workflow JSON file to execute with this task')
+    parser.add_argument('--workflow-steps', help='Inline JSON workflow step array; exclusive with --workflow-file')
     parser.add_argument('--runtime-parameters', action='store_true', help='Print runtime parameter metadata and exit')
     parser.add_argument('--threads', type=int, help="Concurrent thread counts (0 for auto)")
     parser.add_argument('--retry', type=int, help="Max retry counts for failed requests")

@@ -122,6 +122,11 @@ CATEGORY_DESCRIPTIONS = {
     "cache": "Cache status, load, item update, and search operations.",
     "manga": "Manga project, page, model, pipeline, editor, and export operations.",
     "external_agent": "External Agent connection, translation, and read-batch leases.",
+    "jobs": "Background operation receipts, results and cooperative cancellation.",
+    "media": "Live and video translation, runtime preparation, settings, history and artifacts.",
+    "automation": "Schedules, watch rules, workflows, trigger status, queue recovery and owned runs.",
+    "review": "Incremental glossary analysis, rule profiles, prompt tests, cache editing and proofread reports.",
+    "maintenance": "Explicitly confirmed application/Web updates and Manga runtime preparation.",
 }
 
 AGENT_TOOL_DESCRIPTIONS = [
