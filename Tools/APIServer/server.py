@@ -207,10 +207,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--allow-remote-access", action="store_true")
     parser.add_argument("--serve-web", action="store_true")
+    parser.add_argument("--web-dist", help="Optional Web UI asset directory (used with --serve-web)")
     args = parser.parse_args()
     thread = run_server(
         args.host, args.port, allow_remote_access=args.allow_remote_access,
-        serve_web=args.serve_web,
+        serve_web=args.serve_web, web_dist=args.web_dist,
     )
     try:
         while thread.is_alive():

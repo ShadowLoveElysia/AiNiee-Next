@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "Cancel",
+  "gui.common.retry": "Retry",
+  "gui.common.close": "Close",
+  "gui.common.select": "Select",
+  "gui.common.loading": "Loading",
+  "gui.common.none": "None",
+  "gui.common.inherit": "Use profile",
+  "gui.common.enabled": "On",
+  "gui.common.disabled": "Off",
+  "gui.common.automatic": "Automatic",
+  "gui.common.save": "Save",
+  "gui.common.undo": "Undo",
+  "gui.common.skipContent": "Skip to content",
+  "gui.common.languageLoadFailed": "Could not load the interface language. Check the connection and retry.",
+  "gui.common.runtimeChanged": "The runtime changed. Updating the queue.",
+  "gui.common.queueRefreshFailed": "Could not refresh the queue. Please retry."
+}

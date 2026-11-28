@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "翻譯前替換規則",
+  "gui.fields.post_translation_data": "翻譯後替換規則",
+  "gui.fields.pre_translation_switch": "啟用翻譯前替換",
+  "gui.fields.post_translation_switch": "啟用翻譯後替換",
+  "gui.fields.enable_rate_limit": "啟用自訂速率限制",
+  "gui.fields.custom_rpm_limit": "每分鐘請求數（RPM）",
+  "gui.fields.custom_tpm_limit": "每分鐘 Token 數（TPM）",
+  "gui.fields.api_failover_threshold": "連續錯誤切換門檻",
+  "gui.fields.critical_error_threshold": "連續錯誤停止門檻",
+  "label_category_data": "替換規則",
+  "choice_translate": "翻譯",
+  "choice_polish": "潤色",
+  "choice_all_in_one": "翻譯並潤色",
+  "choice_rename": "重新命名",
+  "choice_overwrite": "覆寫",
+  "choice_scheduled": "定時",
+  "choice_queue_added": "加入佇列時",
+  "choice_queue_pending": "佇列有待處理任務時",
+  "choice_file": "檔案",
+  "choice_folder": "資料夾",
+  "choice_both": "檔案和資料夾"
+}

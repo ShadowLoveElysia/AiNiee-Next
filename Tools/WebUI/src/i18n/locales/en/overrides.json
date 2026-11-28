@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "Pre-translation replacement rules",
+  "gui.fields.post_translation_data": "Post-translation replacement rules",
+  "gui.fields.pre_translation_switch": "Enable pre-translation replacements",
+  "gui.fields.post_translation_switch": "Enable post-translation replacements",
+  "gui.fields.enable_rate_limit": "Use custom rate limits",
+  "gui.fields.custom_rpm_limit": "Requests per minute (RPM)",
+  "gui.fields.custom_tpm_limit": "Tokens per minute (TPM)",
+  "gui.fields.api_failover_threshold": "Consecutive failures before switching",
+  "gui.fields.critical_error_threshold": "Consecutive failures before stopping",
+  "label_category_data": "Replacement rules",
+  "choice_translate": "Translate",
+  "choice_polish": "Polish",
+  "choice_all_in_one": "Translate and polish",
+  "choice_rename": "Rename",
+  "choice_overwrite": "Overwrite",
+  "choice_scheduled": "Scheduled",
+  "choice_queue_added": "When added to queue",
+  "choice_queue_pending": "When queue has pending tasks",
+  "choice_file": "File",
+  "choice_folder": "Folder",
+  "choice_both": "Files and folders"
+}

@@ -4133,7 +4133,8 @@ from Tools.APIServer.cache_review_routes import router as cache_review_router
 from Tools.APIServer.system_routes import router as system_router
 from Tools.APIServer.maintenance_routes import router as maintenance_router
 from Tools.APIServer.host_routes import router as host_router
+from Tools.APIServer.file_browser_routes import router as file_browser_router
 
-for domain_router in (automation_router, media_router, review_router, cache_review_router, system_router, maintenance_router, host_router):
+for domain_router in (automation_router, media_router, review_router, cache_review_router, system_router, maintenance_router, host_router, file_browser_router):
     app.include_router(domain_router)
 

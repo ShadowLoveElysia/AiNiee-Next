@@ -64,7 +64,7 @@ def _display_path(value: Any) -> str:
         return str(value)
 
 
-def _path_state(value: Any) -> str:
+def _path_state(value: Any, *, include_directory_contents: bool = True) -> str:
     if value is None or not str(value).strip():
         return "不存在"
     try:
@@ -73,6 +73,8 @@ def _path_state(value: Any) -> str:
             return "不存在"
         if path.is_file():
             return f"文件，{path.stat().st_size} bytes"
+        if not include_directory_contents:
+            return "目录"
         children = sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
         names = [item.name + ("/" if item.is_dir() else "") for item in children[:20]]
         suffix = "；更多项目省略" if len(children) > 20 else ""
@@ -81,7 +83,7 @@ def _path_state(value: Any) -> str:
         return "无法读取状态"
 
 
-def _context_lines(context: Mapping[str, Any]) -> list[str]:
+def _context_lines(context: Mapping[str, Any], *, include_directory_contents: bool = True) -> list[str]:
     fields = (
         ("终端当前路径", context.get("cwd"), "用于判断相对路径从哪里解析"),
         ("AiNiee 项目根目录", context.get("project_root"), "程序源码、MCP 和 Skills 的根目录"),
@@ -93,10 +95,10 @@ def _context_lines(context: Mapping[str, Any]) -> list[str]:
     lines = []
     for label, value, purpose in fields:
         display = _display_path(value)
-        lines.append(f"- {label}：{display}（{_path_state(value)}；{purpose}）")
+        lines.append(f"- {label}：{display}（{_path_state(value, include_directory_contents=include_directory_contents)}；{purpose}）")
     for label, value, purpose in context.get("known_files", ()):
         display = _display_path(value)
-        lines.append(f"- {label}：{display}（{_path_state(value)}；{purpose}）")
+        lines.append(f"- {label}：{display}（{_path_state(value, include_directory_contents=include_directory_contents)}；{purpose}）")
     return lines
 
 
@@ -133,7 +135,7 @@ def _layout_lines(project_root: Path) -> list[str]:
     return lines
 
 
-def external_agent_prompt(context: Mapping[str, Any] | None = None) -> str:
+def external_agent_prompt(context: Mapping[str, Any] | None = None, *, include_directory_contents: bool = True) -> str:
     """Build a provider-neutral prompt from the current project-path snapshot.
 
     The paths are discovery hints only. They never grant an Agent permission to
@@ -149,7 +151,7 @@ def external_agent_prompt(context: Mapping[str, Any] | None = None) -> str:
         ("项目根配置", project_root / "Resource" / "config.json", "项目级设置；不要传播密钥"),
         ("批次与运行时状态", project_root / "Resource" / "automation_progress", "任务账本、staging 和恢复状态"),
     ))
-    lines = _context_lines(supplied)
+    lines = _context_lines(supplied, include_directory_contents=include_directory_contents)
     # The prose lives in I18N so the copied Agent handoff follows the UI language.
     language = str(supplied.get("interface_language") or "zh_CN")
     template = _load_prompt_template(project_root, language)

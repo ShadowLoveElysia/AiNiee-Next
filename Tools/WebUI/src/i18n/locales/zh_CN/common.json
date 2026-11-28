@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "取消",
+  "gui.common.retry": "重试",
+  "gui.common.close": "关闭",
+  "gui.common.select": "选择",
+  "gui.common.loading": "正在加载",
+  "gui.common.none": "无",
+  "gui.common.inherit": "跟随配置",
+  "gui.common.enabled": "开启",
+  "gui.common.disabled": "关闭",
+  "gui.common.automatic": "自动",
+  "gui.common.save": "保存",
+  "gui.common.undo": "撤销",
+  "gui.common.skipContent": "跳转到内容",
+  "gui.common.languageLoadFailed": "无法加载界面语言，请检查连接后重试",
+  "gui.common.runtimeChanged": "运行环境已变化，正在更新队列",
+  "gui.common.queueRefreshFailed": "无法更新队列，请重试"
+}

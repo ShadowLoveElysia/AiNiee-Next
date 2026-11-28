@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "Отмена",
+  "gui.common.retry": "Повторить",
+  "gui.common.close": "Закрыть",
+  "gui.common.select": "Выбрать",
+  "gui.common.loading": "Загрузка",
+  "gui.common.none": "Нет",
+  "gui.common.inherit": "Из профиля",
+  "gui.common.enabled": "Вкл.",
+  "gui.common.disabled": "Выкл.",
+  "gui.common.automatic": "Автоматически",
+  "gui.common.save": "Сохранить",
+  "gui.common.undo": "Отменить",
+  "gui.common.skipContent": "К содержимому",
+  "gui.common.languageLoadFailed": "Не удалось загрузить язык интерфейса. Проверьте соединение и повторите попытку.",
+  "gui.common.runtimeChanged": "Среда выполнения изменилась. Обновление очереди.",
+  "gui.common.queueRefreshFailed": "Не удалось обновить очередь. Повторите попытку."
+}

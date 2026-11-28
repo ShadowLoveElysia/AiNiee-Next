@@ -511,6 +511,7 @@
     "label_category_automation": "자동화 설정",
     "label_category_manga": "만화 설정",
     "label_category_advanced": "고급 설정",
+    "label_category_security": "보안 설정",
     "label_category_utility": "작은 기능",
     "setting_japanese_text_quote_style": "일본어 텍스트/전자책 따옴표 스타일",
     "setting_japanese_text_quote_style_desc": "원문이 일본어로 감지되고 목표 언어가 간체/번체 중국어이며 TXT/MD/EPUB/DOCX 같은 텍스트 또는 전자책 출력 파이프라인을 사용할 때만 번역문의 일반 작은따옴표/큰따옴표를 「」 및 『』로 변환합니다. Calibre 미들웨어로 EPUB가 된 출력에도 적용됩니다. 자막, 스크립트, 표, 만화, 비중국어 대상 출력에는 적용되지 않습니다.",

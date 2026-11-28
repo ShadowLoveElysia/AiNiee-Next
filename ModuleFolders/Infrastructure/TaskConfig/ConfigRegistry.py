@@ -1304,7 +1304,7 @@ register_config(ConfigItem(
     config_type=ConfigType.BOOL,
     i18n_key="setting_enable_remote_access",
     i18n_desc_key="setting_enable_remote_access_desc",
-    category="advanced"
+    category="security"
 ))
 
 register_config(ConfigItem(
@@ -1316,7 +1316,7 @@ register_config(ConfigItem(
     i18n_desc_key="setting_webserver_port_desc",
     min_value=1,
     max_value=65535,
-    category="advanced"
+    category="security"
 ))
 
 register_config(ConfigItem(
@@ -1326,7 +1326,7 @@ register_config(ConfigItem(
     config_type=ConfigType.STRING,
     i18n_key="setting_webserver_allowed_origins",
     i18n_desc_key="setting_webserver_allowed_origins_desc",
-    category="advanced"
+    category="security"
 ))
 
 # --- MCP Server 配置 (ADVANCED) ---
@@ -1339,7 +1339,7 @@ register_config(ConfigItem(
     i18n_desc_key="setting_mcp_server_port_desc",
     min_value=1,
     max_value=65535,
-    category="advanced"
+    category="security"
 ))
 
 # --- Skills Server 配置 (ADVANCED) ---
@@ -1352,7 +1352,7 @@ register_config(ConfigItem(
     i18n_desc_key="setting_skills_server_port_desc",
     min_value=1,
     max_value=65535,
-    category="advanced"
+    category="security"
 ))
 
 register_config(ConfigItem(
@@ -1362,7 +1362,7 @@ register_config(ConfigItem(
     config_type=ConfigType.BOOL,
     i18n_key="setting_skills_require_auth",
     i18n_desc_key="setting_skills_require_auth_desc",
-    category="advanced"
+    category="security"
 ))
 
 register_config(ConfigItem(
@@ -1372,7 +1372,7 @@ register_config(ConfigItem(
     config_type=ConfigType.STRING,
     i18n_key="setting_skills_allow_origin",
     i18n_desc_key="setting_skills_allow_origin_desc",
-    category="advanced"
+    category="security"
 ))
 
 register_config(ConfigItem(

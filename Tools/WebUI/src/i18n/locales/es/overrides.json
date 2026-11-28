@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "Reglas de sustitución antes de traducir",
+  "gui.fields.post_translation_data": "Reglas de sustitución después de traducir",
+  "gui.fields.pre_translation_switch": "Activar sustituciones antes de traducir",
+  "gui.fields.post_translation_switch": "Activar sustituciones después de traducir",
+  "gui.fields.enable_rate_limit": "Usar límites de frecuencia personalizados",
+  "gui.fields.custom_rpm_limit": "Solicitudes por minuto (RPM)",
+  "gui.fields.custom_tpm_limit": "Tokens por minuto (TPM)",
+  "gui.fields.api_failover_threshold": "Errores consecutivos antes de cambiar",
+  "gui.fields.critical_error_threshold": "Errores consecutivos antes de detener",
+  "label_category_data": "Reglas de sustitución",
+  "choice_translate": "Traducir",
+  "choice_polish": "Revisar estilo",
+  "choice_all_in_one": "Traducir y revisar",
+  "choice_rename": "Renombrar",
+  "choice_overwrite": "Sobrescribir",
+  "choice_scheduled": "Programado",
+  "choice_queue_added": "Al añadir a la cola",
+  "choice_queue_pending": "Cuando hay tareas pendientes",
+  "choice_file": "Archivo",
+  "choice_folder": "Carpeta",
+  "choice_both": "Archivos y carpetas"
+}

@@ -1,6 +1,8 @@
 """System management use cases shared by non-interactive adapters."""
 from dataclasses import asdict
 import hashlib
+import json
+import os
 from pathlib import Path
 
 from ModuleFolders.Infrastructure.TaskConfig import ConfigProfileService as profiles
@@ -9,6 +11,34 @@ from ModuleFolders.Infrastructure.ApiSecurity import (
 )
 from ModuleFolders.Infrastructure.SensitiveData import is_sensitive_field, sanitize_sensitive_data, split_sensitive_data
 from ModuleFolders.Service.TaskRuntime.configuration import authorize_configuration_changes, update_configuration
+
+
+def agent_connection_prompt(project_root: str, language: str = "zh_CN") -> str:
+    from ModuleFolders.Service.Agent.ExternalAgentOnboarding import external_agent_prompt
+
+    root = Path(project_root).resolve()
+    with profiles.config_transaction():
+        config = profiles.load_effective_config(create_missing=False)
+        profile_path, _ = profiles.resolve_profile_path(profiles.PROFILES_PATH, config.get("active_profile") or "default")
+        rules_path, _ = profiles.resolve_profile_path(profiles.RULES_PROFILES_PATH, config.get("active_rules_profile") or "default", allow_none=True)
+        context = {
+            "cwd": str(root), "project_root": str(root), "interface_language": language,
+            "input_path": config.get("label_input_path"), "output_path": config.get("label_output_path"),
+            "profile_path": profile_path, "rules_profile_path": rules_path,
+        }
+    prompt = external_agent_prompt(context, include_directory_contents=False)
+    launcher = root / "Tools" / "MCPServer" / "codex_stdio_launcher.sh"
+    # This command is a handoff hint for the host environment, never executed here.
+    command = {"command": "bash", "args": [str(launcher)]} if os.name != "nt" and launcher.is_file() else {
+        "command": "uv", "args": ["run", "--directory", str(root), "python", "Tools/MCPServer/server.py", "--transport", "stdio"],
+    }
+    connection = json.dumps({"mcpServers": {"ainiee": command}}, ensure_ascii=False, indent=2)
+    return (
+        "【接入配置参考】\n以下路径属于当前 AiNiee 运行主机。若 Agent 客户端运行在另一系统或主机，先确认路径映射及传输方式，不要直接套用。\n"
+        + connection
+        + "\n\n只生成此提示词不表示 MCP 已连接，也不批准文件处理。以下输入输出为已保存配置的快照，不代表新任务已选择文件。\n\n"
+        + prompt
+    )
 
 
 def settings_schema():

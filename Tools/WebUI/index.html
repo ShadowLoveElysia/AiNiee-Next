@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>AiNiee-Next</title>
+    <link rel="icon" type="image/jpeg" href="/logo.jpg" />
+    <script>
+      (() => {
+        let theme = 'system';
+        let uiAnimations = true;
+        let language = 'zh-CN';
+        try {
+          const preferences = JSON.parse(localStorage.getItem('ainiee.webui.appearance.v1') || '{}');
+          theme = preferences?.theme || 'system';
+          uiAnimations = preferences?.uiAnimations !== false;
+          language = ({ zh_CN: 'zh-CN', zh_CNTW: 'zh-TW', en: 'en', ja: 'ja', ko: 'ko', ru: 'ru', es: 'es' })[preferences?.language] || language;
+        } catch { theme = 'system'; }
+        const dark = theme === 'dark' || (theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        document.documentElement.dataset.uiAnimations = uiAnimations ? 'on' : 'off';
+        document.documentElement.lang = language;
+      })();
+    </script>
+    <script type="module" src="/src/appearance/bootstrap.ts"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

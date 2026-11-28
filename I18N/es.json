@@ -511,6 +511,7 @@
     "label_category_automation": "Automatización",
     "label_category_manga": "Configuración de manga",
     "label_category_advanced": "Configuración avanzada",
+    "label_category_security": "Configuración de seguridad",
     "label_category_utility": "Utilidades pequeñas",
     "setting_japanese_text_quote_style": "Comillas japonesas para texto/e-book japonés",
     "setting_japanese_text_quote_style_desc": "Solo cuando el texto de origen se detecta como japonés, el idioma de destino es chino simplificado/tradicional y la salida usa una canalización de texto o e-book como TXT, MD, EPUB o DOCX, convierte las comillas simples/dobles normales de la traducción en 「」 y 『』. También se aplica a EPUB generados mediante el middleware de Calibre. Se omite en subtítulos, scripts, tablas, manga y salidas con destino no chino.",

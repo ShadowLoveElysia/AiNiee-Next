@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "翻訳前の置換ルール",
+  "gui.fields.post_translation_data": "翻訳後の置換ルール",
+  "gui.fields.pre_translation_switch": "翻訳前の置換を有効化",
+  "gui.fields.post_translation_switch": "翻訳後の置換を有効化",
+  "gui.fields.enable_rate_limit": "カスタムレート制限を使用",
+  "gui.fields.custom_rpm_limit": "1分あたりのリクエスト数（RPM）",
+  "gui.fields.custom_tpm_limit": "1分あたりのトークン数（TPM）",
+  "gui.fields.api_failover_threshold": "切り替えまでの連続エラー数",
+  "gui.fields.critical_error_threshold": "停止までの連続エラー数",
+  "label_category_data": "置換ルール",
+  "choice_translate": "翻訳",
+  "choice_polish": "推敲",
+  "choice_all_in_one": "翻訳して推敲",
+  "choice_rename": "名前を変更",
+  "choice_overwrite": "上書き",
+  "choice_scheduled": "日時指定",
+  "choice_queue_added": "キューへの追加時",
+  "choice_queue_pending": "キューに未処理のタスクがあるとき",
+  "choice_file": "ファイル",
+  "choice_folder": "フォルダー",
+  "choice_both": "ファイルとフォルダー"
+}

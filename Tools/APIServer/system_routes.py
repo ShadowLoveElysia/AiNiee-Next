@@ -3,7 +3,7 @@ import os
 import threading
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from ModuleFolders.Infrastructure.TaskConfig import ConfigProfileService as profiles
 from ModuleFolders.Service.TaskRuntime import system_management as service
@@ -13,7 +13,7 @@ from ModuleFolders.Service.TaskRuntime import system_services
 from Tools.APIServer.job_contracts import JobResponse
 from Tools.APIServer.responses import ERROR_RESPONSES, ConfigResponse
 from Tools.APIServer.system_contracts import (
-    AcknowledgementsResponse,
+    AcknowledgementsResponse, AgentPromptResponse,
     EbookPreviewRequest, EbookPreviewResponse,
     DiagnosticRequest, DiagnosticResponse, KnowledgeEntry, PlatformCallRequest,
     PlatformKeysRequest, PlatformSelectRequest, PlatformSummary, ProfileDocumentRequest,
@@ -64,6 +64,21 @@ def acknowledgements(language: Literal["zh_CN", "zh_CNTW", "en", "ja", "ko", "ru
 @router.get("/settings-schema", response_model=list[SettingDescription], responses=ERROR_RESPONSES)
 def get_settings_schema():
     return service.settings_schema()
+
+
+@router.get("/external-agent-prompt", response_model=AgentPromptResponse, responses=ERROR_RESPONSES,
+            openapi_extra={"x-allowed-channels": ["web"]})
+def external_agent_prompt(request: Request, response: Response,
+                          language: Literal["zh_CN", "zh_CNTW", "en", "ja", "ko", "ru", "es"] = "zh_CN"):
+    from ModuleFolders.Infrastructure.ApiSecurity import is_mcp_request
+    from Tools.APIServer import application
+    if is_mcp_request(request) or not application._has_valid_web_session(request):
+        raise HTTPException(403, "提示词生成仅供已登录的界面使用")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return {"prompt": service.agent_connection_prompt(application.PROJECT_ROOT, language)}
+    except (OSError, ValueError, RuntimeError):
+        raise HTTPException(503, "无法生成接入提示词，请检查当前配置后重试") from None
 
 
 @router.post("/settings/validate", response_model=SettingsValidationResponse, responses=ERROR_RESPONSES)

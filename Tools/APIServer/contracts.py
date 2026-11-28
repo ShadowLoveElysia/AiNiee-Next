@@ -348,6 +348,7 @@ class TaskComparison(BaseModel):
 
 
 class TaskStatusResponse(TaskLifecycleResponse):
+    task_type: Optional[str] = None
     stats: TaskStatsResponse
     logs: List[TaskLogResponse]
     chart_data: List[TaskChartPoint]

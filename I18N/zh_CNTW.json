@@ -511,6 +511,7 @@
     "label_category_automation": "自動化設定",
     "label_category_manga": "漫畫設定",
     "label_category_advanced": "進階設定",
+    "label_category_security": "安全設定",
     "label_category_utility": "小功能類",
     "setting_japanese_text_quote_style": "日文文本/電子書日式引號",
     "setting_japanese_text_quote_style_desc": "僅在來源文本識別為日文、目標語言為簡中/繁中，且輸出走 TXT/MD/EPUB/DOCX 等文本或電子書管線時，將譯文普通單雙引號轉換為「」和『』；Calibre 中介轉成 EPUB 後同樣適用。字幕、腳本、表格、漫畫、非中文目標輸出不會執行。",

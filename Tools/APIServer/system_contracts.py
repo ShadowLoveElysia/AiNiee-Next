@@ -33,6 +33,10 @@ class SettingsValidationResponse(BaseModel):
     errors: dict[str, str]
 
 
+class AgentPromptResponse(BaseModel):
+    prompt: str
+
+
 class EbookPreviewRequest(SystemRequest):
     template: str = Field(default="X 第N卷", min_length=1, max_length=1000)
     series: str = Field(min_length=1, max_length=1000)

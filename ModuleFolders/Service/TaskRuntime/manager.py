@@ -271,6 +271,7 @@ class TaskManager:
             )
             comparison_changed = comparison_reset or self.comparison_seq > comparison_cursor
             return {
+                "task_type": self.task_type,
                 "stats": copy.deepcopy(self.stats),
                 "logs": logs,
                 "chart_data": chart,

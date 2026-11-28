@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "取消",
+  "gui.common.retry": "重試",
+  "gui.common.close": "關閉",
+  "gui.common.select": "選擇",
+  "gui.common.loading": "載入中",
+  "gui.common.none": "無",
+  "gui.common.inherit": "跟隨設定",
+  "gui.common.enabled": "開啟",
+  "gui.common.disabled": "關閉",
+  "gui.common.automatic": "自動",
+  "gui.common.save": "儲存",
+  "gui.common.undo": "復原",
+  "gui.common.skipContent": "跳至內容",
+  "gui.common.languageLoadFailed": "無法載入介面語言，請檢查連線後重試",
+  "gui.common.runtimeChanged": "執行環境已變更，正在更新佇列",
+  "gui.common.queueRefreshFailed": "無法更新佇列，請重試"
+}

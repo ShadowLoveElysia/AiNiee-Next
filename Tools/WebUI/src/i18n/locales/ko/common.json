@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "취소",
+  "gui.common.retry": "다시 시도",
+  "gui.common.close": "닫기",
+  "gui.common.select": "선택",
+  "gui.common.loading": "불러오는 중",
+  "gui.common.none": "없음",
+  "gui.common.inherit": "프로필 설정 사용",
+  "gui.common.enabled": "켜기",
+  "gui.common.disabled": "끄기",
+  "gui.common.automatic": "자동",
+  "gui.common.save": "저장",
+  "gui.common.undo": "실행 취소",
+  "gui.common.skipContent": "본문으로 이동",
+  "gui.common.languageLoadFailed": "인터페이스 언어를 불러올 수 없습니다. 연결을 확인하고 다시 시도하세요.",
+  "gui.common.runtimeChanged": "실행 환경이 변경되었습니다. 대기열을 갱신합니다.",
+  "gui.common.queueRefreshFailed": "대기열을 갱신할 수 없습니다. 다시 시도하세요."
+}

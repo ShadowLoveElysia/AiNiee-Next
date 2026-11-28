@@ -1155,6 +1155,7 @@
     "label_category_automation": "自動化設定",
     "label_category_manga": "漫画設定",
     "label_category_advanced": "高度な設定",
+    "label_category_security": "セキュリティ設定",
     "label_category_utility": "小機能",
     "setting_japanese_text_quote_style": "日本語テキスト/電子書籍の引用符スタイル",
     "setting_japanese_text_quote_style_desc": "原文が日本語として検出され、目標言語が簡体字/繁体字中国語で、TXT/MD/EPUB/DOCX などのテキストまたは電子書籍出力パイプラインを使う場合のみ、訳文内の通常の一重/二重引用符を「」と『』に変換します。Calibre ミドルウェアで EPUB に変換された出力にも適用されます。字幕、スクリプト、表、漫画、非中国語目標の出力には適用しません。",

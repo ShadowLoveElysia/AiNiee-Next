@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "Правила замены до перевода",
+  "gui.fields.post_translation_data": "Правила замены после перевода",
+  "gui.fields.pre_translation_switch": "Включить замены до перевода",
+  "gui.fields.post_translation_switch": "Включить замены после перевода",
+  "gui.fields.enable_rate_limit": "Использовать свои лимиты",
+  "gui.fields.custom_rpm_limit": "Запросов в минуту (RPM)",
+  "gui.fields.custom_tpm_limit": "Токенов в минуту (TPM)",
+  "gui.fields.api_failover_threshold": "Ошибок подряд до переключения",
+  "gui.fields.critical_error_threshold": "Ошибок подряд до остановки",
+  "label_category_data": "Правила замены",
+  "choice_translate": "Перевод",
+  "choice_polish": "Редактура",
+  "choice_all_in_one": "Перевод и редактура",
+  "choice_rename": "Переименовать",
+  "choice_overwrite": "Перезаписать",
+  "choice_scheduled": "По расписанию",
+  "choice_queue_added": "При добавлении в очередь",
+  "choice_queue_pending": "Когда в очереди есть задания",
+  "choice_file": "Файл",
+  "choice_folder": "Папка",
+  "choice_both": "Файлы и папки"
+}

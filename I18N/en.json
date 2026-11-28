@@ -1181,6 +1181,7 @@
     "label_category_automation": "Automation",
     "label_category_manga": "Manga Settings",
     "label_category_advanced": "Advanced Settings",
+    "label_category_security": "Security Settings",
     "label_category_utility": "Small Utilities",
     "setting_japanese_text_quote_style": "Japanese text/e-book quote style",
     "setting_japanese_text_quote_style_desc": "Only when the source text is detected as Japanese, the target language is Simplified/Traditional Chinese, and the output uses a text/e-book pipeline such as TXT, MD, EPUB, or DOCX, convert normal single/double quotes in translated text to 「」 and 『』. EPUB files produced through Calibre middleware are covered. Subtitle, script, table, manga, and non-Chinese target outputs are skipped.",

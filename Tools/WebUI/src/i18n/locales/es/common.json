@@ -1,0 +1,18 @@
+{
+  "gui.common.cancel": "Cancelar",
+  "gui.common.retry": "Reintentar",
+  "gui.common.close": "Cerrar",
+  "gui.common.select": "Seleccionar",
+  "gui.common.loading": "Cargando",
+  "gui.common.none": "Ninguno",
+  "gui.common.inherit": "Usar perfil",
+  "gui.common.enabled": "Activado",
+  "gui.common.disabled": "Desactivado",
+  "gui.common.automatic": "Automático",
+  "gui.common.save": "Guardar",
+  "gui.common.undo": "Deshacer",
+  "gui.common.skipContent": "Ir al contenido",
+  "gui.common.languageLoadFailed": "No se pudo cargar el idioma de la interfaz. Comprueba la conexión e inténtalo de nuevo.",
+  "gui.common.runtimeChanged": "El entorno cambió. Actualizando la cola.",
+  "gui.common.queueRefreshFailed": "No se pudo actualizar la cola. Inténtalo de nuevo."
+}

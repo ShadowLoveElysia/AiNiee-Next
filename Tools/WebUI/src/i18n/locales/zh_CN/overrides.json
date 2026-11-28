@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "译前替换规则",
+  "gui.fields.post_translation_data": "译后替换规则",
+  "gui.fields.pre_translation_switch": "启用译前替换",
+  "gui.fields.post_translation_switch": "启用译后替换",
+  "gui.fields.enable_rate_limit": "启用自定义限流",
+  "gui.fields.custom_rpm_limit": "每分钟请求数（RPM）",
+  "gui.fields.custom_tpm_limit": "每分钟 Token 数（TPM）",
+  "gui.fields.api_failover_threshold": "连续错误切换阈值",
+  "gui.fields.critical_error_threshold": "连续错误停止阈值",
+  "label_category_data": "替换规则",
+  "choice_translate": "翻译",
+  "choice_polish": "润色",
+  "choice_all_in_one": "翻译并润色",
+  "choice_rename": "重命名",
+  "choice_overwrite": "覆盖",
+  "choice_scheduled": "定时",
+  "choice_queue_added": "添加到队列时",
+  "choice_queue_pending": "队列有待处理任务时",
+  "choice_file": "文件",
+  "choice_folder": "文件夹",
+  "choice_both": "文件和文件夹"
+}

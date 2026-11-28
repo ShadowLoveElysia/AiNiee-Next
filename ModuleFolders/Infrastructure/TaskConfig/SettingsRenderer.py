@@ -172,6 +172,7 @@ class SettingsMenuBuilder:
             ("manga", "label_category_manga"),
             ("media", "label_category_media"),
             ("advanced", "label_category_advanced"),
+            ("security", "label_category_security"),
             ("utility", "label_category_utility"),
             ("project_general", "label_category_project_general"),
         ]

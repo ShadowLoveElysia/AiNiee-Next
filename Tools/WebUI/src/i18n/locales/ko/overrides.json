@@ -1,0 +1,23 @@
+{
+  "gui.fields.pre_translation_data": "번역 전 치환 규칙",
+  "gui.fields.post_translation_data": "번역 후 치환 규칙",
+  "gui.fields.pre_translation_switch": "번역 전 치환 사용",
+  "gui.fields.post_translation_switch": "번역 후 치환 사용",
+  "gui.fields.enable_rate_limit": "사용자 지정 속도 제한 사용",
+  "gui.fields.custom_rpm_limit": "분당 요청 수 (RPM)",
+  "gui.fields.custom_tpm_limit": "분당 토큰 수 (TPM)",
+  "gui.fields.api_failover_threshold": "전환 전 연속 오류 횟수",
+  "gui.fields.critical_error_threshold": "중지 전 연속 오류 횟수",
+  "label_category_data": "치환 규칙",
+  "choice_translate": "번역",
+  "choice_polish": "다듬기",
+  "choice_all_in_one": "번역 후 다듬기",
+  "choice_rename": "이름 변경",
+  "choice_overwrite": "덮어쓰기",
+  "choice_scheduled": "예약",
+  "choice_queue_added": "대기열에 추가될 때",
+  "choice_queue_pending": "대기 중인 작업이 있을 때",
+  "choice_file": "파일",
+  "choice_folder": "폴더",
+  "choice_both": "파일 및 폴더"
+}
